@@ -1,6 +1,10 @@
 import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const noTelemetry = require("./eslint-rules/no-telemetry.js");
 
 const eslintConfig = defineConfig([
   ...nextVitals,
@@ -13,6 +17,16 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
   ]),
+  {
+    plugins: {
+      scriptr: {
+        rules: { "no-telemetry": noTelemetry },
+      },
+    },
+    rules: {
+      "scriptr/no-telemetry": "error",
+    },
+  },
 ]);
 
 export default eslintConfig;
