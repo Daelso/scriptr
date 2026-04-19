@@ -125,9 +125,8 @@ Append to `.gitignore` (do not replace existing Next.js entries):
 data/
 *.local
 
-# API keys and env
-.env.local
-.env*.local
+# API keys and env — .env (no suffix) is allowed; all named variants are ignored
+.env.*
 
 # Cover images from the user
 cover*.jpg

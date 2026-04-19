@@ -30,9 +30,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env.local
-.env*.local
+# env files — .env (no suffix) is committed intentionally for NEXT_TELEMETRY_DISABLED=1
+# All named variants (.env.local, .env.production, .env.staging, etc.) are ignored.
+.env.*
 
 # vercel
 .vercel
