@@ -32,7 +32,9 @@ yarn-error.log*
 
 # env files — .env (no suffix) is committed intentionally for NEXT_TELEMETRY_DISABLED=1
 # All named variants (.env.local, .env.production, .env.staging, etc.) are ignored.
+# Exception: .env*.example files are committed as templates.
 .env.*
+!.env*.example
 
 # vercel
 .vercel
@@ -44,3 +46,10 @@ next-env.d.ts
 # scriptr-specific
 .superpowers/
 data/
+
+# scriptr runtime artifacts
+*.local
+cover*.jpg
+cover*.jpeg
+cover*.png
+exports/
