@@ -90,6 +90,16 @@ function normalizeSceneBreaks(input: string, warnings: string[]): string {
   return blankRunCollapsed;
 }
 
+function normalizeDashes(input: string): string {
+  return input
+    .split("\n")
+    .map((line) => {
+      if (line === "---") return line; // preserve our own marker
+      return line.replace(/--/g, "\u2014");
+    })
+    .join("\n");
+}
+
 function normalizeQuotes(input: string, warnings: string[]): string {
   let count = 0;
 
@@ -153,6 +163,9 @@ export function cleanPaste(raw: string, opts?: CleanupOptions): CleanResult {
   }
   if (on.normalizeSceneBreaks) {
     text = normalizeSceneBreaks(text, warnings);
+  }
+  if (on.normalizeDashes) {
+    text = normalizeDashes(text);
   }
   // Individual steps filled in by subsequent tasks.
   const sections = on.splitIntoSections
