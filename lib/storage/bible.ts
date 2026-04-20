@@ -7,8 +7,8 @@ export async function getBible(dataDir: string, slug: string): Promise<Bible | n
   try {
     const raw = await readFile(bibleJson(dataDir, slug), "utf-8");
     return JSON.parse(raw) as Bible;
-  } catch (err: any) {
-    if (err.code === "ENOENT") return null;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw err;
   }
 }
