@@ -23,6 +23,9 @@ export interface UseAutoSaveReturn {
  * (default 500). Rapid changes coalesce — only the latest value is sent.
  * The first render is skipped (no save for the initial mount value).
  *
+ * On unmount, any pending unsaved changes are flushed synchronously (fire-and-
+ * forget) so that navigating away mid-debounce never silently drops edits.
+ *
  * Caller note: wrap `save` in `useCallback` to keep a stable reference.
  * Internally we track `save` via a ref so that identity changes between
  * renders don't cause the debounce effect to re-fire.
@@ -44,16 +47,21 @@ export function useAutoSave<T>(
   const valueRef = useRef(value);
   useEffect(() => { valueRef.current = value; }, [value]);
 
+  // Track enabled via ref so the unmount cleanup can read the latest value.
+  const enabledRef = useRef(enabled);
+  useEffect(() => { enabledRef.current = enabled; }, [enabled]);
+
   // Track whether this is the initial render — skip the first save.
   const isFirstRender = useRef(true);
 
   // Whether the component is still mounted (guards against state updates after
   // unmount when the async save promise resolves).
   const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => { mountedRef.current = false; };
-  }, []);
+
+  // The last value that was successfully handed to executeSave. Initialised to
+  // the mount-time value so that an untouched field never triggers an unmount
+  // flush (value !== lastSavedValueRef → false on first compare).
+  const lastSavedValueRef = useRef<T>(value);
 
   // Ref holding the pending debounce timer ID.
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -64,6 +72,7 @@ export function useAutoSave<T>(
     setStatus("saving");
     try {
       await saveRef.current(v);
+      lastSavedValueRef.current = v;
       if (mountedRef.current) setStatus("saved");
     } catch {
       if (mountedRef.current) setStatus("error");
@@ -96,6 +105,30 @@ export function useAutoSave<T>(
       }
     };
   }, [value, enabled, debounceMs, executeSave]);
+
+  // Unmount-only cleanup: flush any unsaved changes so navigating away mid-
+  // debounce never silently drops edits.
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      // Cancel any pending debounce timer (the debounce effect's own cleanup
+      // won't run again after this point).
+      if (timerRef.current !== null) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      // Fire-and-forget flush if there are unsaved changes and saves are enabled.
+      if (
+        enabledRef.current &&
+        !isFirstRender.current &&
+        valueRef.current !== lastSavedValueRef.current
+      ) {
+        saveRef.current(valueRef.current).catch(() => {
+          // Pending save failed on unmount — component is gone, nothing to show.
+        });
+      }
+    };
+  }, []);
 
   const flush = useCallback(async () => {
     if (timerRef.current !== null) {

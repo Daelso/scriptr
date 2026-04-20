@@ -158,17 +158,68 @@ describe("useAutoSave", () => {
     expect(result.current.status).toBe("error");
   });
 
-  it("does not save after unmount", async () => {
+  it("flushes pending save on unmount when value is dirty", async () => {
     const save = makeSave();
     const { rerender, unmount } = renderHook((v: string) => useAutoSave(v, save), {
       initialProps: "initial",
     });
 
     rerender("changed");
+    // Unmount before the debounce fires — flush should still save.
     unmount();
 
-    await act(async () => { vi.advanceTimersByTime(1000); });
+    // The flush is fire-and-forget; wait for promises to settle.
+    await act(async () => { await Promise.resolve(); });
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(save).toHaveBeenCalledWith("changed");
+  });
+
+  it("does not flush on unmount when value has not changed since last save", async () => {
+    const save = makeSave();
+    const { rerender, unmount } = renderHook((v: string) => useAutoSave(v, save), {
+      initialProps: "initial",
+    });
+
+    // Let the debounce fire normally so lastSavedValueRef is updated.
+    rerender("changed");
+    await act(async () => { vi.advanceTimersByTime(500); });
+    expect(save).toHaveBeenCalledTimes(1);
+
+    // Now unmount — value matches lastSaved, no second save expected.
+    unmount();
+    await act(async () => { await Promise.resolve(); });
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not flush on unmount when enabled is false", async () => {
+    const save = makeSave();
+    const { rerender, unmount } = renderHook(
+      (v: string) => useAutoSave(v, save, { enabled: false }),
+      { initialProps: "initial" },
+    );
+
+    rerender("changed");
+    unmount();
+
+    await act(async () => { await Promise.resolve(); });
     expect(save).not.toHaveBeenCalled();
+  });
+
+  it("does not call setStatus after unmount (mountedRef guard)", async () => {
+    const save = makeSave();
+    const { rerender, unmount, result } = renderHook((v: string) => useAutoSave(v, save), {
+      initialProps: "initial",
+    });
+
+    rerender("changed");
+    unmount();
+
+    await act(async () => { await Promise.resolve(); });
+
+    // After unmount, status should still be "idle" — the fire-and-forget path
+    // in the unmount cleanup does NOT go through executeSave, so setStatus is
+    // never called after unmount.
+    expect(result.current.status).toBe("idle");
   });
 
   it("flush() saves immediately without waiting for debounce", async () => {
