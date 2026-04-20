@@ -2,21 +2,20 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import type { Story, Bible, Chapter } from "@/lib/types";
+import type { Story, Bible } from "@/lib/types";
 import { NavPane } from "@/components/editor/NavPane";
 import { MetadataPane } from "@/components/editor/MetadataPane";
+import { EditorPane } from "@/components/editor/EditorPane";
 
 interface StoryEditorProps {
   story: Story;
   bible: Bible;
-  chapters: Chapter[];
   initialChapterId: string | null;
 }
 
 export function StoryEditor({
   story,
   bible,
-  chapters,
   initialChapterId,
 }: StoryEditorProps) {
   const router = useRouter();
@@ -49,13 +48,7 @@ export function StoryEditor({
 
       {/* Center pane — Editor */}
       <section className="overflow-y-auto">
-        {chapters.length === 0 ? (
-          <div className="flex h-full items-center justify-center">
-            <p className="text-sm text-muted-foreground">
-              Add a chapter to start writing.
-            </p>
-          </div>
-        ) : null}
+        <EditorPane slug={story.slug} chapterId={selectedChapterId} />
       </section>
 
       {/* Right pane — Metadata */}

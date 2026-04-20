@@ -64,7 +64,6 @@ export default async function StoryPage({ params, searchParams }: Props) {
     <StoryEditor
       story={story}
       bible={bible ?? ({ characters: [], setting: "", pov: "third-limited", tone: "", styleNotes: "", nsfwPreferences: "" } satisfies Bible)}
-      chapters={chapters}
       initialChapterId={initialChapterId}
     />
   );
