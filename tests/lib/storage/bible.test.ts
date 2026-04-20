@@ -109,7 +109,7 @@ describe("saveBible", () => {
         tone: "",
         styleNotes: "",
         nsfwPreferences: "",
-        styleOverrides: { tense: "present", customRules: "no metaphors" },
+        styleOverrides: { tense: "present" as const, customRules: "no metaphors" },
       };
       await saveBible(dir, story.slug, bible);
       const loaded = await getBible(dir, story.slug);
