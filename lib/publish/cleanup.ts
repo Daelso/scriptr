@@ -90,6 +90,18 @@ export function cleanPaste(raw: string, opts?: CleanupOptions): CleanResult {
   if (on.stripChatCruft) {
     text = stripChatCruft(text, warnings);
   }
+  if (on.trimTrailingWhitespace) {
+    text = text
+      .split("\n")
+      .map((line) => line.replace(/[ \t]+$/g, ""))
+      .join("\n");
+  }
+  if (on.collapseInternalSpaces) {
+    text = text
+      .split("\n")
+      .map((line) => line.replace(/ {2,}/g, " "))
+      .join("\n");
+  }
   // Individual steps filled in by subsequent tasks.
   const sections = on.splitIntoSections ? text.split("\n---\n") : [text];
   return { sections, warnings };
