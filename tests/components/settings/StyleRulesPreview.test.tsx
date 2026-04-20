@@ -74,3 +74,48 @@ describe("StyleRulesPreview — populated", () => {
     }
   });
 });
+
+describe("StyleRulesPreview — copy button", () => {
+  const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+
+  beforeEach(() => {
+    mockFormat.mockReset();
+  });
+
+  afterEach(() => {
+    // Restore the original clipboard descriptor (or remove our mock if there was none) so
+    // subsequent test files don't inherit our fake.
+    if (originalClipboard) {
+      Object.defineProperty(navigator, "clipboard", originalClipboard);
+    } else {
+      delete (navigator as unknown as { clipboard?: unknown }).clipboard;
+    }
+  });
+
+  it("writes the rendered text to the clipboard on click", async () => {
+    const sample = "# Style rules\n1. Use contractions.";
+    mockFormat.mockReturnValue(sample);
+
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+
+    const { container, unmount } = mount(
+      <StyleRulesPreview rules={DEFAULT_STYLE} />,
+    );
+    try {
+      const btn = container.querySelector<HTMLButtonElement>(
+        '[aria-label="Copy style rules"]',
+      );
+      expect(btn).not.toBeNull();
+      await act(async () => {
+        btn!.click();
+      });
+      expect(writeText).toHaveBeenCalledWith(sample);
+    } finally {
+      unmount();
+    }
+  });
+});
