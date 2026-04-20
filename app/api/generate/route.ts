@@ -8,7 +8,7 @@ import { lastPayloadFile } from "@/lib/storage/paths";
 import { getGrokClient, MissingKeyError } from "@/lib/grok";
 import { callGrokWithRetry, GrokError } from "@/lib/grok-retry";
 import type { RetryOptions } from "@/lib/grok-retry";
-import { buildChapterPrompt } from "@/lib/prompts";
+import { buildChapterPrompt, buildSectionRegenPrompt } from "@/lib/prompts";
 import { chunkBySectionBreak } from "@/lib/stream";
 import { registerJob, clearJob } from "@/lib/generation-job";
 import { writeFile } from "node:fs/promises";
@@ -20,16 +20,26 @@ const PERSIST_INTERVAL_MS = 2000;
 // Exported so tests can reduce baseDelayMs to avoid real backoff delays.
 export const _RETRY_OPTIONS: RetryOptions = { maxRetries: 3, baseDelayMs: 500 };
 
+type OpenAIChunk = {
+  choices: Array<{
+    delta?: { content?: string };
+    finish_reason?: string | null;
+  }>;
+};
+
 export async function POST(req: NextRequest): Promise<Response> {
   const body = await readJson<GenerateRequest>(req);
 
-  if (body.mode !== "full") {
-    return new Response(
-      JSON.stringify({ ok: false, error: "only mode=full supported in this route yet" }),
-      { status: 400, headers: { "content-type": "application/json" } }
-    );
+  if (body.mode === "full") {
+    return handleFull(body);
   }
+  if (body.mode === "section") {
+    return handleSection(body);
+  }
+  return json400(`unsupported mode: ${body.mode}`);
+}
 
+async function handleFull(body: GenerateRequest): Promise<Response> {
   const dataDir = effectiveDataDir();
   const config = await loadConfig(dataDir);
 
@@ -144,13 +154,6 @@ export async function POST(req: NextRequest): Promise<Response> {
           _RETRY_OPTIONS
         );
 
-        type OpenAIChunk = {
-          choices: Array<{
-            delta?: { content?: string };
-            finish_reason?: string | null;
-          }>;
-        };
-
         async function* tokensOf(
           openAIStream: AsyncIterable<OpenAIChunk>
         ): AsyncIterable<string> {
@@ -164,7 +167,7 @@ export async function POST(req: NextRequest): Promise<Response> {
         }
 
         for await (const ev of chunkBySectionBreak(
-          tokensOf(response as AsyncIterable<OpenAIChunk>)
+          tokensOf(response as unknown as AsyncIterable<OpenAIChunk>)
         )) {
           if (abort.signal.aborted) break;
 
@@ -228,6 +231,124 @@ export async function POST(req: NextRequest): Promise<Response> {
         controller.enqueue(sse({ type: "error", message, kind }));
       } finally {
         clearInterval(persistTimer); // defensive — idempotent
+        clearJob(jobId);
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, { headers: sseHeaders() });
+}
+
+async function handleSection(body: GenerateRequest): Promise<Response> {
+  if (typeof body.sectionId !== "string" || body.sectionId === "") {
+    return json400("sectionId required");
+  }
+  if (body.regenNote !== undefined && typeof body.regenNote !== "string") {
+    return json400("regenNote must be a string");
+  }
+  const regenNote = body.regenNote ?? "";
+
+  const dataDir = effectiveDataDir();
+  const config = await loadConfig(dataDir);
+
+  const story = await getStory(dataDir, body.storySlug);
+  if (!story) return json400("story not found");
+
+  const bible = await getBible(dataDir, body.storySlug);
+  if (!bible) return json400("bible not found");
+
+  const chapter = await getChapter(dataDir, body.storySlug, body.chapterId);
+  if (!chapter) return json400("chapter not found");
+
+  const targetIndex = chapter.sections.findIndex((s) => s.id === body.sectionId);
+  if (targetIndex === -1) return json400("section not found");
+
+  const prompt = buildSectionRegenPrompt({
+    story,
+    bible,
+    chapter,
+    targetSectionId: body.sectionId,
+    regenNote,
+  });
+
+  const model = story.modelOverride ?? config.defaultModel;
+
+  await writeFile(
+    lastPayloadFile(dataDir, body.storySlug),
+    JSON.stringify({ model, mode: body.mode, system: prompt.system, user: prompt.user }, null, 2),
+    "utf-8"
+  );
+
+  let client;
+  try {
+    client = getGrokClient(config);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "missing API key";
+    const errorStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(sse({ type: "error", message, kind: "auth" }));
+        controller.close();
+      },
+    });
+    return new Response(errorStream, { status: 500, headers: sseHeaders() });
+  }
+
+  const abort = new AbortController();
+  const jobId = registerJob({ abort, storySlug: body.storySlug, chapterId: body.chapterId });
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      let accumulated = "";
+      let finishReason = "stop";
+
+      controller.enqueue(sse({ type: "start", jobId }));
+
+      try {
+        const response = await callGrokWithRetry(
+          client,
+          {
+            model,
+            stream: true,
+            messages: [
+              { role: "system", content: prompt.system },
+              { role: "user", content: prompt.user },
+            ],
+          },
+          _RETRY_OPTIONS
+        );
+
+        for await (const chunk of response as unknown as AsyncIterable<OpenAIChunk>) {
+          if (abort.signal.aborted) break;
+          const choice = chunk.choices?.[0];
+          if (choice?.finish_reason) finishReason = choice.finish_reason;
+          const content = choice?.delta?.content;
+          if (content) {
+            accumulated += content;
+            controller.enqueue(sse({ type: "token", text: content }));
+          }
+        }
+
+        // Replace the target section with accumulated text (trimmed)
+        const newSections = [...chapter.sections];
+        newSections[targetIndex] = {
+          ...newSections[targetIndex],
+          content: accumulated.trim(),
+          regenNote,
+        };
+        try {
+          await updateChapter(dataDir, body.storySlug, body.chapterId, { sections: newSections });
+        } catch {
+          // best-effort; generation succeeded even if save fails
+        }
+
+        controller.enqueue(sse({ type: "done", finishReason }));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "stream error";
+        const kind = err instanceof GrokError ? err.kind : "unknown";
+        // On error: do NOT save partial content. Original section stays intact.
+        controller.enqueue(sse({ type: "error", message, kind }));
+      } finally {
         clearJob(jobId);
         controller.close();
       }

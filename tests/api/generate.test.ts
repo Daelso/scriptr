@@ -293,15 +293,16 @@ describe("POST /api/generate", () => {
     expect(raw).not.toContain("xai-test1234567890");
   });
 
-  it("invalid mode returns 400 JSON error", async () => {
+  it("unsupported mode returns 400 JSON error", async () => {
     const { story, chapter } = await seed();
 
-    const res = await POST(makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "section" }));
+    // "continue" is not yet implemented (Task 4.6); use it as the unsupported-mode sentinel
+    const res = await POST(makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "continue" }));
     expect(res.status).toBe(400);
 
     const body = await res.json() as { ok: boolean; error: string };
     expect(body.ok).toBe(false);
-    expect(body.error).toMatch(/only mode=full/);
+    expect(body.error).toMatch(/unsupported mode/);
   });
 
   it("missing story returns 400 JSON error", async () => {
@@ -362,4 +363,206 @@ describe("POST /api/generate", () => {
   // Fake-timer + async-generator interaction is flaky in the current test setup.
   // The write-queue serialization (B1) and stable inProgressSectionId ensure
   // correctness; coverage of the timer path is deferred.
+});
+
+// ---- section mode tests ----
+
+async function seedWithSections() {
+  const story = await createStory(tmpDir, { title: "Section Test" });
+  const chapter = await createChapter(tmpDir, story.slug, { title: "Ch 1" });
+  const sections = [
+    { id: "sec-a", content: "Original scene A." },
+    { id: "sec-b", content: "Original scene B." },
+    { id: "sec-c", content: "Original scene C." },
+  ];
+  await updateChapter(tmpDir, story.slug, chapter.id, { sections });
+  return { story, chapter, sections };
+}
+
+describe("POST /api/generate — section mode", () => {
+  it("happy path: streams start, tokens, done; no section-break events; saves updated section", async () => {
+    const { story, chapter } = await seedWithSections();
+    fakeCreate.mockResolvedValue(
+      fakeStream([
+        { content: "Rewritten scene B." },
+        { finish_reason: "stop" },
+      ])
+    );
+
+    const res = await POST(
+      makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "section", sectionId: "sec-b", regenNote: "more sensory" })
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/event-stream");
+
+    const events = await consumeSSE(res);
+
+    expect(events[0]).toMatchObject({ type: "start" });
+    expect(events.some((e) => e.type === "section-break")).toBe(false);
+    const doneEvent = events.find((e) => e.type === "done") as Extract<GenerateEvent, { type: "done" }> | undefined;
+    expect(doneEvent).toBeDefined();
+    expect(doneEvent?.finishReason).toBe("stop");
+
+    // Disk: 3 sections still; sec-b replaced; sec-a and sec-c unchanged
+    const saved = await getChapter(tmpDir, story.slug, chapter.id);
+    expect(saved).not.toBeNull();
+    expect(saved!.sections).toHaveLength(3);
+    expect(saved!.sections[0].content).toBe("Original scene A.");
+    expect(saved!.sections[1].content).toBe("Rewritten scene B.");
+    expect(saved!.sections[1].regenNote).toBe("more sensory");
+    expect(saved!.sections[2].content).toBe("Original scene C.");
+  });
+
+  it("token events sum to the full rewritten content", async () => {
+    const { story, chapter } = await seedWithSections();
+    fakeCreate.mockResolvedValue(
+      fakeStream([
+        { content: "Rewritten" },
+        { content: " scene B." },
+        { finish_reason: "stop" },
+      ])
+    );
+
+    const res = await POST(
+      makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "section", sectionId: "sec-b", regenNote: "more sensory" })
+    );
+    const events = await consumeSSE(res);
+    expect(textOf(events)).toBe("Rewritten scene B.");
+  });
+
+  it("unknown sectionId returns 400", async () => {
+    const { story, chapter } = await seedWithSections();
+
+    const res = await POST(
+      makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "section", sectionId: "nonexistent" })
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json() as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("section not found");
+  });
+
+  it("missing sectionId returns 400", async () => {
+    const { story, chapter } = await seedWithSections();
+
+    const res = await POST(
+      makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "section" })
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json() as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("sectionId required");
+  });
+
+  it("non-string regenNote returns 400", async () => {
+    const { story, chapter } = await seedWithSections();
+
+    const res = await POST(
+      makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "section", sectionId: "sec-b", regenNote: 42 })
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json() as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("regenNote must be a string");
+  });
+
+  it("trims leading/trailing whitespace from accumulated content before saving", async () => {
+    const { story, chapter } = await seedWithSections();
+    fakeCreate.mockResolvedValue(
+      fakeStream([
+        { content: "  leading and trailing   \n" },
+        { finish_reason: "stop" },
+      ])
+    );
+
+    const res = await POST(
+      makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "section", sectionId: "sec-b" })
+    );
+    await consumeSSE(res);
+
+    const saved = await getChapter(tmpDir, story.slug, chapter.id);
+    expect(saved!.sections[1].content).toBe("leading and trailing");
+  });
+
+  it("mid-stream error leaves original section intact; emits error event; no done event", async () => {
+    const { story, chapter } = await seedWithSections();
+    fakeCreate.mockResolvedValue(fakeStreamThrowing([{ content: "partial regen" }], 1));
+
+    const res = await POST(
+      makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "section", sectionId: "sec-b", regenNote: "more sensory" })
+    );
+    const events = await consumeSSE(res);
+
+    expect(events[0]).toMatchObject({ type: "start" });
+    expect(events.some((e) => e.type === "token")).toBe(true);
+    expect(events.some((e) => e.type === "error")).toBe(true);
+    expect(events.some((e) => e.type === "done")).toBe(false);
+
+    // Original section is preserved
+    const saved = await getChapter(tmpDir, story.slug, chapter.id);
+    expect(saved!.sections[1].content).toBe("Original scene B.");
+  });
+
+  it(".last-payload.json has mode: 'section' and rewrite marker in user field", async () => {
+    const { story, chapter } = await seedWithSections();
+    fakeCreate.mockResolvedValue(
+      fakeStream([{ content: "Rewritten scene B." }, { finish_reason: "stop" }])
+    );
+
+    const res = await POST(
+      makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "section", sectionId: "sec-b", regenNote: "more sensory" })
+    );
+    await consumeSSE(res);
+
+    const raw = await readFile(lastPayloadFile(tmpDir, story.slug), "utf-8");
+    const payload = JSON.parse(raw) as Record<string, unknown>;
+
+    expect(Object.keys(payload).sort()).toEqual(["mode", "model", "system", "user"]);
+    expect(payload.mode).toBe("section");
+    expect(typeof payload.system).toBe("string");
+    // The rewrite marker wraps the target section in the user prompt
+    expect(payload.user as string).toContain("more sensory");
+    // Privacy: API key must not appear
+    expect(raw).not.toContain("xai-test1234567890");
+  });
+
+  it("missing story returns 400 for section mode", async () => {
+    const res = await POST(
+      makeReq({ storySlug: "nonexistent", chapterId: "ch-1", mode: "section", sectionId: "sec-b" })
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json() as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("story not found");
+  });
+
+  it("missing chapter returns 400 for section mode", async () => {
+    const { story } = await seedWithSections();
+
+    const res = await POST(
+      makeReq({ storySlug: story.slug, chapterId: "00000000-0000-0000-0000-000000000000", mode: "section", sectionId: "sec-b" })
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json() as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("chapter not found");
+  });
+
+  it("missing API key returns 500 SSE error of kind auth in section mode", async () => {
+    const { story, chapter } = await seedWithSections();
+    vi.mocked(getGrokClient).mockImplementationOnce(() => {
+      throw new MissingKeyError();
+    });
+
+    const res = await POST(
+      makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "section", sectionId: "sec-b" })
+    );
+    expect(res.status).toBe(500);
+
+    const events = await consumeSSE(res);
+    expect(events).toHaveLength(1);
+    const ev = events[0] as Extract<GenerateEvent, { type: "error" }>;
+    expect(ev.type).toBe("error");
+    expect(ev.kind).toBe("auth");
+  });
 });
