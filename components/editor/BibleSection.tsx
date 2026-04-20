@@ -15,6 +15,9 @@ import { cn } from "@/lib/utils";
 import { useAutoSave } from "@/hooks/useAutoSave";
 import { BibleField } from "@/components/editor/BibleField";
 import { CharactersSubform, type CharacterRow } from "@/components/editor/CharactersSubform";
+import { BibleStyleOverrides } from "@/components/editor/BibleStyleOverrides";
+import { DEFAULT_STYLE, type StyleRules } from "@/lib/style";
+import useSWR from "swr";
 import type { Bible } from "@/lib/types";
 
 // ─── Collapsible ──────────────────────────────────────────────────────────────
@@ -78,6 +81,24 @@ export function BibleSection({ slug, bible }: BibleSectionProps) {
   const [tone, setTone] = useState(bible.tone);
   const [styleNotes, setStyleNotes] = useState(bible.styleNotes);
   const [nsfwPreferences, setNsfwPreferences] = useState(bible.nsfwPreferences);
+  const [styleOverrides, setStyleOverrides] = useState<StyleRules | undefined>(
+    bible.styleOverrides,
+  );
+
+  const { data: settings } = useSWR<{ styleDefaults?: StyleRules }>(
+    "/api/settings",
+    async (url: string) => {
+      const r = await fetch(url);
+      const j = await r.json();
+      return j.data;
+    },
+    { revalidateOnFocus: false },
+  );
+
+  const resolvedForDisplay = useMemo(() => {
+    const globals = settings?.styleDefaults ?? {};
+    return { ...DEFAULT_STYLE, ...globals, ...(styleOverrides ?? {}) };
+  }, [settings, styleOverrides]);
 
   // ── Derived bible for auto-save ────────────────────────────────────────────
 
@@ -89,8 +110,9 @@ export function BibleSection({ slug, bible }: BibleSectionProps) {
       tone,
       styleNotes,
       nsfwPreferences,
+      styleOverrides,
     }),
-    [characters, setting, pov, tone, styleNotes, nsfwPreferences],
+    [characters, setting, pov, tone, styleNotes, nsfwPreferences, styleOverrides],
   );
 
   // ── Save callback ──────────────────────────────────────────────────────────
@@ -207,6 +229,15 @@ export function BibleSection({ slug, bible }: BibleSectionProps) {
           placeholder="Explicit / tasteful fade-to-black / limits…"
           rows={3}
           saveStatus={status}
+        />
+      </Collapsible>
+
+      {/* ── Style overrides (advanced) ─────────────────────────────────── */}
+      <Collapsible label="Style Overrides" defaultOpen={false}>
+        <BibleStyleOverrides
+          overrides={styleOverrides}
+          resolved={resolvedForDisplay}
+          onChange={setStyleOverrides}
         />
       </Collapsible>
     </div>
