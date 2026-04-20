@@ -41,9 +41,10 @@ interface RecapFieldProps {
 }
 
 /**
- * Controlled by external `chapter.recap` at mount only. External recap changes
- * (e.g. after a retry) are handled by remounting via `key` in MetadataPane
- * (keyed to whether recap is empty).
+ * Controlled by external `chapter.recap` at mount only. On retry success,
+ * local state is updated explicitly via setLocal so the populated value shows
+ * immediately without requiring a remount (which would discard characters typed
+ * during the debounce window on the normal autosave path).
  */
 export function RecapField({ slug, chapterId, chapter, mutate, mutateList }: RecapFieldProps) {
   const [local, setLocal] = useState(chapter.recap);
@@ -84,9 +85,10 @@ export function RecapField({ slug, chapterId, chapter, mutate, mutateList }: Rec
         error?: string;
       };
       if (!json.ok) throw new Error(json.error ?? "recap failed");
-      // Server saved the recap. Mutating causes MetadataPane to re-fetch,
-      // which changes the `key` on RecapField (recap: empty → has-value),
-      // triggering a remount with the new recap value.
+      // Update local state immediately so the textarea shows the new recap
+      // without waiting for the SWR refresh (and without a remount).
+      setLocal(json.data!.recap);
+      // Also refresh SWR so data.recap becomes non-empty and the hint hides.
       await mutate();
     } catch {
       toast.error("Recap failed again — try once more or write your own.");

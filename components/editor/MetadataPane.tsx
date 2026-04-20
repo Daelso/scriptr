@@ -98,10 +98,11 @@ interface InnerPaneProps {
 }
 
 function InnerPane({ slug, chapterId, data, mutate, mutateList }: InnerPaneProps) {
-  // Recap key: remount RecapField when recap transitions empty ↔ non-empty.
-  // This ensures the textarea initialises with the server value after a retry
-  // without using useEffect to sync state.
-  const recapKey = `${chapterId}:${data.recap.trim() === "" ? "empty" : "has-value"}`;
+  // Recap key: remount only on chapter switch, consistent with the other fields.
+  // The retry path updates local state explicitly in RecapField.handleRetry instead
+  // of relying on a remount, which would discard characters typed during the
+  // debounce+mutate window on the normal autosave path.
+  const recapKey = chapterId;
 
   return (
     <div className="flex flex-col">
