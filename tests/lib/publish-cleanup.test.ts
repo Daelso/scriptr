@@ -24,3 +24,26 @@ describe("cleanPaste — skeleton", () => {
     expect(steps).toHaveLength(10);
   });
 });
+
+describe("normalizeLineEndings", () => {
+  it("converts CRLF to LF", () => {
+    const out = cleanPaste("a\r\nb\r\nc");
+    expect(out.sections[0]).not.toMatch(/\r/);
+    expect(out.sections[0].split("\n")).toEqual(["a", "b", "c"]);
+  });
+
+  it("converts lone CR to LF", () => {
+    const out = cleanPaste("a\rb\rc");
+    expect(out.sections[0]).not.toMatch(/\r/);
+  });
+
+  it("leaves already-LF text unchanged", () => {
+    const out = cleanPaste("a\nb\nc");
+    expect(out.sections[0]).toBe("a\nb\nc");
+  });
+
+  it("can be disabled", () => {
+    const out = cleanPaste("a\r\nb", { normalizeLineEndings: false });
+    expect(out.sections[0]).toContain("\r");
+  });
+});
