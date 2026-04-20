@@ -1,0 +1,289 @@
+import { describe, it, expect } from "vitest";
+import {
+  buildChapterPrompt,
+  buildSectionRegenPrompt,
+  buildRecapPrompt,
+} from "@/lib/prompts";
+import type { Bible, Story, Chapter } from "@/lib/types";
+
+const baseBible: Bible = {
+  characters: [{ name: "Alice", description: "curious cat" }],
+  setting: "an attic",
+  pov: "third-limited",
+  tone: "whimsical",
+  styleNotes: "short sentences",
+  nsfwPreferences: "fade to black",
+};
+
+const baseStory: Story = {
+  slug: "my-story",
+  title: "My Story",
+  authorPenName: "Jane Doe",
+  description: "",
+  copyrightYear: 2026,
+  language: "en",
+  bisacCategory: "FIC027000",
+  keywords: [],
+  createdAt: "2026-01-01T00:00:00Z",
+  updatedAt: "2026-01-01T00:00:00Z",
+  chapterOrder: [],
+};
+
+const baseChapter: Chapter = {
+  id: "ch1",
+  title: "Chapter One",
+  summary: "Alice finds a key.",
+  beats: ["Alice wakes up", "She finds a key", "She unlocks a door"],
+  prompt: "",
+  recap: "",
+  sections: [],
+  wordCount: 0,
+};
+
+// ─── buildChapterPrompt ───────────────────────────────────────────────────────
+
+describe("buildChapterPrompt", () => {
+  it("1. returns { system, user } with non-empty strings", () => {
+    const result = buildChapterPrompt({
+      story: baseStory,
+      bible: baseBible,
+      priorRecaps: [],
+      chapter: baseChapter,
+    });
+    expect(typeof result.system).toBe("string");
+    expect(typeof result.user).toBe("string");
+    expect(result.system.length).toBeGreaterThan(0);
+    expect(result.user.length).toBeGreaterThan(0);
+  });
+
+  it("2. user contains all bible field values verbatim", () => {
+    const { user } = buildChapterPrompt({
+      story: baseStory,
+      bible: baseBible,
+      priorRecaps: [],
+      chapter: baseChapter,
+    });
+    expect(user).toContain("Alice");
+    expect(user).toContain("an attic");
+    expect(user).toContain("whimsical");
+    expect(user).toContain("short sentences");
+    expect(user).toContain("fade to black");
+    expect(user).toContain("third-limited");
+  });
+
+  it("3. user contains chapter beats as markdown list items", () => {
+    const { user } = buildChapterPrompt({
+      story: baseStory,
+      bible: baseBible,
+      priorRecaps: [],
+      chapter: baseChapter,
+    });
+    expect(user).toContain("- Alice wakes up");
+    expect(user).toContain("- She finds a key");
+    expect(user).toContain("- She unlocks a door");
+  });
+
+  it("4. user contains prior recaps prefixed with Ch.N — format", () => {
+    const { user } = buildChapterPrompt({
+      story: baseStory,
+      bible: baseBible,
+      priorRecaps: [
+        { chapterIndex: 1, recap: "Met the cat" },
+        { chapterIndex: 2, recap: "Found the door" },
+      ],
+      chapter: baseChapter,
+    });
+    expect(user).toContain("Ch.1 — Met the cat");
+    expect(user).toContain("Ch.2 — Found the door");
+  });
+
+  it("5. user ends with the scene-break sentinel", () => {
+    const { user } = buildChapterPrompt({
+      story: baseStory,
+      bible: baseBible,
+      priorRecaps: [],
+      chapter: baseChapter,
+    });
+    expect(user.endsWith("Separate scenes with a line containing exactly '---'.")).toBe(true);
+  });
+
+  it("6. includes last chapter full text when flag is true", () => {
+    const { user } = buildChapterPrompt({
+      story: baseStory,
+      bible: baseBible,
+      priorRecaps: [],
+      chapter: baseChapter,
+      includeLastChapterFullText: true,
+      lastChapterFullText: "The cat yawned.",
+    });
+    expect(user).toContain("The cat yawned.");
+  });
+
+  it("7. excludes last chapter full text when flag is false or not set", () => {
+    const withFalse = buildChapterPrompt({
+      story: baseStory,
+      bible: baseBible,
+      priorRecaps: [],
+      chapter: baseChapter,
+      includeLastChapterFullText: false,
+      lastChapterFullText: "The cat yawned.",
+    });
+    expect(withFalse.user).not.toContain("The cat yawned.");
+
+    const withoutFlag = buildChapterPrompt({
+      story: baseStory,
+      bible: baseBible,
+      priorRecaps: [],
+      chapter: baseChapter,
+      lastChapterFullText: "The cat yawned.",
+    });
+    expect(withoutFlag.user).not.toContain("The cat yawned.");
+  });
+
+  it("8. empty beats renders gracefully without crashing", () => {
+    const chapterNoBeats = { ...baseChapter, beats: [] };
+    const { user } = buildChapterPrompt({
+      story: baseStory,
+      bible: baseBible,
+      priorRecaps: [],
+      chapter: chapterNoBeats,
+    });
+    expect(user).toBeTruthy();
+    expect(user).toContain("(none)");
+  });
+
+  it("9. empty priorRecaps renders gracefully", () => {
+    const { user } = buildChapterPrompt({
+      story: baseStory,
+      bible: baseBible,
+      priorRecaps: [],
+      chapter: baseChapter,
+    });
+    expect(user).toBeTruthy();
+    expect(user).toContain("(no prior chapters)");
+  });
+
+  it("10. empty characters still renders bible block", () => {
+    const bibleNoChars = { ...baseBible, characters: [] };
+    const { user } = buildChapterPrompt({
+      story: baseStory,
+      bible: bibleNoChars,
+      priorRecaps: [],
+      chapter: baseChapter,
+    });
+    expect(user).toBeTruthy();
+    // Characters block should still appear, just with placeholder
+    expect(user).toContain("(none)");
+  });
+});
+
+// ─── buildSectionRegenPrompt ──────────────────────────────────────────────────
+
+describe("buildSectionRegenPrompt", () => {
+  const sections = [
+    { id: "s1", content: "Section one content." },
+    { id: "s2", content: "Section two content." },
+    { id: "s3", content: "Section three content." },
+  ];
+  const chapterWithSections = { ...baseChapter, sections };
+
+  it("1. returns { system, user }", () => {
+    const result = buildSectionRegenPrompt({
+      story: baseStory,
+      bible: baseBible,
+      chapter: chapterWithSections,
+      targetSectionId: "s2",
+      regenNote: "more sensory",
+    });
+    expect(typeof result.system).toBe("string");
+    expect(typeof result.user).toBe("string");
+    expect(result.system.length).toBeGreaterThan(0);
+    expect(result.user.length).toBeGreaterThan(0);
+  });
+
+  it("2. sections are joined with \\n---\\n", () => {
+    const { user } = buildSectionRegenPrompt({
+      story: baseStory,
+      bible: baseBible,
+      chapter: chapterWithSections,
+      targetSectionId: "s2",
+      regenNote: "more sensory",
+    });
+    expect(user).toContain("\n---\n");
+  });
+
+  it("3. target section wrapped with REWRITE markers; others appear as plain content", () => {
+    const { user } = buildSectionRegenPrompt({
+      story: baseStory,
+      bible: baseBible,
+      chapter: chapterWithSections,
+      targetSectionId: "s2",
+      regenNote: "more sensory",
+    });
+    expect(user).toContain("⟪REWRITE:more sensory⟫");
+    expect(user).toContain("Section two content.");
+    expect(user).toContain("⟪/REWRITE⟫");
+    // s1 and s3 appear as plain content (not wrapped)
+    expect(user).toContain("Section one content.");
+    expect(user).toContain("Section three content.");
+    // Verify s1 is NOT wrapped
+    expect(user).not.toContain("⟪REWRITE:more sensory⟫\nSection one content.");
+    expect(user).not.toContain("⟪REWRITE:more sensory⟫\nSection three content.");
+  });
+
+  it("4. system mentions output should be the rewritten scene only", () => {
+    const { system } = buildSectionRegenPrompt({
+      story: baseStory,
+      bible: baseBible,
+      chapter: chapterWithSections,
+      targetSectionId: "s2",
+      regenNote: "more sensory",
+    });
+    // System should say output is only the rewritten scene
+    expect(system.toLowerCase()).toMatch(/output only|rewritten scene|only the rewritten/);
+  });
+});
+
+// ─── buildRecapPrompt ─────────────────────────────────────────────────────────
+
+describe("buildRecapPrompt", () => {
+  it("1. returns { system, user }", () => {
+    const result = buildRecapPrompt({ story: baseStory, chapter: baseChapter });
+    expect(typeof result.system).toBe("string");
+    expect(typeof result.user).toBe("string");
+    expect(result.system.length).toBeGreaterThan(0);
+    expect(result.user.length).toBeGreaterThan(0);
+  });
+
+  it("2. system mentions 2-3 sentences and recap", () => {
+    const { system } = buildRecapPrompt({ story: baseStory, chapter: baseChapter });
+    expect(system).toMatch(/2.?3/);
+    expect(system.toLowerCase()).toContain("recap");
+  });
+
+  it("3. user contains each section's content joined", () => {
+    const chapterWithSections = {
+      ...baseChapter,
+      sections: [
+        { id: "s1", content: "First section prose." },
+        { id: "s2", content: "Second section prose." },
+      ],
+    };
+    const { user } = buildRecapPrompt({ story: baseStory, chapter: chapterWithSections });
+    expect(user).toContain("First section prose.");
+    expect(user).toContain("Second section prose.");
+  });
+
+  it("4. both section contents appear in user when chapter has 2 sections", () => {
+    const chapterWith2 = {
+      ...baseChapter,
+      sections: [
+        { id: "a", content: "Alpha content." },
+        { id: "b", content: "Beta content." },
+      ],
+    };
+    const { user } = buildRecapPrompt({ story: baseStory, chapter: chapterWith2 });
+    expect(user).toContain("Alpha content.");
+    expect(user).toContain("Beta content.");
+  });
+});
