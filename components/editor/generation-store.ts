@@ -10,8 +10,9 @@
  *   - Only one generation can run at a time. Chapter-mode and section-mode
  *     state are kept in separate fields so each consumer can read exactly what
  *     it needs, but they must never both be non-null simultaneously.
- *     `startGeneration(chapterId)` and `startSectionRegen(sectionId)` both
- *     mark `isStreaming = true`; EditorPane gates new starts on `isStreaming`.
+ *     `startGeneration(chapterId)` and `startSectionRegen(sectionId, chapterId)`
+ *     both mark `isStreaming = true`; EditorPane gates new starts on
+ *     `isStreaming`.
  *   - `liveText` holds ONLY the currently-streaming section of a chapter-mode
  *     run. Section-mode regen does NOT populate liveText — the task plan
  *     specifies a skeleton shimmer while waiting for the final content, not
@@ -35,6 +36,11 @@ export type GenerationState = {
   isStreaming: boolean;
   /** Section currently being regenerated (section mode), or null. */
   regeneratingSectionId: string | null;
+  /** Chapter that owns the section being regenerated (section mode), or null.
+   *  Captured at `startSectionRegen` so the terminal-state effect can
+   *  revalidate the regen's target chapter even after the user navigates
+   *  away to another chapter mid-stream. */
+  regeneratingChapterId: string | null;
   /** Which mode the current run started in — used by the terminal effect to
    *  route cleanup. Null when idle. */
   lastRunMode: GenerationRunMode | null;
@@ -47,8 +53,10 @@ export type GenerationState = {
   flushLiveSection: () => void;
   /** Fully reset chapter-mode streaming state — called on done/error/stop. */
   endGeneration: () => void;
-  /** Mark a section as the active regen target. */
-  startSectionRegen: (sectionId: string) => void;
+  /** Mark a section as the active regen target. `chapterId` is the chapter
+   *  that owns the section — captured here so the terminal-state cleanup
+   *  revalidates the correct chapter even if the user navigates away. */
+  startSectionRegen: (sectionId: string, chapterId: string) => void;
   /** Fully reset section-mode regen state — called on done/error/stop. */
   endSectionRegen: () => void;
 };
@@ -58,6 +66,7 @@ export const useGenerationStore = create<GenerationState>((set) => ({
   liveText: "",
   isStreaming: false,
   regeneratingSectionId: null,
+  regeneratingChapterId: null,
   lastRunMode: null,
 
   startGeneration: (chapterId) =>
@@ -66,6 +75,7 @@ export const useGenerationStore = create<GenerationState>((set) => ({
       liveText: "",
       isStreaming: true,
       regeneratingSectionId: null,
+      regeneratingChapterId: null,
       lastRunMode: "chapter",
     }),
 
@@ -81,18 +91,20 @@ export const useGenerationStore = create<GenerationState>((set) => ({
       lastRunMode: null,
     }),
 
-  startSectionRegen: (sectionId) =>
+  startSectionRegen: (sectionId, chapterId) =>
     set({
       activeChapterId: null,
       liveText: "",
       isStreaming: true,
       regeneratingSectionId: sectionId,
+      regeneratingChapterId: chapterId,
       lastRunMode: "section",
     }),
 
   endSectionRegen: () =>
     set({
       regeneratingSectionId: null,
+      regeneratingChapterId: null,
       isStreaming: false,
       lastRunMode: null,
     }),

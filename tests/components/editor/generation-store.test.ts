@@ -17,6 +17,7 @@ function resetStore() {
       liveText: initial.liveText,
       isStreaming: initial.isStreaming,
       regeneratingSectionId: initial.regeneratingSectionId,
+      regeneratingChapterId: initial.regeneratingChapterId,
       lastRunMode: initial.lastRunMode,
     },
     // Replace flag: don't wipe action references — setState(_, true) would
@@ -36,6 +37,7 @@ describe("generation-store", () => {
     expect(s.liveText).toBe("");
     expect(s.isStreaming).toBe(false);
     expect(s.regeneratingSectionId).toBeNull();
+    expect(s.regeneratingChapterId).toBeNull();
     expect(s.lastRunMode).toBeNull();
   });
 
@@ -49,6 +51,7 @@ describe("generation-store", () => {
     expect(s.liveText).toBe("");
     expect(s.lastRunMode).toBe("chapter");
     expect(s.regeneratingSectionId).toBeNull();
+    expect(s.regeneratingChapterId).toBeNull();
   });
 
   it("setLiveText replaces the buffered text", () => {
@@ -84,10 +87,11 @@ describe("generation-store", () => {
   });
 
   it("startSectionRegen marks a section active and flips isStreaming", () => {
-    useGenerationStore.getState().startSectionRegen("sec-1");
+    useGenerationStore.getState().startSectionRegen("sec-1", "chap-1");
 
     const s = useGenerationStore.getState();
     expect(s.regeneratingSectionId).toBe("sec-1");
+    expect(s.regeneratingChapterId).toBe("chap-1");
     expect(s.isStreaming).toBe(true);
     expect(s.activeChapterId).toBeNull();
     expect(s.liveText).toBe("");
@@ -95,32 +99,35 @@ describe("generation-store", () => {
   });
 
   it("endSectionRegen clears section-regen state while leaving chapter-mode fields untouched", () => {
-    useGenerationStore.getState().startSectionRegen("sec-1");
+    useGenerationStore.getState().startSectionRegen("sec-1", "chap-1");
     useGenerationStore.getState().endSectionRegen();
 
     const s = useGenerationStore.getState();
     expect(s.regeneratingSectionId).toBeNull();
+    expect(s.regeneratingChapterId).toBeNull();
     expect(s.isStreaming).toBe(false);
     expect(s.lastRunMode).toBeNull();
   });
 
   it("startSectionRegen overrides a prior section target", () => {
-    useGenerationStore.getState().startSectionRegen("sec-1");
-    useGenerationStore.getState().startSectionRegen("sec-2");
+    useGenerationStore.getState().startSectionRegen("sec-1", "chap-1");
+    useGenerationStore.getState().startSectionRegen("sec-2", "chap-2");
 
     const s = useGenerationStore.getState();
     expect(s.regeneratingSectionId).toBe("sec-2");
+    expect(s.regeneratingChapterId).toBe("chap-2");
     expect(s.isStreaming).toBe(true);
     expect(s.lastRunMode).toBe("section");
   });
 
   it("startGeneration after startSectionRegen switches to chapter mode and clears section-regen state", () => {
-    useGenerationStore.getState().startSectionRegen("sec-1");
+    useGenerationStore.getState().startSectionRegen("sec-1", "chap-1");
     useGenerationStore.getState().startGeneration("chap-1");
 
     const s = useGenerationStore.getState();
     expect(s.activeChapterId).toBe("chap-1");
     expect(s.regeneratingSectionId).toBeNull();
+    expect(s.regeneratingChapterId).toBeNull();
     expect(s.lastRunMode).toBe("chapter");
     expect(s.isStreaming).toBe(true);
   });
@@ -160,25 +167,27 @@ describe("generation-store", () => {
   it("subscribers receive section-regen updates", () => {
     const seen: Array<{
       regenId: string | null;
+      regenChapId: string | null;
       streaming: boolean;
       mode: string | null;
     }> = [];
     const unsub = useGenerationStore.subscribe((s) => {
       seen.push({
         regenId: s.regeneratingSectionId,
+        regenChapId: s.regeneratingChapterId,
         streaming: s.isStreaming,
         mode: s.lastRunMode,
       });
     });
 
-    useGenerationStore.getState().startSectionRegen("sec-1");
+    useGenerationStore.getState().startSectionRegen("sec-1", "chap-1");
     useGenerationStore.getState().endSectionRegen();
 
     unsub();
 
     expect(seen).toEqual([
-      { regenId: "sec-1", streaming: true, mode: "section" },
-      { regenId: null, streaming: false, mode: null },
+      { regenId: "sec-1", regenChapId: "chap-1", streaming: true, mode: "section" },
+      { regenId: null, regenChapId: null, streaming: false, mode: null },
     ]);
   });
 });
