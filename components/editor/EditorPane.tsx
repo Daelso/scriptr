@@ -1,8 +1,17 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import { toast } from "sonner";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { ChapterHeader } from "@/components/editor/ChapterHeader";
 import { SectionList } from "@/components/editor/SectionList";
 import { GenerateChapterButton } from "@/components/editor/GenerateChapterButton";
@@ -44,8 +53,18 @@ export function EditorPane({ slug, chapterId }: EditorPaneProps) {
   const setLiveText = useGenerationStore((s) => s.setLiveText);
   const flushLiveSection = useGenerationStore((s) => s.flushLiveSection);
   const endGeneration = useGenerationStore((s) => s.endGeneration);
+  const startSectionRegen = useGenerationStore((s) => s.startSectionRegen);
+  const endSectionRegen = useGenerationStore((s) => s.endSectionRegen);
   const activeChapterId = useGenerationStore((s) => s.activeChapterId);
   const isStreaming = useGenerationStore((s) => s.isStreaming);
+  const lastRunMode = useGenerationStore((s) => s.lastRunMode);
+
+  // Section-delete confirm dialog. Keeps the destructive action gated behind
+  // a shadcn Dialog to mirror ChapterList's pattern.
+  const [pendingDeleteSectionId, setPendingDeleteSectionId] = useState<
+    string | null
+  >(null);
+  const [deletingSection, setDeletingSection] = useState(false);
 
   // Revalidate the chapter that is actively streaming, not the chapter the
   // user is currently viewing — they can diverge if the user switches the
@@ -57,9 +76,15 @@ export function EditorPane({ slug, chapterId }: EditorPaneProps) {
   // Mirror the hook's last-section text into the store. Only the tail section
   // is "live"; earlier sections are already persisted on disk and will appear
   // via SWR revalidation on each section-break.
+  //
+  // Chapter-mode only: section-mode regen uses a skeleton shimmer and does not
+  // display tokens in real time, so we skip the mirror entirely when
+  // `lastRunMode === "section"`. The server never emits `section-break` for
+  // section mode either — it's a single accumulated run, replaced on `done`.
   const prevSectionCountRef = useRef(0);
   useEffect(() => {
     if (!isStreaming) return;
+    if (lastRunMode !== "chapter") return;
     const count = streamSections.length;
     if (count === 0) return;
 
@@ -75,17 +100,23 @@ export function EditorPane({ slug, chapterId }: EditorPaneProps) {
     prevSectionCountRef.current = count;
 
     setLiveText(last.text);
-  }, [isStreaming, streamSections, setLiveText, flushLiveSection, globalMutate, activeSingleKey]);
+  }, [isStreaming, lastRunMode, streamSections, setLiveText, flushLiveSection, globalMutate, activeSingleKey]);
 
   // Handle terminal stream states: done / error / stopped. Revalidate SWR so
   // the final persisted sections appear, then reset the store.
   //
   // IMPORTANT: we await the single-key revalidation BEFORE calling
-  // endGeneration(). endGeneration zeros activeChapterId/isStreaming, which
-  // unmounts SectionList's live <article>. If SWR hasn't settled yet, the
-  // viewport briefly renders stale cached sections that lack the just-
-  // streamed final section — a visible flicker. listKey only feeds the
-  // sidebar word count and can stay fire-and-forget.
+  // end*Generation(). End actions zero isStreaming, which unmounts the
+  // relevant live UI. If SWR hasn't settled yet, the viewport briefly renders
+  // stale cached sections that lack the just-streamed final section — a
+  // visible flicker. listKey only feeds the sidebar word count and can stay
+  // fire-and-forget.
+  //
+  // Mode routing: `lastRunMode` tells us whether to call endGeneration()
+  // (chapter mode) or endSectionRegen() (section mode). For section regen,
+  // the relevant SWR key is the *current* chapterId (we know the section
+  // belongs to the open chapter — EditorPane only kicks off regen for its
+  // own sections).
   useEffect(() => {
     if (status !== "done" && status !== "error" && status !== "stopped") return;
 
@@ -93,16 +124,42 @@ export function EditorPane({ slug, chapterId }: EditorPaneProps) {
       toast.error(streamError.message || "Generation failed");
     }
 
-    const run = async () => {
-      // Server saves partial content on error/stop too, so always revalidate.
-      if (activeSingleKey) await globalMutate(activeSingleKey);
-      void globalMutate(listKey);
+    const modeAtTerminal = lastRunMode;
 
-      endGeneration();
-      prevSectionCountRef.current = 0;
+    const run = async () => {
+      if (modeAtTerminal === "section") {
+        // Section regen was scoped to the currently-open chapter. Revalidate
+        // the single chapter so the replaced section content (or the
+        // untouched original on error) appears.
+        if (singleKey) await globalMutate(singleKey);
+        // Word count may have shifted if the replacement is a different
+        // length — refresh the sidebar.
+        void globalMutate(listKey);
+        endSectionRegen();
+      } else {
+        // Chapter mode (or a stop issued with no prior start — shouldn't
+        // happen, but falls through to chapter cleanup safely since
+        // endGeneration is idempotent).
+        //
+        // Server saves partial content on error/stop too, so always revalidate.
+        if (activeSingleKey) await globalMutate(activeSingleKey);
+        void globalMutate(listKey);
+        endGeneration();
+        prevSectionCountRef.current = 0;
+      }
     };
     void run();
-  }, [status, streamError, globalMutate, activeSingleKey, listKey, endGeneration]);
+  }, [
+    status,
+    streamError,
+    globalMutate,
+    activeSingleKey,
+    singleKey,
+    listKey,
+    endGeneration,
+    endSectionRegen,
+    lastRunMode,
+  ]);
 
   // Pending-steer orchestration (Task 7.3 "Steer" button).
   //
@@ -188,6 +245,58 @@ export function EditorPane({ slug, chapterId }: EditorPaneProps) {
     stop();
   };
 
+  // ── Section regen / delete orchestration ────────────────────────────────
+
+  const handleSectionRegenerate = (sectionId: string) => {
+    if (isStreaming || !chapterId) return;
+    startSectionRegen(sectionId);
+    start({ storySlug: slug, chapterId, mode: "section", sectionId });
+  };
+
+  const handleSectionRegenerateWithNote = (sectionId: string, note: string) => {
+    if (isStreaming || !chapterId) return;
+    startSectionRegen(sectionId);
+    start({
+      storySlug: slug,
+      chapterId,
+      mode: "section",
+      sectionId,
+      regenNote: note,
+    });
+  };
+
+  const handleSectionDeleteRequest = (sectionId: string) => {
+    if (isStreaming) return;
+    setPendingDeleteSectionId(sectionId);
+  };
+
+  const handleConfirmSectionDelete = async () => {
+    if (!pendingDeleteSectionId || !data || !chapterId) return;
+    setDeletingSection(true);
+    const nextSections = data.sections.filter((s) => s.id !== pendingDeleteSectionId);
+    try {
+      const res = await fetch(`/api/stories/${slug}/chapters/${chapterId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sections: nextSections }),
+      });
+      const json = (await res.json()) as { ok: boolean; error?: string };
+      if (!json.ok) throw new Error(json.error ?? "delete failed");
+      setPendingDeleteSectionId(null);
+      if (singleKey) await globalMutate(singleKey);
+      void globalMutate(listKey);
+    } catch {
+      toast.error("Failed to delete section");
+    } finally {
+      setDeletingSection(false);
+    }
+  };
+
+  const pendingDeleteSection =
+    pendingDeleteSectionId !== null
+      ? data.sections.find((s) => s.id === pendingDeleteSectionId) ?? null
+      : null;
+
   return (
     <div className="max-w-[72ch] mx-auto py-8 px-4">
       <ChapterHeader key={chapterId} slug={slug} chapter={data} />
@@ -202,11 +311,48 @@ export function EditorPane({ slug, chapterId }: EditorPaneProps) {
               disabled={generateDisabled}
             />
           }
+          onSectionRegenerate={handleSectionRegenerate}
+          onSectionRegenerateWithNote={handleSectionRegenerateWithNote}
+          onSectionDelete={handleSectionDeleteRequest}
         />
       </div>
       {overlayActive ? (
         <StreamOverlay onStop={handleStop} onSteer={handleSteer} />
       ) : null}
+
+      <Dialog
+        open={pendingDeleteSectionId !== null}
+        onOpenChange={(open) => {
+          if (!open && !deletingSection) setPendingDeleteSectionId(null);
+        }}
+      >
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Delete this section?</DialogTitle>
+            <DialogDescription>
+              {pendingDeleteSection
+                ? "The section text will be removed from this chapter. This cannot be undone."
+                : "This cannot be undone."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setPendingDeleteSectionId(null)}
+              disabled={deletingSection}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmSectionDelete}
+              disabled={deletingSection}
+            >
+              {deletingSection ? "Deleting…" : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

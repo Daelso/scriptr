@@ -19,19 +19,46 @@ interface SectionListProps {
    * the hook and store wiring.
    */
   generateSlot?: React.ReactNode;
+  /**
+   * Per-section action callbacks plumbed down from EditorPane. EditorPane owns
+   * the single `useStreamGenerate()` hook instance; these handlers translate
+   * user intent into `start({ mode: "section", … })` or PATCH requests.
+   */
+  onSectionRegenerate?: (sectionId: string) => void;
+  onSectionRegenerateWithNote?: (sectionId: string, note: string) => void;
+  onSectionDelete?: (sectionId: string) => void;
 }
 
 /**
  * Renders persisted sections followed by the in-progress "live" section when
- * a stream is active for this chapter. The live section has a pulsing left
- * border + trailing cursor glyph to signal that text is still arriving.
+ * a chapter-mode stream is active for this chapter. The live section has a
+ * pulsing left border + trailing cursor glyph to signal that text is still
+ * arriving. Section-mode regen is rendered inline by SectionCard (skeleton
+ * shimmer), not here.
  */
-export function SectionList({ chapterId, sections, generateSlot }: SectionListProps) {
+export function SectionList({
+  chapterId,
+  sections,
+  generateSlot,
+  onSectionRegenerate,
+  onSectionRegenerateWithNote,
+  onSectionDelete,
+}: SectionListProps) {
   const activeChapterId = useGenerationStore((s) => s.activeChapterId);
   const liveText = useGenerationStore((s) => s.liveText);
   const isStreaming = useGenerationStore((s) => s.isStreaming);
+  const regeneratingSectionId = useGenerationStore((s) => s.regeneratingSectionId);
 
-  const isLiveHere = isStreaming && activeChapterId === chapterId;
+  // Live chapter-mode section tail. Defensive: never render it if a section
+  // regen is active — chapter + section streams are mutually exclusive.
+  const isLiveHere =
+    isStreaming &&
+    activeChapterId === chapterId &&
+    regeneratingSectionId === null;
+
+  // Disable action menus whenever any generation is in flight so the user
+  // can't stack two runs.
+  const disableActions = isStreaming;
 
   // Empty state: no sections on disk AND nothing being streamed for this chapter.
   if (sections.length === 0 && !isLiveHere) {
@@ -45,7 +72,15 @@ export function SectionList({ chapterId, sections, generateSlot }: SectionListPr
   return (
     <div>
       {sections.map((section) => (
-        <SectionCard key={section.id} section={section} />
+        <SectionCard
+          key={section.id}
+          section={section}
+          isRegenerating={regeneratingSectionId === section.id}
+          disableActions={disableActions}
+          onRegenerate={onSectionRegenerate}
+          onRegenerateWithNote={onSectionRegenerateWithNote}
+          onDelete={onSectionDelete}
+        />
       ))}
       {isLiveHere && (
         <article
