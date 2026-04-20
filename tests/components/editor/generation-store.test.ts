@@ -16,6 +16,8 @@ function resetStore() {
       activeChapterId: initial.activeChapterId,
       liveText: initial.liveText,
       isStreaming: initial.isStreaming,
+      regeneratingSectionId: initial.regeneratingSectionId,
+      lastRunMode: initial.lastRunMode,
     },
     // Replace flag: don't wipe action references — setState(_, true) would
     // drop the functions. Keep partial replace semantics.
@@ -33,6 +35,8 @@ describe("generation-store", () => {
     expect(s.activeChapterId).toBeNull();
     expect(s.liveText).toBe("");
     expect(s.isStreaming).toBe(false);
+    expect(s.regeneratingSectionId).toBeNull();
+    expect(s.lastRunMode).toBeNull();
   });
 
   it("startGeneration marks a chapter active and clears prior live text", () => {
@@ -43,6 +47,8 @@ describe("generation-store", () => {
     expect(s.activeChapterId).toBe("chap-1");
     expect(s.isStreaming).toBe(true);
     expect(s.liveText).toBe("");
+    expect(s.lastRunMode).toBe("chapter");
+    expect(s.regeneratingSectionId).toBeNull();
   });
 
   it("setLiveText replaces the buffered text", () => {
@@ -74,6 +80,49 @@ describe("generation-store", () => {
     expect(s.activeChapterId).toBeNull();
     expect(s.isStreaming).toBe(false);
     expect(s.liveText).toBe("");
+    expect(s.lastRunMode).toBeNull();
+  });
+
+  it("startSectionRegen marks a section active and flips isStreaming", () => {
+    useGenerationStore.getState().startSectionRegen("sec-1");
+
+    const s = useGenerationStore.getState();
+    expect(s.regeneratingSectionId).toBe("sec-1");
+    expect(s.isStreaming).toBe(true);
+    expect(s.activeChapterId).toBeNull();
+    expect(s.liveText).toBe("");
+    expect(s.lastRunMode).toBe("section");
+  });
+
+  it("endSectionRegen clears section-regen state while leaving chapter-mode fields untouched", () => {
+    useGenerationStore.getState().startSectionRegen("sec-1");
+    useGenerationStore.getState().endSectionRegen();
+
+    const s = useGenerationStore.getState();
+    expect(s.regeneratingSectionId).toBeNull();
+    expect(s.isStreaming).toBe(false);
+    expect(s.lastRunMode).toBeNull();
+  });
+
+  it("startSectionRegen overrides a prior section target", () => {
+    useGenerationStore.getState().startSectionRegen("sec-1");
+    useGenerationStore.getState().startSectionRegen("sec-2");
+
+    const s = useGenerationStore.getState();
+    expect(s.regeneratingSectionId).toBe("sec-2");
+    expect(s.isStreaming).toBe(true);
+    expect(s.lastRunMode).toBe("section");
+  });
+
+  it("startGeneration after startSectionRegen switches to chapter mode and clears section-regen state", () => {
+    useGenerationStore.getState().startSectionRegen("sec-1");
+    useGenerationStore.getState().startGeneration("chap-1");
+
+    const s = useGenerationStore.getState();
+    expect(s.activeChapterId).toBe("chap-1");
+    expect(s.regeneratingSectionId).toBeNull();
+    expect(s.lastRunMode).toBe("chapter");
+    expect(s.isStreaming).toBe(true);
   });
 
   it("startGeneration replaces a prior active chapter", () => {
@@ -105,6 +154,31 @@ describe("generation-store", () => {
       { active: "chap-1", live: "abc", streaming: true },
       { active: "chap-1", live: "", streaming: true },
       { active: null, live: "", streaming: false },
+    ]);
+  });
+
+  it("subscribers receive section-regen updates", () => {
+    const seen: Array<{
+      regenId: string | null;
+      streaming: boolean;
+      mode: string | null;
+    }> = [];
+    const unsub = useGenerationStore.subscribe((s) => {
+      seen.push({
+        regenId: s.regeneratingSectionId,
+        streaming: s.isStreaming,
+        mode: s.lastRunMode,
+      });
+    });
+
+    useGenerationStore.getState().startSectionRegen("sec-1");
+    useGenerationStore.getState().endSectionRegen();
+
+    unsub();
+
+    expect(seen).toEqual([
+      { regenId: "sec-1", streaming: true, mode: "section" },
+      { regenId: null, streaming: false, mode: null },
     ]);
   });
 });
