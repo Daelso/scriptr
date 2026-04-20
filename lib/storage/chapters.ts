@@ -97,6 +97,56 @@ export async function createChapter(
   return chapter;
 }
 
+export type NewImportedChapterInput = {
+  title: string;
+  sectionContents: string[];
+};
+
+function countWords(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
+export async function createImportedChapter(
+  dataDir: string,
+  slug: string,
+  input: NewImportedChapterInput
+): Promise<Chapter> {
+  const story = await getStory(dataDir, slug);
+  if (!story) throw new Error(`Story not found: ${slug}`);
+
+  const sections = input.sectionContents.map((content) => ({
+    id: randomUUID(),
+    content,
+  }));
+  const wordCount = input.sectionContents.reduce(
+    (acc, s) => acc + countWords(s),
+    0
+  );
+
+  const chapter: Chapter = {
+    id: randomUUID(),
+    title: input.title,
+    summary: "",
+    beats: [],
+    prompt: "",
+    recap: "",
+    sections,
+    wordCount,
+    source: "imported",
+  };
+
+  const index = story.chapterOrder.length;
+  const filePath = chapterFile(dataDir, slug, index, chapter.id, chapter.title);
+  await mkdir(chaptersDir(dataDir, slug), { recursive: true });
+  await writeFile(filePath, JSON.stringify(chapter, null, 2), "utf-8");
+
+  await updateStory(dataDir, slug, {
+    chapterOrder: [...story.chapterOrder, chapter.id],
+  });
+
+  return chapter;
+}
+
 export async function listChapters(dataDir: string, slug: string): Promise<Chapter[]> {
   const story = await getStory(dataDir, slug);
   if (!story) return [];
