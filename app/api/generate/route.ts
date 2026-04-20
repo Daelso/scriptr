@@ -360,7 +360,7 @@ async function handleContinue(body: GenerateRequest): Promise<Response> {
   // Build a chapter snapshot with the truncated sections for prompt building
   const truncatedChapter = { ...originalChapter, sections: truncatedSections };
 
-  const prompt = buildContinuePrompt({ story, bible, priorRecaps, chapter: truncatedChapter, regenNote });
+  const prompt = buildContinuePrompt({ story, bible, priorRecaps, chapter: truncatedChapter, regenNote, style: DEFAULT_STYLE });
   const model = story.modelOverride ?? config.defaultModel;
 
   // Write .last-payload.json — exactly four fields, no headers, no key
