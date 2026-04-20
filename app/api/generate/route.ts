@@ -187,6 +187,8 @@ export async function POST(req: NextRequest): Promise<Response> {
         }
 
         // Final section (no trailing section-break)
+        clearInterval(persistTimer);
+
         if (currentText) {
           sections.push({ id: randomUUID(), content: currentText });
           currentText = "";
@@ -194,7 +196,7 @@ export async function POST(req: NextRequest): Promise<Response> {
 
         enqueueWrite(async () => {
           try {
-            await updateChapter(dataDir, body.storySlug, body.chapterId, { sections });
+            await updateChapter(dataDir, body.storySlug, body.chapterId, { sections: [...sections] });
           } catch {
             // Generation completed but final save failed; periodic saves already persisted progress.
           }
@@ -203,22 +205,29 @@ export async function POST(req: NextRequest): Promise<Response> {
 
         controller.enqueue(sse({ type: "done", finishReason }));
       } catch (err) {
+        clearInterval(persistTimer);
+
         const message = err instanceof Error ? err.message : "stream error";
         const kind = err instanceof GrokError ? err.kind : "unknown";
 
-        // Save partial content
+        // Push any in-flight currentText as a final section
         if (currentText) {
           sections.push({ id: randomUUID(), content: currentText });
-          try {
-            await updateChapter(dataDir, body.storySlug, body.chapterId, { sections });
-          } catch {
-            // best-effort
-          }
+          currentText = "";
         }
+        // Serialize partial save with any pending queued writes
+        enqueueWrite(async () => {
+          try {
+            await updateChapter(dataDir, body.storySlug, body.chapterId, { sections: [...sections] });
+          } catch {
+            // best-effort partial save
+          }
+        });
+        await writeQueue;
 
         controller.enqueue(sse({ type: "error", message, kind }));
       } finally {
-        clearInterval(persistTimer);
+        clearInterval(persistTimer); // defensive — idempotent
         clearJob(jobId);
         controller.close();
       }
