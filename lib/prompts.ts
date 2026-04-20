@@ -17,6 +17,7 @@ export type SectionRegenInput = {
   chapter: Chapter;
   targetSectionId: string;
   regenNote: string;
+  style: Required<StyleRules>;
 };
 
 export type RecapPromptInput = {
@@ -87,7 +88,7 @@ export function buildChapterPrompt(input: ChapterPromptInput): PromptPair {
 }
 
 export function buildSectionRegenPrompt(input: SectionRegenInput): PromptPair {
-  const { story, bible, chapter, targetSectionId, regenNote } = input;
+  const { story, bible, chapter, targetSectionId, regenNote, style } = input;
 
   const system =
     `You are rewriting a single scene of "${story.title}". ` +
@@ -104,10 +105,13 @@ export function buildSectionRegenPrompt(input: SectionRegenInput): PromptPair {
     })
     .join("\n---\n");
 
+  const rulesBlock = formatStyleRules(style);
+  const rulesSection = rulesBlock ? `\n\n${rulesBlock}` : "";
+
   const user =
     `# Story bible\n${bibleBlock}\n\n` +
     `# Chapter: ${chapter.title}\n\n` +
-    `# Current scenes (rewrite only the marked one):\n${joined}`;
+    `# Current scenes (rewrite only the marked one):\n${joined}${rulesSection}`;
 
   return { system, user };
 }
