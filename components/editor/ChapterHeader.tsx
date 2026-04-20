@@ -65,6 +65,7 @@ export function ChapterHeader({ slug, chapter }: ChapterHeaderProps) {
       <div className="flex items-center justify-between">
         <input
           type="text"
+          aria-label="Chapter title"
           value={local}
           onChange={(e) => setLocal(e.target.value)}
           onKeyDown={(e) => {
