@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
+import { DEFAULT_STYLE, type StyleRules } from "@/lib/style";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -28,6 +29,7 @@ interface SettingsData {
   theme: "light" | "dark" | "system";
   autoRecap: boolean;
   includeLastChapterFullText: boolean;
+  styleDefaults?: StyleRules;
 }
 
 interface FormState {
@@ -37,6 +39,7 @@ interface FormState {
   theme: "light" | "dark" | "system";
   autoRecap: boolean;
   includeLastChapter: boolean;
+  style: Required<StyleRules>;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -54,6 +57,7 @@ const DEFAULT_FORM: FormState = {
   theme: "system",
   autoRecap: true,
   includeLastChapter: false,
+  style: { ...DEFAULT_STYLE },
 };
 
 function formFromData(data: SettingsData): FormState {
@@ -64,7 +68,20 @@ function formFromData(data: SettingsData): FormState {
     theme: data.theme,
     autoRecap: data.autoRecap,
     includeLastChapter: data.includeLastChapterFullText,
+    style: { ...DEFAULT_STYLE, ...(data.styleDefaults ?? {}) },
   };
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function diffAgainstDefault(current: Required<StyleRules>): StyleRules {
+  const out: StyleRules = {};
+  for (const k of Object.keys(DEFAULT_STYLE) as (keyof StyleRules)[]) {
+    if (current[k] !== DEFAULT_STYLE[k]) {
+      (out as Record<string, unknown>)[k] = current[k];
+    }
+  }
+  return out;
 }
 
 // ─── Fetcher ──────────────────────────────────────────────────────────────────
@@ -113,6 +130,7 @@ export function SettingsForm() {
         theme: form.theme,
         autoRecap: form.autoRecap,
         includeLastChapterFullText: form.includeLastChapter,
+        styleDefaults: diffAgainstDefault(form.style),
       };
 
       // Only include apiKey when the user typed something
@@ -259,6 +277,144 @@ export function SettingsForm() {
 
       <Separator />
 
+      {/* ── Writing style defaults ─────────────────────────────────── */}
+      <section className="flex flex-col gap-4">
+        <div className="flex flex-col gap-0.5">
+          <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+            Writing Style Defaults
+          </h2>
+          <p className="text-xs text-muted-foreground">
+            Rules injected into every generation prompt. Individual stories can override these.
+          </p>
+        </div>
+
+        <StyleToggle
+          id="use-contractions"
+          label="Use contractions"
+          description="I'm, don't, won't — in narration and dialogue"
+          checked={form.style.useContractions ?? DEFAULT_STYLE.useContractions}
+          onChange={(v) => patch({ style: { ...form.style, useContractions: v } })}
+        />
+        <StyleToggle
+          id="no-em-dashes"
+          label="Avoid em-dashes"
+          description="Use commas, periods, or parentheses instead"
+          checked={form.style.noEmDashes ?? DEFAULT_STYLE.noEmDashes}
+          onChange={(v) => patch({ style: { ...form.style, noEmDashes: v } })}
+        />
+        <StyleToggle
+          id="no-semicolons"
+          label="Avoid semicolons"
+          checked={form.style.noSemicolons ?? DEFAULT_STYLE.noSemicolons}
+          onChange={(v) => patch({ style: { ...form.style, noSemicolons: v } })}
+        />
+        <StyleToggle
+          id="no-not-x-but-y"
+          label={`Avoid "it wasn't X, it was Y"`}
+          checked={form.style.noNotXButY ?? DEFAULT_STYLE.noNotXButY}
+          onChange={(v) => patch({ style: { ...form.style, noNotXButY: v } })}
+        />
+        <StyleToggle
+          id="no-rhetorical-questions"
+          label="Avoid rhetorical questions in narration"
+          checked={form.style.noRhetoricalQuestions ?? DEFAULT_STYLE.noRhetoricalQuestions}
+          onChange={(v) => patch({ style: { ...form.style, noRhetoricalQuestions: v } })}
+        />
+        <StyleToggle
+          id="sensory-grounding"
+          label="Favor concrete sensory detail"
+          checked={form.style.sensoryGrounding ?? DEFAULT_STYLE.sensoryGrounding}
+          onChange={(v) => patch({ style: { ...form.style, sensoryGrounding: v } })}
+        />
+
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="tense">Tense</Label>
+          <Select
+            value={form.style.tense ?? DEFAULT_STYLE.tense}
+            onValueChange={(v) => {
+              if (v === "past" || v === "present") {
+                patch({ style: { ...form.style, tense: v } });
+              }
+            }}
+          >
+            <SelectTrigger id="tense" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="past">Past</SelectItem>
+              <SelectItem value="present">Present</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="explicitness">Explicitness</Label>
+          <Select
+            value={form.style.explicitness ?? DEFAULT_STYLE.explicitness}
+            onValueChange={(v) => {
+              if (v === "fade" || v === "suggestive" || v === "explicit" || v === "graphic") {
+                patch({ style: { ...form.style, explicitness: v } });
+              }
+            }}
+          >
+            <SelectTrigger id="explicitness" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="fade">Fade-to-black</SelectItem>
+              <SelectItem value="suggestive">Suggestive</SelectItem>
+              <SelectItem value="explicit">Explicit</SelectItem>
+              <SelectItem value="graphic">Graphic</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="dialogue-tags">Dialogue tags</Label>
+          <Select
+            value={form.style.dialogueTags ?? DEFAULT_STYLE.dialogueTags}
+            onValueChange={(v) => {
+              if (v === "prefer-said" || v === "vary") {
+                patch({ style: { ...form.style, dialogueTags: v } });
+              }
+            }}
+          >
+            <SelectTrigger id="dialogue-tags" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="prefer-said">Prefer &quot;said&quot;</SelectItem>
+              <SelectItem value="vary">Vary freely</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="custom-rules">Additional rules</Label>
+          <textarea
+            id="custom-rules"
+            className="min-h-20 rounded-md border bg-transparent p-2 text-sm"
+            placeholder={`e.g. "never start a paragraph with 'Meanwhile'"`}
+            value={form.style.customRules ?? ""}
+            onChange={(e) => patch({ style: { ...form.style, customRules: e.target.value } })}
+          />
+          <p className="text-xs text-muted-foreground">
+            Free-text rules appended verbatim. Different from Bible → Style Notes, which describes the story&apos;s voice.
+          </p>
+        </div>
+
+        <Button
+          type="button"
+          variant="ghost"
+          className="self-start"
+          onClick={() => patch({ style: { ...DEFAULT_STYLE } })}
+        >
+          Reset to built-in defaults
+        </Button>
+      </section>
+
+      <Separator />
+
       {/* ── Appearance ──────────────────────────────────────────────── */}
       <section className="flex flex-col gap-4">
         <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
@@ -291,6 +447,26 @@ export function SettingsForm() {
           {saving ? "Saving…" : "Save"}
         </Button>
       </div>
+    </div>
+  );
+}
+
+function StyleToggle(props: {
+  id: string;
+  label: string;
+  description?: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-col gap-0.5">
+        <Label htmlFor={props.id}>{props.label}</Label>
+        {props.description && (
+          <p className="text-xs text-muted-foreground">{props.description}</p>
+        )}
+      </div>
+      <Switch id={props.id} checked={props.checked} onCheckedChange={props.onChange} />
     </div>
   );
 }
