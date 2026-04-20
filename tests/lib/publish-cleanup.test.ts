@@ -47,3 +47,39 @@ describe("normalizeLineEndings", () => {
     expect(out.sections[0]).toContain("\r");
   });
 });
+
+describe("stripChatCruft", () => {
+  const neutral = {
+    normalizeQuotes: false,
+    normalizeDashes: false,
+    normalizeSceneBreaks: false,
+    collapseBlankLines: false,
+  };
+
+  it("strips a preamble paragraph like 'Sure, here's chapter 3:'", () => {
+    const raw = "Sure, here's chapter 3:\n\nShe walked in.\n\nHe waited.";
+    const out = cleanPaste(raw, neutral);
+    expect(out.sections[0]).not.toContain("Sure, here's chapter 3");
+    expect(out.sections[0]).toContain("She walked in");
+    expect(out.warnings.some((w) => /preamble|strip/i.test(w))).toBe(true);
+  });
+
+  it("strips a sign-off paragraph like 'Let me know...'", () => {
+    const raw = "She walked in.\n\nHe waited.\n\nLet me know if you want me to tweak!";
+    const out = cleanPaste(raw, neutral);
+    expect(out.sections[0]).not.toMatch(/Let me know/);
+    expect(out.sections[0]).toContain("He waited");
+  });
+
+  it("does NOT strip novel prose that happens to begin with 'Sure'", () => {
+    const raw = 'Sure, it was a fine morning. "Pity," she said.\n\nHe nodded.';
+    const out = cleanPaste(raw, neutral);
+    expect(out.sections[0]).toContain("Sure, it was a fine morning");
+  });
+
+  it("can be disabled", () => {
+    const raw = "Sure, here's chapter 3:\n\nProse.";
+    const out = cleanPaste(raw, { stripChatCruft: false });
+    expect(out.sections[0]).toContain("Sure, here's chapter 3");
+  });
+});
