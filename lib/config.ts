@@ -1,5 +1,6 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import type { StyleRules } from "@/lib/style";
 
 export type Config = {
   apiKey?: string;
@@ -9,6 +10,7 @@ export type Config = {
   theme: "light" | "dark" | "system";
   autoRecap: boolean;
   includeLastChapterFullText: boolean;
+  styleDefaults?: StyleRules;
 };
 
 export const DEFAULT_CONFIG: Config = {

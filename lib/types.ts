@@ -21,6 +21,8 @@ export type Character = {
   traits?: string;
 };
 
+import type { StyleRules } from "@/lib/style";
+
 export type Bible = {
   characters: Character[];
   setting: string;
@@ -28,6 +30,7 @@ export type Bible = {
   tone: string;
   styleNotes: string;
   nsfwPreferences: string;
+  styleOverrides?: StyleRules;
 };
 
 export type Section = {
