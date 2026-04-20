@@ -125,4 +125,35 @@ describe("/api/settings", () => {
     expect(JSON.stringify(putBody)).not.toContain("xyz987654321a");
     expect(JSON.stringify(getBody)).not.toContain("xyz987654321a");
   });
+
+  it("PUT persists styleDefaults", async () => {
+    const req = new Request("http://localhost/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({ styleDefaults: { tense: "present", noEmDashes: false } }),
+      headers: { "content-type": "application/json" },
+    }) as unknown as NextRequest;
+
+    const putRes = await PUT(req);
+    const putJson = await putRes.json();
+    expect(putJson.ok).toBe(true);
+
+    const getRes = await GET();
+    const getJson = await getRes.json();
+    expect(getJson.data.styleDefaults).toEqual({
+      tense: "present",
+      noEmDashes: false,
+    });
+  });
+
+  it("PUT ignores unknown top-level fields (existing allowlist behavior)", async () => {
+    const req = new Request("http://localhost/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({ unknownField: "xxx" }),
+      headers: { "content-type": "application/json" },
+    }) as unknown as NextRequest;
+
+    const putRes = await PUT(req);
+    const putJson = await putRes.json();
+    expect(putJson.ok).toBe(true);
+  });
 });
