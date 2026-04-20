@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import type { Story, Bible, Chapter } from "@/lib/types";
+import { NavPane } from "@/components/editor/NavPane";
 
 interface StoryEditorProps {
   story: Story;
@@ -13,6 +14,7 @@ interface StoryEditorProps {
 
 export function StoryEditor({
   story,
+  bible,
   chapters,
   initialChapterId,
 }: StoryEditorProps) {
@@ -37,8 +39,10 @@ export function StoryEditor({
 
   return (
     <div className="grid h-[calc(100vh-44px)] grid-cols-[260px_1fr_320px] overflow-hidden">
-      {/* Left pane — Nav (placeholder, populated in 6.2/6.3) */}
-      <aside className="border-r border-border overflow-y-auto" />
+      {/* Left pane — Nav */}
+      <aside className="border-r border-border overflow-y-auto">
+        <NavPane story={story} bible={bible} />
+      </aside>
 
       {/* Center pane — Editor */}
       <section className="overflow-y-auto">
