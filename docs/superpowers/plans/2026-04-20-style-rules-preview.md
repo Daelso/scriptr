@@ -49,7 +49,7 @@ Create `tests/components/settings/StyleRulesPreview.test.tsx`:
 
 ```tsx
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
@@ -246,8 +246,20 @@ Add this `describe` block to the test file (after the "populated" block):
 
 ```tsx
 describe("StyleRulesPreview — copy button", () => {
+  const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+
   beforeEach(() => {
     mockFormat.mockReset();
+  });
+
+  afterEach(() => {
+    // Restore the original clipboard descriptor (or remove our mock if there was none) so
+    // subsequent test files don't inherit our fake.
+    if (originalClipboard) {
+      Object.defineProperty(navigator, "clipboard", originalClipboard);
+    } else {
+      delete (navigator as unknown as { clipboard?: unknown }).clipboard;
+    }
   });
 
   it("writes the rendered text to the clipboard on click", async () => {
