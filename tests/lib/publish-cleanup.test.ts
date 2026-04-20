@@ -186,3 +186,25 @@ describe("normalizeSceneBreaks", () => {
     expect(msg).toBeDefined();
   });
 });
+
+describe("normalizeDashes", () => {
+  const base = { stripChatCruft: false, normalizeQuotes: false };
+
+  it("converts -- to em dash", () => {
+    const raw = "She walked -- slowly -- into the room.";
+    const out = cleanPaste(raw, base);
+    expect(out.sections[0]).toBe("She walked \u2014 slowly \u2014 into the room.");
+  });
+
+  it("does NOT touch --- scene markers (regression guard for ordering bug)", () => {
+    const raw = "a\n\n---\n\nb";
+    const out = cleanPaste(raw, base);
+    expect(out.sections).toEqual(["a", "b"]);
+  });
+
+  it("leaves hyphens in compound words alone", () => {
+    const raw = "state-of-the-art";
+    const out = cleanPaste(raw, base);
+    expect(out.sections[0]).toBe("state-of-the-art");
+  });
+});
