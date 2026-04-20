@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { RuleTester } from "eslint";
 import * as tsParser from "@typescript-eslint/parser";
-// @ts-expect-error — JS module
 import noTelemetry from "../../eslint-rules/no-telemetry.js";
 
 const tester = new RuleTester({
