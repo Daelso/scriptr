@@ -114,3 +114,138 @@ describe("resolveStyleRules", () => {
     }
   });
 });
+
+import { formatStyleRules } from "@/lib/style";
+
+describe("formatStyleRules", () => {
+  it("returns empty string only when no rule emits a line", () => {
+    // In practice tense and explicitness are always known-valid and always emit,
+    // so this is a synthetic edge case — we feed invalid enum literals to exercise
+    // the "nothing to emit" code path. Real usage never hits this.
+    const rules = {
+      useContractions: false,
+      noEmDashes: false,
+      noSemicolons: false,
+      noNotXButY: false,
+      noRhetoricalQuestions: false,
+      sensoryGrounding: false,
+      tense: "unknown",
+      explicitness: "unknown",
+      dialogueTags: "vary",
+      customRules: "",
+    } as unknown as Required<StyleRules>;
+    expect(formatStyleRules(rules)).toBe("");
+  });
+
+  it("with DEFAULT_STYLE the block is non-empty (baseline emits tense+explicitness+dialogueTags)", () => {
+    // Real-world sanity check: the baseline built-in set always emits something.
+    expect(formatStyleRules(DEFAULT_STYLE)).toMatch(/^# Style rules$/m);
+  });
+
+  it("emits each boolean toggle exactly when it is on", () => {
+    const rules = {
+      ...DEFAULT_STYLE,
+      useContractions: true,
+      noEmDashes: true,
+      noSemicolons: true,
+      noNotXButY: true,
+      noRhetoricalQuestions: true,
+      sensoryGrounding: true,
+      tense: "past",
+      explicitness: "explicit",
+      dialogueTags: "prefer-said",
+      customRules: "",
+    } as const;
+    const out = formatStyleRules(rules);
+    expect(out).toMatch(/^# Style rules$/m);
+    expect(out).toMatch(/Use contractions/);
+    expect(out).toMatch(/Do not use em-dashes/);
+    expect(out).toMatch(/Do not use semicolons/);
+    expect(out).toMatch(/Avoid "it wasn't X, it was Y"/);
+    expect(out).toMatch(/Avoid rhetorical questions/);
+    expect(out).toMatch(/Favor concrete sensory detail/);
+    expect(out).toMatch(/Write in past tense/);
+    expect(out).toMatch(/Explicitness: explicit/);
+    expect(out).toMatch(/Prefer "said" as the default dialogue tag/);
+  });
+
+  it("numbers rules contiguously with no gaps when toggles are off", () => {
+    const rules: Required<StyleRules> = {
+      ...DEFAULT_STYLE,
+      useContractions: true,
+      noEmDashes: false, // skipped
+      noSemicolons: false,
+      noNotXButY: true,
+      noRhetoricalQuestions: false,
+      sensoryGrounding: false,
+      tense: "past",
+      explicitness: "explicit",
+      dialogueTags: "vary", // skipped
+      customRules: "",
+    };
+    const out = formatStyleRules(rules);
+    const numbered = out
+      .split("\n")
+      .filter((l) => /^\d+\./.test(l))
+      .map((l) => parseInt(l.match(/^(\d+)/)![1], 10));
+    // No gaps
+    for (let i = 0; i < numbered.length; i++) {
+      expect(numbered[i]).toBe(i + 1);
+    }
+  });
+
+  it("renders every tense value distinctly", () => {
+    expect(formatStyleRules({ ...DEFAULT_STYLE, tense: "past" })).toMatch(/past tense/);
+    expect(formatStyleRules({ ...DEFAULT_STYLE, tense: "present" })).toMatch(/present tense/);
+  });
+
+  it("renders every explicitness tier distinctly", () => {
+    expect(formatStyleRules({ ...DEFAULT_STYLE, explicitness: "fade" })).toMatch(
+      /fade-to-black/,
+    );
+    expect(formatStyleRules({ ...DEFAULT_STYLE, explicitness: "suggestive" })).toMatch(
+      /suggestive/,
+    );
+    expect(formatStyleRules({ ...DEFAULT_STYLE, explicitness: "explicit" })).toMatch(
+      /Explicitness: explicit/,
+    );
+    expect(formatStyleRules({ ...DEFAULT_STYLE, explicitness: "graphic" })).toMatch(
+      /graphic/,
+    );
+  });
+
+  it("dialogueTags: 'vary' produces NO dialogue-tag line", () => {
+    const out = formatStyleRules({ ...DEFAULT_STYLE, dialogueTags: "vary" });
+    expect(out).not.toMatch(/dialogue tag/i);
+    expect(out).not.toMatch(/\"said\"/);
+  });
+
+  it("appends customRules verbatim under an 'Additional rules:' header", () => {
+    const out = formatStyleRules({
+      ...DEFAULT_STYLE,
+      customRules: "never start a paragraph with 'Meanwhile'",
+    });
+    expect(out).toMatch(/Additional rules:\nnever start a paragraph with 'Meanwhile'/);
+  });
+
+  it("omits customRules when it is whitespace-only", () => {
+    const out = formatStyleRules({ ...DEFAULT_STYLE, customRules: "   \n  " });
+    expect(out).not.toMatch(/Additional rules/);
+  });
+
+  it("unknown tense value omits the tense line (graceful)", () => {
+    // Simulates a hand-edited config.json with an invalid enum value
+    const rules = { ...DEFAULT_STYLE, tense: "fugue" } as unknown as Required<StyleRules>;
+    const out = formatStyleRules(rules);
+    expect(out).not.toMatch(/tense/i);
+  });
+
+  it("unknown explicitness value omits the explicitness line (graceful)", () => {
+    const rules = {
+      ...DEFAULT_STYLE,
+      explicitness: "cosmic",
+    } as unknown as Required<StyleRules>;
+    const out = formatStyleRules(rules);
+    expect(out).not.toMatch(/Explicitness/);
+  });
+});
