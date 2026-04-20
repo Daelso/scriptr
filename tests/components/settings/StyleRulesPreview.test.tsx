@@ -51,3 +51,26 @@ describe("StyleRulesPreview — empty state", () => {
     }
   });
 });
+
+describe("StyleRulesPreview — populated", () => {
+  beforeEach(() => {
+    mockFormat.mockReset();
+  });
+
+  it("renders the exact formatStyleRules output inside the <pre>", () => {
+    const sample = "# Style rules\n1. Use contractions.\n2. Do not use em-dashes.";
+    mockFormat.mockReturnValue(sample);
+
+    const { container, unmount } = mount(
+      <StyleRulesPreview rules={DEFAULT_STYLE} />,
+    );
+    try {
+      const pre = container.querySelector("pre");
+      expect(pre).not.toBeNull();
+      expect(pre?.textContent).toBe(sample);
+      expect(mockFormat).toHaveBeenCalledWith(DEFAULT_STYLE);
+    } finally {
+      unmount();
+    }
+  });
+});
