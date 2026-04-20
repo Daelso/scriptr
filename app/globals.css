@@ -128,3 +128,26 @@
     @apply font-sans;
   }
 }
+
+/* Tiptap inline section editor.
+ *
+ * ProseMirror injects its own class on the contenteditable root; we layer
+ * matching typography onto it so the editor view is visually indistinguishable
+ * from the read-only <p>. The focus ring uses the existing shadcn `--ring`
+ * token so the look matches other focused controls.
+ */
+.tiptap-section-editor.ProseMirror {
+  min-height: 1.5em;
+}
+.tiptap-section-editor.ProseMirror p {
+  margin: 0;
+}
+.tiptap-section-editor.ProseMirror p + p {
+  margin-top: 1em;
+}
+.tiptap-section-editor.ProseMirror:focus,
+.tiptap-section-editor.ProseMirror:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 4px;
+  border-radius: 2px;
+}
