@@ -19,14 +19,11 @@ export function StoryEditor({
   initialChapterId,
 }: StoryEditorProps) {
   const router = useRouter();
-  // setSelectedChapterId will be called by NavPane in task 6.3 (chapter click).
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(
     initialChapterId,
   );
 
   // Sync chapter selection → URL without adding to history stack.
-  // This effect will be exercised when NavPane calls _setSelectedChapterId (task 6.3).
   useEffect(() => {
     if (selectedChapterId !== null) {
       router.replace(`/s/${story.slug}?chapter=${selectedChapterId}`, {
@@ -41,7 +38,12 @@ export function StoryEditor({
     <div className="grid h-[calc(100vh-44px)] grid-cols-[260px_1fr_320px] overflow-hidden">
       {/* Left pane — Nav */}
       <aside className="border-r border-border overflow-y-auto">
-        <NavPane story={story} bible={bible} />
+        <NavPane
+          story={story}
+          bible={bible}
+          selectedChapterId={selectedChapterId}
+          onSelectChapter={setSelectedChapterId}
+        />
       </aside>
 
       {/* Center pane — Editor */}
