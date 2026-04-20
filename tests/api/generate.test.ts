@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { NextRequest } from "next/server";
 import { createStory } from "@/lib/storage/stories";
 import { createChapter, getChapter, updateChapter } from "@/lib/storage/chapters";
 import { lastPayloadFile } from "@/lib/storage/paths";
+import { GrokError } from "@/lib/grok-retry";
 import type { GenerateEvent } from "@/lib/types";
 
 // Hoisted mock — gives us a handle on the fake client's create() mock
@@ -733,5 +734,143 @@ describe("POST /api/generate — continue mode", () => {
     const body = await res.json() as { ok: boolean; error: string };
     expect(body.ok).toBe(false);
     expect(body.error).toContain("chapter not found");
+  });
+});
+
+// ---- auto-recap tests ----
+
+async function enableAutoRecap(dir: string) {
+  await writeFile(join(dir, "config.json"), JSON.stringify({ autoRecap: true }), "utf-8");
+}
+
+async function disableAutoRecap(dir: string) {
+  await writeFile(join(dir, "config.json"), JSON.stringify({ autoRecap: false }), "utf-8");
+}
+
+describe("POST /api/generate — auto-recap (full mode)", () => {
+  it("autoRecap: true — happy path: emits recap event after done, saves recap to disk", async () => {
+    const { story, chapter } = await seed();
+    await enableAutoRecap(tmpDir);
+
+    // Dual mock: streaming call first, then non-streaming recap call
+    fakeCreate.mockImplementation(async (params: { stream?: boolean }) => {
+      if (params.stream) {
+        return fakeStream([{ content: "Scene one." }, { finish_reason: "stop" }]);
+      }
+      return { choices: [{ message: { content: "Recap summary." } }] };
+    });
+
+    const res = await POST(makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "full" }));
+    const events = await consumeSSE(res);
+
+    const types = events.map((e) => e.type);
+    expect(types).toContain("start");
+    expect(types).toContain("token");
+    expect(types).toContain("done");
+    expect(types).toContain("recap");
+
+    // recap event comes after done
+    const doneIdx = types.indexOf("done");
+    const recapIdx = types.indexOf("recap");
+    expect(recapIdx).toBeGreaterThan(doneIdx);
+
+    const recapEvent = events.find((e) => e.type === "recap") as Extract<GenerateEvent, { type: "recap" }>;
+    expect(recapEvent.text).toBe("Recap summary.");
+
+    // On disk: recap saved
+    const saved = await getChapter(tmpDir, story.slug, chapter.id);
+    expect(saved?.recap).toBe("Recap summary.");
+  });
+
+  it("autoRecap: true — recap call fails: chapter saves with recap='', no error event", async () => {
+    const { story, chapter } = await seed();
+    await enableAutoRecap(tmpDir);
+
+    fakeCreate.mockImplementation(async (params: { stream?: boolean }) => {
+      if (params.stream) {
+        return fakeStream([{ content: "Scene one." }, { finish_reason: "stop" }]);
+      }
+      throw new GrokError("server", "boom", 500);
+    });
+
+    const res = await POST(makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "full" }));
+    const events = await consumeSSE(res);
+
+    const types = events.map((e) => e.type);
+    expect(types).toContain("done");
+    expect(types).not.toContain("error");
+    expect(types).toContain("recap");
+
+    const recapEvent = events.find((e) => e.type === "recap") as Extract<GenerateEvent, { type: "recap" }>;
+    expect(recapEvent.text).toBe("");
+
+    // On disk: recap is empty string
+    const saved = await getChapter(tmpDir, story.slug, chapter.id);
+    expect(saved?.recap).toBe("");
+  });
+
+  it("autoRecap: false — no recap event emitted", async () => {
+    const { story, chapter } = await seed();
+    await disableAutoRecap(tmpDir);
+
+    fakeCreate.mockResolvedValue(
+      fakeStream([{ content: "Scene one." }, { finish_reason: "stop" }])
+    );
+
+    const res = await POST(makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "full" }));
+    const events = await consumeSSE(res);
+
+    const types = events.map((e) => e.type);
+    expect(types).toContain("done");
+    expect(types).not.toContain("recap");
+  });
+
+  it("section mode + autoRecap: true — no recap event (section mode excluded)", async () => {
+    const { story, chapter } = await seedWithSections();
+    await enableAutoRecap(tmpDir);
+
+    fakeCreate.mockResolvedValue(
+      fakeStream([{ content: "Rewritten scene." }, { finish_reason: "stop" }])
+    );
+
+    const res = await POST(
+      makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "section", sectionId: "sec-b" })
+    );
+    const events = await consumeSSE(res);
+
+    const types = events.map((e) => e.type);
+    expect(types).toContain("done");
+    expect(types).not.toContain("recap");
+  });
+
+  it("continue mode + autoRecap: true — recap event emitted after done", async () => {
+    const { story, chapter } = await seedWithSections();
+    await enableAutoRecap(tmpDir);
+
+    fakeCreate.mockImplementation(async (params: { stream?: boolean }) => {
+      if (params.stream) {
+        return fakeStream([{ content: "More prose." }, { finish_reason: "stop" }]);
+      }
+      return { choices: [{ message: { content: "Continue recap." } }] };
+    });
+
+    const res = await POST(
+      makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "continue", sectionId: "sec-b" })
+    );
+    const events = await consumeSSE(res);
+
+    const types = events.map((e) => e.type);
+    expect(types).toContain("done");
+    expect(types).toContain("recap");
+
+    const doneIdx = types.indexOf("done");
+    const recapIdx = types.indexOf("recap");
+    expect(recapIdx).toBeGreaterThan(doneIdx);
+
+    const recapEvent = events.find((e) => e.type === "recap") as Extract<GenerateEvent, { type: "recap" }>;
+    expect(recapEvent.text).toBe("Continue recap.");
+
+    const saved = await getChapter(tmpDir, story.slug, chapter.id);
+    expect(saved?.recap).toBe("Continue recap.");
   });
 });
