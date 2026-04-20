@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
+import { StyleRulesPreview } from "@/components/settings/StyleRulesPreview";
 import { DEFAULT_STYLE, type StyleRules } from "@/lib/style";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -402,6 +403,8 @@ export function SettingsForm() {
             Free-text rules appended verbatim. Different from Bible → Style Notes, which describes the story&apos;s voice.
           </p>
         </div>
+
+        <StyleRulesPreview rules={form.style} />
 
         <Button
           type="button"
