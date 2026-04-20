@@ -3,6 +3,7 @@ import {
   buildChapterPrompt,
   buildSectionRegenPrompt,
   buildRecapPrompt,
+  buildContinuePrompt,
 } from "@/lib/prompts";
 import type { Bible, Story, Chapter } from "@/lib/types";
 
@@ -241,6 +242,101 @@ describe("buildSectionRegenPrompt", () => {
     });
     // System should say output is only the rewritten scene
     expect(system.toLowerCase()).toMatch(/output only|rewritten scene|only the rewritten/);
+  });
+});
+
+// ─── buildContinuePrompt ─────────────────────────────────────────────────────
+
+describe("buildContinuePrompt", () => {
+  const truncatedChapter: Chapter = {
+    ...baseChapter,
+    sections: [
+      { id: "sec-a", content: "Scene A prose." },
+      { id: "sec-b", content: "Scene B prose." },
+    ],
+  };
+
+  it("1. returns { system, user } with non-empty strings", () => {
+    const result = buildContinuePrompt({
+      story: baseStory,
+      bible: baseBible,
+      priorRecaps: [],
+      chapter: truncatedChapter,
+      regenNote: "",
+    });
+    expect(typeof result.system).toBe("string");
+    expect(typeof result.user).toBe("string");
+    expect(result.system.length).toBeGreaterThan(0);
+    expect(result.user.length).toBeGreaterThan(0);
+  });
+
+  it("2. user contains the joined truncated section contents", () => {
+    const { user } = buildContinuePrompt({
+      story: baseStory,
+      bible: baseBible,
+      priorRecaps: [],
+      chapter: truncatedChapter,
+      regenNote: "",
+    });
+    expect(user).toContain("Scene A prose.");
+    expect(user).toContain("Scene B prose.");
+  });
+
+  it("3. user contains regenNote when provided", () => {
+    const { user } = buildContinuePrompt({
+      story: baseStory,
+      bible: baseBible,
+      priorRecaps: [],
+      chapter: truncatedChapter,
+      regenNote: "add more tension",
+    });
+    expect(user).toContain("Regen note: add more tension");
+  });
+
+  it("4. user does NOT contain regen block when regenNote is empty", () => {
+    const { user } = buildContinuePrompt({
+      story: baseStory,
+      bible: baseBible,
+      priorRecaps: [],
+      chapter: truncatedChapter,
+      regenNote: "",
+    });
+    expect(user).not.toContain("Regen note:");
+  });
+
+  it("5. system mentions 'Continue' and the --- separator", () => {
+    const { system } = buildContinuePrompt({
+      story: baseStory,
+      bible: baseBible,
+      priorRecaps: [],
+      chapter: truncatedChapter,
+      regenNote: "",
+    });
+    expect(system).toContain("continuing");
+    expect(system).toContain("---");
+  });
+
+  it("6. user ends with the scene-break sentinel", () => {
+    const { user } = buildContinuePrompt({
+      story: baseStory,
+      bible: baseBible,
+      priorRecaps: [],
+      chapter: truncatedChapter,
+      regenNote: "",
+    });
+    expect(user.endsWith("Continue writing. Separate scenes with a line containing exactly '---'.")).toBe(true);
+  });
+
+  it("7. user shows (nothing yet) when chapter has no sections", () => {
+    const emptyChapter = { ...baseChapter, sections: [] };
+    const { user } = buildContinuePrompt({
+      story: baseStory,
+      bible: baseBible,
+      priorRecaps: [],
+      chapter: emptyChapter,
+      regenNote: "",
+    });
+    expect(user).toContain("(nothing yet)");
   });
 });
 

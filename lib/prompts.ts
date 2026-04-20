@@ -48,7 +48,7 @@ export function formatBeats(beats: string[]): string {
   return beats.map((b) => `- ${b}`).join("\n");
 }
 
-function formatPriorRecaps(recaps: { chapterIndex: number; recap: string }[]): string {
+export function formatPriorRecaps(recaps: { chapterIndex: number; recap: string }[]): string {
   if (recaps.length === 0) return "(no prior chapters)";
   return recaps.map((r) => `Ch.${r.chapterIndex} \u2014 ${r.recap}`).join("\n");
 }
@@ -103,6 +103,48 @@ export function buildSectionRegenPrompt(input: SectionRegenInput): PromptPair {
     `# Story bible\n${bibleBlock}\n\n` +
     `# Chapter: ${chapter.title}\n\n` +
     `# Current scenes (rewrite only the marked one):\n${joined}`;
+
+  return { system, user };
+}
+
+export type ContinuePromptInput = {
+  story: Story;
+  bible: Bible;
+  priorRecaps: { chapterIndex: number; recap: string }[];
+  /** chapter already truncated to include only sections up to and including the pivot */
+  chapter: Chapter;
+  regenNote: string;
+};
+
+/**
+ * Builds a prompt for continue mode. The chapter is assumed to have already been
+ * truncated so that chapter.sections contains only the sections to continue from.
+ * The model is asked to append new prose picking up exactly where the text ends.
+ *
+ * Design note: sectionId is reused as the continue pivot (same field, different
+ * semantics disambiguated by mode). No fromSectionId field was added to GenerateRequest.
+ */
+export function buildContinuePrompt(input: ContinuePromptInput): PromptPair {
+  const system =
+    `You are continuing a chapter of "${input.story.title}". ` +
+    `Append new prose that picks up exactly where the current text ends. ` +
+    `Separate scenes with a line containing exactly '---'.`;
+
+  const bibleBlock = formatBible(input.bible);
+  const priorRecapsBlock = formatPriorRecaps(input.priorRecaps);
+  const beatsBlock = formatBeats(input.chapter.beats);
+  const currentText = input.chapter.sections.map((s) => s.content).join("\n---\n");
+  const regenBlock = input.regenNote ? `Regen note: ${input.regenNote}\n\n` : "";
+
+  const user =
+    `# Story bible\n${bibleBlock}\n\n` +
+    `# Prior chapter recaps\n${priorRecapsBlock}\n\n` +
+    `# Current chapter: ${input.chapter.title}\n` +
+    (input.chapter.summary ? `Summary: ${input.chapter.summary}\n\n` : "") +
+    `Beats:\n${beatsBlock}\n\n` +
+    `${regenBlock}` +
+    `Current text so far:\n${currentText || "(nothing yet)"}\n\n` +
+    `Continue writing. Separate scenes with a line containing exactly '---'.`;
 
   return { system, user };
 }

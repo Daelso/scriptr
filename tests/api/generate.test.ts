@@ -296,8 +296,7 @@ describe("POST /api/generate", () => {
   it("unsupported mode returns 400 JSON error", async () => {
     const { story, chapter } = await seed();
 
-    // "continue" is not yet implemented (Task 4.6); use it as the unsupported-mode sentinel
-    const res = await POST(makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "continue" }));
+    const res = await POST(makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "bogus" as "full" }));
     expect(res.status).toBe(400);
 
     const body = await res.json() as { ok: boolean; error: string };
@@ -564,5 +563,175 @@ describe("POST /api/generate — section mode", () => {
     const ev = events[0] as Extract<GenerateEvent, { type: "error" }>;
     expect(ev.type).toBe("error");
     expect(ev.kind).toBe("auth");
+  });
+});
+
+// ---- continue mode tests ----
+
+describe("POST /api/generate — continue mode", () => {
+  it("happy path: truncates at pivot, streams new content appended after pivot", async () => {
+    const { story, chapter } = await seedWithSections();
+    fakeCreate.mockResolvedValue(
+      fakeStream([
+        { content: "More prose.\n" },
+        { finish_reason: "stop" },
+      ])
+    );
+
+    const res = await POST(
+      makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "continue", sectionId: "sec-b" })
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/event-stream");
+
+    const events = await consumeSSE(res);
+
+    expect(events[0]).toMatchObject({ type: "start" });
+    expect(events.some((e) => e.type === "token")).toBe(true);
+    const doneEvent = events.find((e) => e.type === "done") as Extract<GenerateEvent, { type: "done" }> | undefined;
+    expect(doneEvent).toBeDefined();
+
+    // On disk: sec-c should be dropped; sec-a and sec-b remain; new section appended
+    const saved = await getChapter(tmpDir, story.slug, chapter.id);
+    expect(saved).not.toBeNull();
+    // sec-a and sec-b kept, sec-c dropped, new section appended
+    expect(saved!.sections.length).toBeGreaterThanOrEqual(3);
+    expect(saved!.sections[0].content).toBe("Original scene A.");
+    expect(saved!.sections[1].content).toBe("Original scene B.");
+    // sec-c is gone
+    expect(saved!.sections.find((s) => s.content === "Original scene C.")).toBeUndefined();
+    // New content appended
+    const allContent = saved!.sections.map((s) => s.content).join("\n");
+    expect(allContent).toContain("More prose.");
+  });
+
+  it("truncation is committed before the stream starts (even if stream fails)", async () => {
+    const { story, chapter } = await seedWithSections();
+    // Stream throws immediately after open
+    fakeCreate.mockRejectedValue(new Error("stream kaboom"));
+
+    const res = await POST(
+      makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "continue", sectionId: "sec-b" })
+    );
+    const events = await consumeSSE(res);
+
+    expect(events[0]).toMatchObject({ type: "start" });
+    expect(events.some((e) => e.type === "error")).toBe(true);
+
+    // Disk: sections truncated to [a, b] even though stream failed
+    const saved = await getChapter(tmpDir, story.slug, chapter.id);
+    expect(saved).not.toBeNull();
+    expect(saved!.sections).toHaveLength(2);
+    expect(saved!.sections[0].content).toBe("Original scene A.");
+    expect(saved!.sections[1].content).toBe("Original scene B.");
+  });
+
+  it("pivot section not found returns 400", async () => {
+    const { story, chapter } = await seedWithSections();
+
+    const res = await POST(
+      makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "continue", sectionId: "nonexistent" })
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json() as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("section not found");
+  });
+
+  it("missing sectionId returns 400", async () => {
+    const { story, chapter } = await seedWithSections();
+
+    const res = await POST(
+      makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "continue" })
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json() as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("sectionId required");
+  });
+
+  it("section break in stream creates additional sections after pivot", async () => {
+    const { story, chapter } = await seedWithSections();
+    fakeCreate.mockResolvedValue(
+      fakeStream([
+        { content: "Scene X." },
+        { content: "\n---\n" },
+        { content: "Scene Y." },
+        { finish_reason: "stop" },
+      ])
+    );
+
+    const res = await POST(
+      makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "continue", sectionId: "sec-b" })
+    );
+    const events = await consumeSSE(res);
+
+    const breakEvents = events.filter((e) => e.type === "section-break");
+    expect(breakEvents).toHaveLength(1);
+
+    const saved = await getChapter(tmpDir, story.slug, chapter.id);
+    expect(saved).not.toBeNull();
+    // sec-a + sec-b (kept) + Scene X (new) + Scene Y (new) = 4 sections
+    expect(saved!.sections).toHaveLength(4);
+    expect(saved!.sections[0].content).toBe("Original scene A.");
+    expect(saved!.sections[1].content).toBe("Original scene B.");
+    const allContent = saved!.sections.map((s) => s.content).join("\n");
+    expect(allContent).toContain("Scene X.");
+    expect(allContent).toContain("Scene Y.");
+  });
+
+  it("non-string regenNote returns 400", async () => {
+    const { story, chapter } = await seedWithSections();
+
+    const res = await POST(
+      makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "continue", sectionId: "sec-b", regenNote: 99 })
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json() as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("regenNote must be a string");
+  });
+
+  it(".last-payload.json has mode: 'continue' and no API key", async () => {
+    const { story, chapter } = await seedWithSections();
+    fakeCreate.mockResolvedValue(
+      fakeStream([{ content: "Continued." }, { finish_reason: "stop" }])
+    );
+
+    const res = await POST(
+      makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "continue", sectionId: "sec-b", regenNote: "add drama" })
+    );
+    await consumeSSE(res);
+
+    const { readFile } = await import("node:fs/promises");
+    const raw = await readFile(lastPayloadFile(tmpDir, story.slug), "utf-8");
+    const payload = JSON.parse(raw) as Record<string, unknown>;
+
+    expect(Object.keys(payload).sort()).toEqual(["mode", "model", "system", "user"]);
+    expect(payload.mode).toBe("continue");
+    expect(payload.user as string).toContain("add drama");
+    expect(raw).not.toContain("xai-test1234567890");
+  });
+
+  it("missing story returns 400 for continue mode", async () => {
+    const res = await POST(
+      makeReq({ storySlug: "nonexistent", chapterId: "ch-1", mode: "continue", sectionId: "sec-b" })
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json() as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("story not found");
+  });
+
+  it("missing chapter returns 400 for continue mode", async () => {
+    const { story } = await seedWithSections();
+
+    const res = await POST(
+      makeReq({ storySlug: story.slug, chapterId: "00000000-0000-0000-0000-000000000000", mode: "continue", sectionId: "sec-b" })
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json() as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("chapter not found");
   });
 });
