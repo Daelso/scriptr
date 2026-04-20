@@ -46,6 +46,13 @@ export function EditorPane({ slug, chapterId }: EditorPaneProps) {
   const activeChapterId = useGenerationStore((s) => s.activeChapterId);
   const isStreaming = useGenerationStore((s) => s.isStreaming);
 
+  // Revalidate the chapter that is actively streaming, not the chapter the
+  // user is currently viewing — they can diverge if the user switches the
+  // nav pane mid-stream.
+  const activeSingleKey = activeChapterId
+    ? `/api/stories/${slug}/chapters/${activeChapterId}`
+    : null;
+
   // Mirror the hook's last-section text into the store. Only the tail section
   // is "live"; earlier sections are already persisted on disk and will appear
   // via SWR revalidation on each section-break.
@@ -62,15 +69,22 @@ export function EditorPane({ slug, chapterId }: EditorPaneProps) {
     // the live buffer for the next section.
     if (count > prevSectionCountRef.current && prevSectionCountRef.current > 0) {
       flushLiveSection();
-      if (singleKey) void globalMutate(singleKey);
+      if (activeSingleKey) void globalMutate(activeSingleKey);
     }
     prevSectionCountRef.current = count;
 
     setLiveText(last.text);
-  }, [isStreaming, streamSections, setLiveText, flushLiveSection, globalMutate, singleKey]);
+  }, [isStreaming, streamSections, setLiveText, flushLiveSection, globalMutate, activeSingleKey]);
 
   // Handle terminal stream states: done / error / stopped. Revalidate SWR so
   // the final persisted sections appear, then reset the store.
+  //
+  // IMPORTANT: we await the single-key revalidation BEFORE calling
+  // endGeneration(). endGeneration zeros activeChapterId/isStreaming, which
+  // unmounts SectionList's live <article>. If SWR hasn't settled yet, the
+  // viewport briefly renders stale cached sections that lack the just-
+  // streamed final section — a visible flicker. listKey only feeds the
+  // sidebar word count and can stay fire-and-forget.
   useEffect(() => {
     if (status !== "done" && status !== "error" && status !== "stopped") return;
 
@@ -78,13 +92,16 @@ export function EditorPane({ slug, chapterId }: EditorPaneProps) {
       toast.error(streamError.message || "Generation failed");
     }
 
-    // Server saves partial content on error/stop too, so always revalidate.
-    if (singleKey) void globalMutate(singleKey);
-    void globalMutate(listKey);
+    const run = async () => {
+      // Server saves partial content on error/stop too, so always revalidate.
+      if (activeSingleKey) await globalMutate(activeSingleKey);
+      void globalMutate(listKey);
 
-    endGeneration();
-    prevSectionCountRef.current = 0;
-  }, [status, streamError, globalMutate, singleKey, listKey, endGeneration]);
+      endGeneration();
+      prevSectionCountRef.current = 0;
+    };
+    void run();
+  }, [status, streamError, globalMutate, activeSingleKey, listKey, endGeneration]);
 
   if (chapterId === null) {
     return (
