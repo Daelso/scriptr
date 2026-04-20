@@ -6,6 +6,7 @@ import type { NextRequest } from "next/server";
 import { createStory } from "@/lib/storage/stories";
 import { createChapter, getChapter, updateChapter } from "@/lib/storage/chapters";
 import { lastPayloadFile } from "@/lib/storage/paths";
+import { saveBible, getBible } from "@/lib/storage/bible";
 import { GrokError } from "@/lib/grok-retry";
 import type { GenerateEvent } from "@/lib/types";
 
@@ -872,5 +873,119 @@ describe("POST /api/generate — auto-recap (full mode)", () => {
 
     const saved = await getChapter(tmpDir, story.slug, chapter.id);
     expect(saved?.recap).toBe("Continue recap.");
+  });
+});
+
+// ---- style rules in .last-payload.json tests ----
+
+describe("POST /api/generate — style rules in .last-payload.json", () => {
+  it("full mode: writes # Style rules block with tense and customRules from config.styleDefaults", async () => {
+    await writeFile(
+      join(tmpDir, "config.json"),
+      JSON.stringify({
+        apiKey: "xai-test1234567890",
+        styleDefaults: { tense: "present", customRules: "no metaphors" },
+      }),
+    );
+
+    const { story, chapter } = await seed();
+
+    fakeCreate.mockResolvedValue(
+      fakeStream([{ content: "done.\n" }, { finish_reason: "stop" }]),
+    );
+
+    const res = await POST(makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "full" }));
+    expect(res.status).toBe(200);
+    await consumeSSE(res);
+
+    const raw = await readFile(lastPayloadFile(tmpDir, story.slug), "utf-8");
+    const payload = JSON.parse(raw) as { model: string; mode: string; system: string; user: string };
+    expect(payload.mode).toBe("full");
+    expect(payload.user).toMatch(/# Style rules/);
+    expect(payload.user).toMatch(/Write in present tense\./);
+    expect(payload.user).toMatch(/Additional rules:\nno metaphors/);
+    expect(payload.user).not.toMatch(/Write in past tense/);
+  });
+
+  it("full mode: bible.styleOverrides take precedence over config.styleDefaults", async () => {
+    await writeFile(
+      join(tmpDir, "config.json"),
+      JSON.stringify({
+        apiKey: "xai-test1234567890",
+        styleDefaults: { tense: "present" },
+      }),
+    );
+
+    const { story, chapter } = await seed();
+
+    const bible = await getBible(tmpDir, story.slug);
+    await saveBible(tmpDir, story.slug, {
+      ...bible!,
+      styleOverrides: { tense: "past" },
+    });
+
+    fakeCreate.mockResolvedValue(
+      fakeStream([{ content: "done.\n" }, { finish_reason: "stop" }]),
+    );
+
+    const res = await POST(makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "full" }));
+    await consumeSSE(res);
+
+    const raw = await readFile(lastPayloadFile(tmpDir, story.slug), "utf-8");
+    const payload = JSON.parse(raw) as { user: string };
+    expect(payload.user).toMatch(/Write in past tense\./);
+    expect(payload.user).not.toMatch(/Write in present tense/);
+  });
+
+  it("continue mode: .last-payload.json contains # Style rules", async () => {
+    await writeFile(
+      join(tmpDir, "config.json"),
+      JSON.stringify({
+        apiKey: "xai-test1234567890",
+        styleDefaults: { customRules: "mode-marker-continue" },
+      }),
+    );
+
+    const { story, chapter } = await seedWithSections();
+
+    fakeCreate.mockResolvedValue(
+      fakeStream([{ content: "Continued.\n" }, { finish_reason: "stop" }]),
+    );
+
+    const res = await POST(makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "continue", sectionId: "sec-b" }));
+    expect(res.status).toBe(200);
+    await consumeSSE(res);
+
+    const raw = await readFile(lastPayloadFile(tmpDir, story.slug), "utf-8");
+    const payload = JSON.parse(raw) as { user: string; mode: string };
+    expect(payload.mode).toBe("continue");
+    expect(payload.user).toMatch(/# Style rules/);
+    expect(payload.user).toMatch(/mode-marker-continue/);
+  });
+
+  it("section mode: .last-payload.json contains # Style rules", async () => {
+    await writeFile(
+      join(tmpDir, "config.json"),
+      JSON.stringify({
+        apiKey: "xai-test1234567890",
+        styleDefaults: { customRules: "mode-marker-section" },
+      }),
+    );
+
+    const { story, chapter } = await seedWithSections();
+
+    fakeCreate.mockResolvedValue(
+      fakeStream([{ content: "Rewritten section.\n" }, { finish_reason: "stop" }]),
+    );
+
+    const res = await POST(makeReq({ storySlug: story.slug, chapterId: chapter.id, mode: "section", sectionId: "sec-b" }));
+    expect(res.status).toBe(200);
+    await consumeSSE(res);
+
+    const raw = await readFile(lastPayloadFile(tmpDir, story.slug), "utf-8");
+    const payload = JSON.parse(raw) as { user: string; mode: string };
+    expect(payload.mode).toBe("section");
+    expect(payload.user).toMatch(/# Style rules/);
+    expect(payload.user).toMatch(/mode-marker-section/);
   });
 });
