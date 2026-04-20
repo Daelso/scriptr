@@ -252,3 +252,51 @@ describe("collapseBlankLines + splitIntoSections", () => {
     expect(out.sections).toEqual(["single scene only"]);
   });
 });
+
+describe("cleanPaste idempotency + end-to-end", () => {
+  it("running cleanPaste on its own (rejoined) output yields identical sections", () => {
+    const raw = [
+      "Sure, here's chapter 3:",
+      "",
+      'She walked in -- slowly -- and said "hi."',
+      "",
+      "* * *",
+      "",
+      "He replied, 'yes.'",
+      "",
+      "Let me know if you want more.",
+    ].join("\n");
+
+    const first = cleanPaste(raw);
+    const rejoin = first.sections.join("\n\n---\n\n");
+    const second = cleanPaste(rejoin);
+
+    expect(second.sections).toEqual(first.sections);
+  });
+
+  it("kitchen-sink paste produces expected sections", () => {
+    const raw = [
+      "Here's the chapter:",
+      "",
+      "Chapter 3: The Return",
+      "",
+      'She walked into the room -- the same room. "You\'re here," she said.',
+      "",
+      '"I never left."',
+      "",
+      "***",
+      "",
+      "Later, in the kitchen, she poured two glasses of wine...",
+      "",
+      "Hope you like it!",
+    ].join("\n");
+    const out = cleanPaste(raw);
+
+    expect(out.sections.join("\n")).not.toMatch(/Here's the chapter/);
+    expect(out.sections.join("\n")).not.toMatch(/Hope you like it/);
+    expect(out.sections.length).toBeGreaterThanOrEqual(2);
+    expect(out.sections[0]).toContain("\u2014");
+    expect(out.sections[0]).toContain("\u201CYou");
+    expect(out.warnings.length).toBeGreaterThan(0);
+  });
+});
