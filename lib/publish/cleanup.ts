@@ -33,8 +33,10 @@ const DEFAULTS: Required<CleanupOptions> = {
 export function cleanPaste(raw: string, opts?: CleanupOptions): CleanResult {
   const on = { ...DEFAULTS, ...(opts ?? {}) };
   const warnings: string[] = [];
-  // eslint-disable-next-line prefer-const -- reassigned by subsequent cleanup steps added in Tasks 2.2-2.10
   let text = raw;
+  if (on.normalizeLineEndings) {
+    text = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  }
   // Individual steps filled in by subsequent tasks.
   const sections = on.splitIntoSections ? text.split("\n---\n") : [text];
   return { sections, warnings };
