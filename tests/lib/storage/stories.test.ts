@@ -140,7 +140,7 @@ describe("updateStory", () => {
   it("updating title does NOT change slug (slug is immutable)", async () => {
     await withTemp(async (dir) => {
       const created = await createStory(dir, { title: "My Story" });
-      const updated = await updateStory(dir, created.slug, { title: "Completely Different Title", slug: "attempted-override" } as any);
+      const updated = await updateStory(dir, created.slug, { title: "Completely Different Title", slug: "attempted-override" });
 
       expect(updated.slug).toBe(created.slug);
       expect(updated.slug).toBe("my-story");

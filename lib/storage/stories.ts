@@ -52,8 +52,8 @@ export async function listStories(dataDir: string): Promise<Story[]> {
   let entries: string[];
   try {
     entries = await readdir(storiesRoot);
-  } catch (err: any) {
-    if (err.code === "ENOENT") return [];
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw err;
   }
 
@@ -75,8 +75,8 @@ export async function getStory(dataDir: string, slug: string): Promise<Story | n
   try {
     const raw = await readFile(storyJson(dataDir, slug), "utf-8");
     return JSON.parse(raw) as Story;
-  } catch (err: any) {
-    if (err.code === "ENOENT") return null;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw err;
   }
 }

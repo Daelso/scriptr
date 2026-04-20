@@ -15,8 +15,8 @@ async function readAllChapterFiles(
   let files: string[];
   try {
     files = await readdir(dir);
-  } catch (err: any) {
-    if (err.code === "ENOENT") return [];
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw err;
   }
 
