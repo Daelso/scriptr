@@ -221,9 +221,6 @@ describe("useStreamGenerate", () => {
     stream.push({ type: "done", finishReason: "stop" });
     stream.close();
     await act(async () => { await tick(); });
-
-    // silence unused var warning
-    void mock;
   });
 
   it("section-break pushes a new empty section and subsequent tokens land there", async () => {
@@ -404,6 +401,70 @@ describe("useStreamGenerate", () => {
 
     expect(result.current.status).toBe("error");
     expect(result.current.error).toEqual({ message: "rate limited", kind: "rate-limit" });
+  });
+
+  it("start() called while stream 1 is still producing does not let stream 1 mutate state after stream 2 takes over", async () => {
+    // Regression: the restart-race bug. Two streams overlap — stream 1 has
+    // emitted a token but NOT `done` when start() is called a second time.
+    // Stream 2 must fully own state; stream 1's still-open controller must
+    // never append a "ghost" token after stream 2 claims ownership.
+    const stream1 = makeSseStream();
+    const stream2 = makeSseStream();
+    const streams = [stream1, stream2];
+    let which = 0;
+    setupFetchMock().setHandler((url) => {
+      if (url === "/api/generate") {
+        const s = streams[which++];
+        return new Response(s.body, { headers: { "content-type": "text/event-stream" } });
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+
+    const { result } = renderHook(() => useStreamGenerate(), { initialProps: undefined });
+
+    // Kick off stream 1 and push one token.
+    act(() => { result.current.start(REQUEST); });
+    await act(async () => { await tick(); });
+    stream1.push({ type: "start", jobId: "job-1" });
+    stream1.push({ type: "token", text: "aaa" });
+    await act(async () => { await tick(); });
+    expect(result.current.jobId).toBe("job-1");
+    expect(result.current.sections[0]?.text).toBe("aaa");
+
+    // OVERLAP: call start() again WITHOUT closing stream 1. This should abort
+    // stream 1's fetch and install stream 2 as the authoritative owner.
+    act(() => { result.current.start(REQUEST); });
+    expect(result.current.status).toBe("requesting");
+    expect(result.current.sections).toEqual([]);
+    expect(result.current.jobId).toBeNull();
+
+    // Drive stream 2 to completion.
+    await act(async () => { await tick(); });
+    stream2.push({ type: "start", jobId: "job-2" });
+    stream2.push({ type: "token", text: "bbb" });
+    stream2.push({ type: "done", finishReason: "stop" });
+    stream2.close();
+    await act(async () => { await tick(); });
+
+    // Stream 2 owns the world.
+    expect(result.current.status).toBe("done");
+    expect(result.current.jobId).toBe("job-2");
+    expect(result.current.sections).toHaveLength(1);
+    expect(result.current.sections[0].text).toBe("bbb");
+
+    // Now try to "haunt" stream 2's state from stream 1's still-open
+    // controller. These enqueues must not reach the handler because stream 1's
+    // AbortController was aborted when start() was called the second time.
+    stream1.push({ type: "token", text: "GHOST" });
+    stream1.push({ type: "done", finishReason: "stop" });
+    try { stream1.close(); } catch { /* already cancelled */ }
+    await act(async () => { await tick(); });
+
+    // No ghost append. Status/jobId/sections still reflect stream 2 only.
+    expect(result.current.status).toBe("done");
+    expect(result.current.jobId).toBe("job-2");
+    expect(result.current.sections).toHaveLength(1);
+    expect(result.current.sections[0].text).toBe("bbb");
   });
 
   it("a fresh start() after a completed stream resets state", async () => {

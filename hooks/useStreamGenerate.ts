@@ -135,6 +135,12 @@ export function useStreamGenerate(): UseStreamGenerateReturn {
       onEvent: (msg) => {
         // Only `data` carries our JSON payload; ignore event/id/retry.
         if (!msg.data) return;
+        // Race guard: if this run's AbortController was fired (because stop()
+        // or a subsequent start() superseded us), any chunks still being
+        // drained from the buffered side of `reader.read()` must NOT mutate
+        // state. Without this, a token enqueued before abort but parsed after
+        // a second start() would ghost-append into the new run's sections.
+        if (abort.signal.aborted) return;
         let parsed: GenerateEvent;
         try {
           parsed = JSON.parse(msg.data) as GenerateEvent;

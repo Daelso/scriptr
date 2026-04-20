@@ -1832,6 +1832,8 @@ Using a mock `fetch` that returns a `ReadableStream` of SSE frames, assert:
 - `stop()` calls `AbortController.abort()` AND POSTs to `/api/generate/stop` with the captured jobId.
 - On network error, emits an `error` event and cleans up.
 
+> **Deviation recorded:** shipped as a React-state hook returning `{ status, sections, jobId, error, recap, start, stop }` instead of the observable-style `{ stop(), events$ }`. Downstream tasks 7.2–7.5 consume `sections`/`status` directly in JSX; an observable would force each consumer to build its own accumulator.
+
 - [ ] **Step 2: Implement** using `eventsource-parser` on the client (`npm install eventsource-parser`).
 
 - [ ] **Step 3: Tests pass. Commit.**
