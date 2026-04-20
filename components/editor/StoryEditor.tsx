@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import type { Story, Bible, Chapter } from "@/lib/types";
 import { NavPane } from "@/components/editor/NavPane";
+import { MetadataPane } from "@/components/editor/MetadataPane";
 
 interface StoryEditorProps {
   story: Story;
@@ -57,8 +58,10 @@ export function StoryEditor({
         ) : null}
       </section>
 
-      {/* Right pane — Metadata (placeholder, populated in 6.4) */}
-      <aside className="border-l border-border overflow-y-auto" />
+      {/* Right pane — Metadata */}
+      <aside className="border-l border-border overflow-y-auto">
+        <MetadataPane slug={story.slug} chapterId={selectedChapterId} />
+      </aside>
     </div>
   );
 }
