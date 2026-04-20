@@ -45,6 +45,7 @@ next-env.d.ts
 
 # scriptr-specific
 .superpowers/
+.worktrees/
 data/
 .playwright-mcp/
 
