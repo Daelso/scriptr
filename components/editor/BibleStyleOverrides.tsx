@@ -27,15 +27,56 @@ type BoolKey =
   | "noSemicolons"
   | "noNotXButY"
   | "noRhetoricalQuestions"
-  | "sensoryGrounding";
+  | "sensoryGrounding"
+  | "consentBeats"
+  | "adultsOnly"
+  | "bodiesDirectlyNamed"
+  | "rampArousal"
+  | "interiorPOVInSex"
+  | "noSuddenly"
+  | "dialogueDuringSex"
+  | "kinksAsLived"
+  | "mandatoryAftermath"
+  | "noBeganTo"
+  | "noWeatherMirror"
+  | "onePOVPerScene";
 
-const BOOL_ROWS: { key: BoolKey; label: string }[] = [
-  { key: "useContractions", label: "Use contractions" },
-  { key: "noEmDashes", label: "Avoid em-dashes" },
-  { key: "noSemicolons", label: "Avoid semicolons" },
-  { key: "noNotXButY", label: `Avoid "it wasn't X, it was Y"` },
-  { key: "noRhetoricalQuestions", label: "Avoid rhetorical questions" },
-  { key: "sensoryGrounding", label: "Favor sensory detail" },
+type BoolGroup = { heading: string; rows: { key: BoolKey; label: string }[] };
+
+const BOOL_GROUPS: BoolGroup[] = [
+  {
+    heading: "Prose tells",
+    rows: [
+      { key: "useContractions", label: "Use contractions" },
+      { key: "noEmDashes", label: "Avoid em-dashes" },
+      { key: "noSemicolons", label: "Avoid semicolons" },
+      { key: "noNotXButY", label: `Avoid "it wasn't X, it was Y"` },
+      { key: "noRhetoricalQuestions", label: "Avoid rhetorical questions" },
+      { key: "sensoryGrounding", label: "Favor sensory detail" },
+    ],
+  },
+  {
+    heading: "Erotica craft & ethics",
+    rows: [
+      { key: "consentBeats", label: "Require consent beats" },
+      { key: "adultsOnly", label: "Adults only" },
+      { key: "bodiesDirectlyNamed", label: "Name bodies directly" },
+      { key: "rampArousal", label: "Ramp arousal across beats" },
+      { key: "interiorPOVInSex", label: "Interior POV during sex" },
+      { key: "noSuddenly", label: `Avoid "suddenly" / "just then"` },
+      { key: "dialogueDuringSex", label: "Dialogue during sex" },
+      { key: "kinksAsLived", label: "Play kinks, don't explain" },
+      { key: "mandatoryAftermath", label: "Require aftermath" },
+    ],
+  },
+  {
+    heading: "Prose polish (opt-in)",
+    rows: [
+      { key: "noBeganTo", label: `Avoid "began to X"` },
+      { key: "noWeatherMirror", label: "Avoid weather-as-emotion" },
+      { key: "onePOVPerScene", label: "One POV per scene" },
+    ],
+  },
 ];
 
 function OverrideIndicator() {
@@ -127,14 +168,21 @@ export function BibleStyleOverrides({ overrides, resolved, onChange }: Props) {
         </Button>
       </div>
 
-      {BOOL_ROWS.map((r) => (
-        <TriState
-          key={r.key}
-          label={r.label}
-          current={o[r.key]}
-          inherited={resolved[r.key]}
-          onChange={(v) => set(r.key, v)}
-        />
+      {BOOL_GROUPS.map((group) => (
+        <div key={group.heading} className="flex flex-col gap-3">
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+            {group.heading}
+          </p>
+          {group.rows.map((r) => (
+            <TriState
+              key={r.key}
+              label={r.label}
+              current={o[r.key]}
+              inherited={resolved[r.key]}
+              onChange={(v) => set(r.key, v)}
+            />
+          ))}
+        </div>
       ))}
 
       {/* Tense */}

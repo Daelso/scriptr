@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
+import { StyleRulesPreview } from "@/components/settings/StyleRulesPreview";
 import { DEFAULT_STYLE, type StyleRules } from "@/lib/style";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -327,6 +328,96 @@ export function SettingsForm() {
           onChange={(v) => patch({ style: { ...form.style, sensoryGrounding: v } })}
         />
 
+        <p className="mt-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+          Erotica craft &amp; ethics
+        </p>
+        <StyleToggle
+          id="consent-beats"
+          label="Require consent beats"
+          description="Show active, enthusiastic participation as beats in the prose"
+          checked={form.style.consentBeats ?? DEFAULT_STYLE.consentBeats}
+          onChange={(v) => patch({ style: { ...form.style, consentBeats: v } })}
+        />
+        <StyleToggle
+          id="adults-only"
+          label="Adults only"
+          description="All sexual participants are adults — never age down or imply minors"
+          checked={form.style.adultsOnly ?? DEFAULT_STYLE.adultsOnly}
+          onChange={(v) => patch({ style: { ...form.style, adultsOnly: v } })}
+        />
+        <StyleToggle
+          id="bodies-directly-named"
+          label="Name bodies directly"
+          description={`Cock, clit, nipples — avoid "his manhood" and clinical register`}
+          checked={form.style.bodiesDirectlyNamed ?? DEFAULT_STYLE.bodiesDirectlyNamed}
+          onChange={(v) => patch({ style: { ...form.style, bodiesDirectlyNamed: v } })}
+        />
+        <StyleToggle
+          id="ramp-arousal"
+          label="Ramp arousal across beats"
+          description="Tension, hesitation, caught breath before escalation"
+          checked={form.style.rampArousal ?? DEFAULT_STYLE.rampArousal}
+          onChange={(v) => patch({ style: { ...form.style, rampArousal: v } })}
+        />
+        <StyleToggle
+          id="interior-pov-in-sex"
+          label="Interior POV during sex"
+          description="Felt sensation and intrusive thought, not camera-angle description"
+          checked={form.style.interiorPOVInSex ?? DEFAULT_STYLE.interiorPOVInSex}
+          onChange={(v) => patch({ style: { ...form.style, interiorPOVInSex: v } })}
+        />
+        <StyleToggle
+          id="no-suddenly"
+          label={`Avoid "suddenly" / "just then"`}
+          description="Let cause and effect show through action and reaction"
+          checked={form.style.noSuddenly ?? DEFAULT_STYLE.noSuddenly}
+          onChange={(v) => patch({ style: { ...form.style, noSuddenly: v } })}
+        />
+        <StyleToggle
+          id="dialogue-during-sex"
+          label="Dialogue during sex"
+          description="Interrupted, whispered — not porn-script, not total silence"
+          checked={form.style.dialogueDuringSex ?? DEFAULT_STYLE.dialogueDuringSex}
+          onChange={(v) => patch({ style: { ...form.style, dialogueDuringSex: v } })}
+        />
+        <StyleToggle
+          id="kinks-as-lived"
+          label="Play kinks, don't explain them"
+          description="Narrator never explains what a character's preferences mean"
+          checked={form.style.kinksAsLived ?? DEFAULT_STYLE.kinksAsLived}
+          onChange={(v) => patch({ style: { ...form.style, kinksAsLived: v } })}
+        />
+        <StyleToggle
+          id="mandatory-aftermath"
+          label="Require aftermath"
+          description="Close every sex scene with connective tissue before cutting away"
+          checked={form.style.mandatoryAftermath ?? DEFAULT_STYLE.mandatoryAftermath}
+          onChange={(v) => patch({ style: { ...form.style, mandatoryAftermath: v } })}
+        />
+
+        <p className="mt-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+          Prose polish (opt-in)
+        </p>
+        <StyleToggle
+          id="no-began-to"
+          label={`Avoid "began to X" / "started to X"`}
+          checked={form.style.noBeganTo ?? DEFAULT_STYLE.noBeganTo}
+          onChange={(v) => patch({ style: { ...form.style, noBeganTo: v } })}
+        />
+        <StyleToggle
+          id="no-weather-mirror"
+          label="Avoid weather-as-emotion"
+          checked={form.style.noWeatherMirror ?? DEFAULT_STYLE.noWeatherMirror}
+          onChange={(v) => patch({ style: { ...form.style, noWeatherMirror: v } })}
+        />
+        <StyleToggle
+          id="one-pov-per-scene"
+          label="One POV per scene"
+          description="No head-hopping mid-scene"
+          checked={form.style.onePOVPerScene ?? DEFAULT_STYLE.onePOVPerScene}
+          onChange={(v) => patch({ style: { ...form.style, onePOVPerScene: v } })}
+        />
+
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="tense">Tense</Label>
           <Select
@@ -402,6 +493,8 @@ export function SettingsForm() {
             Free-text rules appended verbatim. Different from Bible → Style Notes, which describes the story&apos;s voice.
           </p>
         </div>
+
+        <StyleRulesPreview rules={form.style} />
 
         <Button
           type="button"

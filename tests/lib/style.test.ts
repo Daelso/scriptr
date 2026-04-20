@@ -12,6 +12,18 @@ describe("DEFAULT_STYLE", () => {
       "noNotXButY",
       "noRhetoricalQuestions",
       "sensoryGrounding",
+      "consentBeats",
+      "adultsOnly",
+      "bodiesDirectlyNamed",
+      "rampArousal",
+      "interiorPOVInSex",
+      "noSuddenly",
+      "dialogueDuringSex",
+      "kinksAsLived",
+      "mandatoryAftermath",
+      "noBeganTo",
+      "noWeatherMirror",
+      "onePOVPerScene",
       "tense",
       "explicitness",
       "dialogueTags",
@@ -30,6 +42,18 @@ describe("DEFAULT_STYLE", () => {
       noNotXButY: true,
       noRhetoricalQuestions: true,
       sensoryGrounding: true,
+      consentBeats: true,
+      adultsOnly: true,
+      bodiesDirectlyNamed: true,
+      rampArousal: true,
+      interiorPOVInSex: true,
+      noSuddenly: true,
+      dialogueDuringSex: true,
+      kinksAsLived: true,
+      mandatoryAftermath: true,
+      noBeganTo: false,
+      noWeatherMirror: false,
+      onePOVPerScene: false,
       tense: "past",
       explicitness: "explicit",
       dialogueTags: "prefer-said",
@@ -129,6 +153,18 @@ describe("formatStyleRules", () => {
       noNotXButY: false,
       noRhetoricalQuestions: false,
       sensoryGrounding: false,
+      consentBeats: false,
+      adultsOnly: false,
+      bodiesDirectlyNamed: false,
+      rampArousal: false,
+      interiorPOVInSex: false,
+      noSuddenly: false,
+      dialogueDuringSex: false,
+      kinksAsLived: false,
+      mandatoryAftermath: false,
+      noBeganTo: false,
+      noWeatherMirror: false,
+      onePOVPerScene: false,
       tense: "unknown",
       explicitness: "unknown",
       dialogueTags: "vary",
@@ -178,6 +214,15 @@ describe("formatStyleRules", () => {
       noNotXButY: true,
       noRhetoricalQuestions: false,
       sensoryGrounding: false,
+      consentBeats: false,
+      adultsOnly: false,
+      bodiesDirectlyNamed: false,
+      rampArousal: false,
+      interiorPOVInSex: false,
+      noSuddenly: false,
+      dialogueDuringSex: false,
+      kinksAsLived: false,
+      mandatoryAftermath: false,
       tense: "past",
       explicitness: "explicit",
       dialogueTags: "vary", // skipped
@@ -192,6 +237,61 @@ describe("formatStyleRules", () => {
     for (let i = 0; i < numbered.length; i++) {
       expect(numbered[i]).toBe(i + 1);
     }
+  });
+
+  it("emits each erotica craft rule when its toggle is on", () => {
+    const out = formatStyleRules({ ...DEFAULT_STYLE });
+    expect(out).toMatch(/Every sexual act shows active, enthusiastic participation/);
+    expect(out).toMatch(/All sexual participants are adults/);
+    expect(out).toMatch(/name body parts directly/);
+    expect(out).toMatch(/Stage arousal across at least three beats/);
+    expect(out).toMatch(/Narrate sex from inside the viewpoint character/);
+    expect(out).toMatch(/Never use "suddenly"/);
+    expect(out).toMatch(/Characters speak during sex/);
+    expect(out).toMatch(/Write kinks and specific acts as lived experience/);
+    expect(out).toMatch(/Every sex scene ends with connective tissue/);
+  });
+
+  it("omits each erotica craft rule when its toggle is off", () => {
+    const off: Required<StyleRules> = {
+      ...DEFAULT_STYLE,
+      consentBeats: false,
+      adultsOnly: false,
+      bodiesDirectlyNamed: false,
+      rampArousal: false,
+      interiorPOVInSex: false,
+      noSuddenly: false,
+      dialogueDuringSex: false,
+      kinksAsLived: false,
+      mandatoryAftermath: false,
+    };
+    const out = formatStyleRules(off);
+    expect(out).not.toMatch(/enthusiastic participation/);
+    expect(out).not.toMatch(/All sexual participants are adults/);
+    expect(out).not.toMatch(/name body parts directly/);
+    expect(out).not.toMatch(/three beats before escalation/);
+    expect(out).not.toMatch(/inside the viewpoint character/);
+    expect(out).not.toMatch(/Never use "suddenly"/);
+    expect(out).not.toMatch(/Characters speak during sex/);
+    expect(out).not.toMatch(/lived experience/);
+    expect(out).not.toMatch(/connective tissue/);
+  });
+
+  it("opt-in polish rules are off by default and emit only when toggled on", () => {
+    const baseline = formatStyleRules(DEFAULT_STYLE);
+    expect(baseline).not.toMatch(/began to X/);
+    expect(baseline).not.toMatch(/weather or natural imagery/);
+    expect(baseline).not.toMatch(/Head-hopping/);
+
+    const on = formatStyleRules({
+      ...DEFAULT_STYLE,
+      noBeganTo: true,
+      noWeatherMirror: true,
+      onePOVPerScene: true,
+    });
+    expect(on).toMatch(/Avoid "began to X"/);
+    expect(on).toMatch(/weather or natural imagery/);
+    expect(on).toMatch(/Head-hopping/);
   });
 
   it("renders every tense value distinctly", () => {
