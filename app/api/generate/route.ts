@@ -434,6 +434,7 @@ async function handleSection(body: GenerateRequest): Promise<Response> {
     chapter,
     targetSectionId: body.sectionId,
     regenNote,
+    style: DEFAULT_STYLE,
   });
 
   const model = story.modelOverride ?? config.defaultModel;

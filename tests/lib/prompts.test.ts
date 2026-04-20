@@ -264,6 +264,7 @@ describe("buildSectionRegenPrompt", () => {
       chapter: chapterWithSections,
       targetSectionId: "s2",
       regenNote: "more sensory",
+      style: DEFAULT_STYLE,
     });
     expect(typeof result.system).toBe("string");
     expect(typeof result.user).toBe("string");
@@ -278,6 +279,7 @@ describe("buildSectionRegenPrompt", () => {
       chapter: chapterWithSections,
       targetSectionId: "s2",
       regenNote: "more sensory",
+      style: DEFAULT_STYLE,
     });
     expect(user).toContain("\n---\n");
   });
@@ -289,6 +291,7 @@ describe("buildSectionRegenPrompt", () => {
       chapter: chapterWithSections,
       targetSectionId: "s2",
       regenNote: "more sensory",
+      style: DEFAULT_STYLE,
     });
     expect(user).toContain("⟪REWRITE:more sensory⟫");
     expect(user).toContain("Section two content.");
@@ -308,9 +311,46 @@ describe("buildSectionRegenPrompt", () => {
       chapter: chapterWithSections,
       targetSectionId: "s2",
       regenNote: "more sensory",
+      style: DEFAULT_STYLE,
     });
     // System should say output is only the rewritten scene
     expect(system.toLowerCase()).toMatch(/output only|rewritten scene|only the rewritten/);
+  });
+});
+
+describe("buildSectionRegenPrompt with style rules", () => {
+  const chapterWithSection: Chapter = {
+    ...baseChapter,
+    sections: [{ id: "s1", content: "The rose bloomed." }],
+  };
+
+  it("injects # Style rules after the current-scenes block", () => {
+    const { user } = buildSectionRegenPrompt({
+      story: baseStory,
+      bible: baseBible,
+      chapter: chapterWithSection,
+      targetSectionId: "s1",
+      regenNote: "hotter",
+      style: DEFAULT_STYLE,
+    } as Parameters<typeof buildSectionRegenPrompt>[0]);
+
+    const scenesIdx = user.indexOf("# Current scenes");
+    const rulesIdx = user.indexOf("# Style rules");
+
+    expect(scenesIdx).toBeGreaterThan(-1);
+    expect(rulesIdx).toBeGreaterThan(scenesIdx);
+  });
+
+  it("leaves system prompt free of style content", () => {
+    const { system } = buildSectionRegenPrompt({
+      story: baseStory,
+      bible: baseBible,
+      chapter: chapterWithSection,
+      targetSectionId: "s1",
+      regenNote: "",
+      style: DEFAULT_STYLE,
+    } as Parameters<typeof buildSectionRegenPrompt>[0]);
+    expect(system).not.toMatch(/# Style rules/);
   });
 });
 
