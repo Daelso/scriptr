@@ -27,6 +27,11 @@ interface SectionListProps {
   onSectionRegenerate?: (sectionId: string) => void;
   onSectionRegenerateWithNote?: (sectionId: string, note: string) => void;
   onSectionDelete?: (sectionId: string) => void;
+  /**
+   * PATCH the chapter with the new body for `sectionId`. EditorPane owns the
+   * SWR revalidation so SectionList stays presentational.
+   */
+  onSectionSaveBody?: (sectionId: string, newContent: string) => Promise<void>;
 }
 
 /**
@@ -43,6 +48,7 @@ export function SectionList({
   onSectionRegenerate,
   onSectionRegenerateWithNote,
   onSectionDelete,
+  onSectionSaveBody,
 }: SectionListProps) {
   const activeChapterId = useGenerationStore((s) => s.activeChapterId);
   const liveText = useGenerationStore((s) => s.liveText);
@@ -80,6 +86,7 @@ export function SectionList({
           onRegenerate={onSectionRegenerate}
           onRegenerateWithNote={onSectionRegenerateWithNote}
           onDelete={onSectionDelete}
+          onSaveBody={onSectionSaveBody}
         />
       ))}
       {isLiveHere && (

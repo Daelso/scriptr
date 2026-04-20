@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { SectionEditor } from "@/components/editor/SectionEditor";
 import { cn } from "@/lib/utils";
 import type { Section } from "@/lib/types";
 
@@ -21,12 +22,20 @@ interface SectionCardProps {
   /**
    * True while any generation (chapter or section) is active. Disables the
    * kebab menu so the user can't queue a second run — the hook is single-
-   * instance and would clobber the in-flight stream.
+   * instance and would clobber the in-flight stream. Also gates click-to-edit:
+   * mounting the Tiptap editor during a stream would let edits race with the
+   * PATCH revalidation.
    */
   disableActions?: boolean;
   onRegenerate?: (sectionId: string) => void;
   onRegenerateWithNote?: (sectionId: string, note: string) => void;
   onDelete?: (sectionId: string) => void;
+  /**
+   * Persist the edited body. EditorPane performs the PATCH + SWR revalidation.
+   * Throwing rejects the autosave so the editor stays open and a toast fires
+   * upstream.
+   */
+  onSaveBody?: (sectionId: string, newContent: string) => Promise<void>;
 }
 
 /**
@@ -42,10 +51,18 @@ export function SectionCard({
   onRegenerate,
   onRegenerateWithNote,
   onDelete,
+  onSaveBody,
 }: SectionCardProps) {
   const [showNoteInput, setShowNoteInput] = useState(false);
   const [note, setNote] = useState("");
+  const [editRequested, setEditRequested] = useState(false);
   const noteRef = useRef<HTMLTextAreaElement>(null);
+
+  // Derive the effective edit state. If a stream starts (chapter or section)
+  // while the user is mid-edit, this flips to false and unmounts the
+  // SectionEditor — whose useAutoSave fires a pending-save on unmount, so any
+  // in-flight text is preserved before the read-only view swaps back in.
+  const isEditing = editRequested && !disableActions && !isRegenerating;
 
   // Auto-focus the textarea when it opens.
   useEffect(() => {
@@ -94,6 +111,29 @@ export function SectionCard({
     }
   };
 
+  // Click-to-edit the body. Gated on onSaveBody being provided (read-only
+  // render if not), the section not actively regenerating, and no stream in
+  // flight. The cursor style flips to text when editing is possible so users
+  // get a hint that the prose is interactive.
+  const canEdit = Boolean(onSaveBody) && !isRegenerating && !disableActions;
+
+  const handleBodyClick = () => {
+    if (!canEdit) return;
+    setEditRequested(true);
+  };
+
+  const handleBodyKeyDown = (e: KeyboardEvent<HTMLParagraphElement>) => {
+    if (!canEdit) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      setEditRequested(true);
+    }
+  };
+
+  const handleEditorExit = () => {
+    setEditRequested(false);
+  };
+
   return (
     <article className="py-4 border-b border-border last:border-b-0">
       <div className="flex items-start justify-between gap-4">
@@ -118,8 +158,25 @@ export function SectionCard({
               <div className="h-4 w-[85%] rounded bg-muted animate-pulse" />
               <div className="h-4 w-[70%] rounded bg-muted animate-pulse" />
             </div>
+          ) : isEditing && onSaveBody ? (
+            <SectionEditor
+              sectionId={section.id}
+              initialContent={section.content}
+              onSave={onSaveBody}
+              onExit={handleEditorExit}
+            />
           ) : (
-            <p className="text-base leading-relaxed text-foreground whitespace-pre-wrap">
+            <p
+              className={cn(
+                "text-base leading-relaxed text-foreground whitespace-pre-wrap",
+                canEdit && "cursor-text",
+              )}
+              onClick={handleBodyClick}
+              onKeyDown={handleBodyKeyDown}
+              role={canEdit ? "button" : undefined}
+              tabIndex={canEdit ? 0 : undefined}
+              aria-label={canEdit ? "Edit section" : undefined}
+            >
               {section.content}
             </p>
           )}

@@ -312,6 +312,41 @@ export function EditorPane({ slug, chapterId }: EditorPaneProps) {
       ? data.sections.find((s) => s.id === pendingDeleteSectionId) ?? null
       : null;
 
+  // Inline-edit save handler. Overlays the new body onto the current
+  // `data.sections` and PATCHes the chapter. Throws on server error so the
+  // SectionEditor's useAutoSave surfaces an "error" status and the toast
+  // fires. SWR revalidation keeps the sidebar word-count fresh.
+  const handleSectionSaveBody = async (
+    sectionId: string,
+    newContent: string,
+  ) => {
+    if (!chapterId) return;
+    // Read the current sections at call time — `data` is the freshest SWR
+    // value since the parent re-renders on every revalidation, which updates
+    // this closure (and the autosave hook's `saveRef`).
+    const nextSections = data.sections.map((s) =>
+      s.id === sectionId ? { ...s, content: newContent } : s,
+    );
+    let res: Response;
+    try {
+      res = await fetch(`/api/stories/${slug}/chapters/${chapterId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sections: nextSections }),
+      });
+    } catch {
+      toast.error("Failed to save edit");
+      throw new Error("network error");
+    }
+    const json = (await res.json()) as { ok: boolean; error?: string };
+    if (!json.ok) {
+      toast.error("Failed to save edit");
+      throw new Error(json.error ?? "save failed");
+    }
+    if (singleKey) await globalMutate(singleKey);
+    void globalMutate(listKey);
+  };
+
   return (
     <div className="max-w-[72ch] mx-auto py-8 px-4">
       <ChapterHeader key={chapterId} slug={slug} chapter={data} />
@@ -329,6 +364,7 @@ export function EditorPane({ slug, chapterId }: EditorPaneProps) {
           onSectionRegenerate={handleSectionRegenerate}
           onSectionRegenerateWithNote={handleSectionRegenerateWithNote}
           onSectionDelete={handleSectionDeleteRequest}
+          onSectionSaveBody={handleSectionSaveBody}
         />
       </div>
       {overlayActive ? (
