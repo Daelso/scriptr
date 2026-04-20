@@ -49,6 +49,7 @@ export type Chapter = {
   sections: Section[];
   wordCount: number;
   targetWords?: number;
+  source?: "generated" | "imported";
 };
 
 export type GenerationMode = "full" | "section" | "continue";
