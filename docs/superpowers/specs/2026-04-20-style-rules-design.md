@@ -79,6 +79,8 @@ export function resolveStyleRules(config: Config, bible: Bible): Required<StyleR
 
 **Custom-rules special case.** Unlike the other fields, `customRules` concatenates rather than replaces: the effective string is `[globals.customRules, story.customRules].filter(Boolean).join("\n")`. Encoded in `resolveStyleRules`; documented inline.
 
+**Relationship to existing `Bible.styleNotes`.** The Bible already has a free-text `styleNotes` field that lives inside the bible block of the prompt (formatted by `formatBible` in [lib/prompts.ts](lib/prompts.ts)). That field stays where it is, unchanged. `customRules` is a different surface with a different job: `styleNotes` describes the *story's* voice ("dry, minimalist, occasional second-person asides"), while `customRules` is a *prompt-engineering* addendum that sits inside the `# Style rules` block ("never start a paragraph with 'Meanwhile'"). The Settings form's help text and the Bible editor's help text make this distinction explicit so users don't end up double-writing style guidance into both fields.
+
 ## Prompt integration
 
 New helper in `lib/style.ts`:
@@ -112,6 +114,8 @@ If the result would be empty (all toggles off and no customRules), `formatStyleR
 - `buildSectionRegenPrompt` — append after the marked-scene block, before the implicit end.
 
 `buildRecapPrompt` does **not** receive style — recaps are plot summaries, not prose. Its signature is unchanged.
+
+`buildSectionRegenPrompt` **does** receive style, even though it only rewrites one scene rather than a full chapter. Voice and craft rules apply at any granularity: a regenerated scene needs to match the prose around it, so contractions, em-dash policy, tense, explicitness, and dialogue-tag discipline all still matter.
 
 **Why inside the user prompt.** Three reasons:
 
@@ -191,7 +195,7 @@ Each unit has one clear job and a stable interface.
 - **`lib/types.ts`** — add `styleOverrides?: StyleRules` to `Bible`. No other type changes.
 - **`lib/prompts.ts`** — add `style: Required<StyleRules>` parameter to `buildChapterPrompt`, `buildContinuePrompt`, `buildSectionRegenPrompt`. Append `formatStyleRules(style)` inside the user string at the specified position. `buildRecapPrompt` unchanged.
 - **`app/api/settings/route.ts`** — add `"styleDefaults"` to `allowed`; include it in the `GET` response.
-- **`app/api/generate/route.ts`** (and the `stop`/`recap` siblings as applicable) — load config and bible, call `resolveStyleRules`, pass the result into whichever prompt builder is being invoked.
+- **`app/api/generate/route.ts`** — load config and bible, call `resolveStyleRules`, pass the result into whichever prompt builder is being invoked (chapter / continue / section-regen). The `stop` sibling doesn't generate text and the `recap` sibling intentionally excludes style; neither needs changes.
 - **`components/settings/SettingsForm.tsx`** — new "Writing style defaults" section. Reads/writes `styleDefaults` via `/api/settings`.
 - **New component: `components/bible/StyleOverridesSection.tsx`** — collapsible tri-state form embedded in the Bible editor. Props: `{ overrides: StyleRules, resolved: Required<StyleRules>, onChange: (next: StyleRules) => void }`. Resolves the "inherit" display text from the `resolved` prop.
 
@@ -213,6 +217,7 @@ The resolver (`resolveStyleRules`) and the formatter (`formatStyleRules`) are th
 - empty output when no toggles diverge from their no-op default and customRules is blank;
 - each toggle at its active value produces its exact instruction line (snapshot tests);
 - each select value produces its exact instruction line;
+- `dialogueTags: "vary"` produces no dialogue-tag line (explicit test locks in the "omitted as no-op" behavior);
 - numbering is contiguous (no gaps when toggles are skipped);
 - `customRules` appended verbatim, whitespace-only customRules omitted.
 
