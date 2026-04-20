@@ -1,5 +1,6 @@
 import type { Config } from "@/lib/config";
 import type { Bible } from "@/lib/types";
+import { logger } from "@/lib/logger";
 
 export type StyleRules = {
   useContractions?: boolean;
@@ -94,7 +95,8 @@ export function formatStyleRules(rules: Required<StyleRules>): string {
     case "present":
       lines.push("Write in present tense.");
       break;
-    // unknown values → omit
+    default:
+      logger.warn("formatStyleRules: unknown tense value, omitting line:", rules.tense);
   }
 
   switch (rules.explicitness) {
@@ -118,7 +120,8 @@ export function formatStyleRules(rules: Required<StyleRules>): string {
         "Explicitness: graphic — unflinching, anatomically specific, no euphemism.",
       );
       break;
-    // unknown values → omit
+    default:
+      logger.warn("formatStyleRules: unknown explicitness value, omitting line:", rules.explicitness);
   }
 
   if (rules.dialogueTags === "prefer-said") {

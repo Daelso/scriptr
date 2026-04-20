@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { DEFAULT_STYLE, type StyleRules, resolveStyleRules } from "@/lib/style";
 import type { Config } from "@/lib/config";
 import type { Bible } from "@/lib/types";
@@ -233,19 +233,31 @@ describe("formatStyleRules", () => {
     expect(out).not.toMatch(/Additional rules/);
   });
 
-  it("unknown tense value omits the tense line (graceful)", () => {
+  it("unknown tense value omits the tense line (graceful) and warns", () => {
     // Simulates a hand-edited config.json with an invalid enum value
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const rules = { ...DEFAULT_STYLE, tense: "fugue" } as unknown as Required<StyleRules>;
     const out = formatStyleRules(rules);
     expect(out).not.toMatch(/tense/i);
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[warn]",
+      expect.stringContaining("unknown tense"),
+    );
+    warnSpy.mockRestore();
   });
 
-  it("unknown explicitness value omits the explicitness line (graceful)", () => {
+  it("unknown explicitness value omits the explicitness line (graceful) and warns", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const rules = {
       ...DEFAULT_STYLE,
       explicitness: "cosmic",
     } as unknown as Required<StyleRules>;
     const out = formatStyleRules(rules);
     expect(out).not.toMatch(/Explicitness/);
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[warn]",
+      expect.stringContaining("unknown explicitness"),
+    );
+    warnSpy.mockRestore();
   });
 });
