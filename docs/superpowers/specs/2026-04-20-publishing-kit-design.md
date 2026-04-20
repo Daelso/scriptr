@@ -75,6 +75,8 @@ export type Chapter = {
 
 `source` is used only for (a) a small "imported" chip in the chapter list and (b) silently skipping auto-recap on imported chapters unless the user opts in during import. Undefined means "generated" (legacy chapters written before this feature existed).
 
+**Downstream generation context.** Imported chapters participate in the existing generation context pipeline (recap chaining, optional last-chapter-full-text) exactly like generated chapters. If the user imports chapter 3 and then asks scriptr to generate chapter 4, the chapter 3 recap (if present) feeds into chapter 4's context just as it would for a natively-generated chapter. This is intentional — the user's goal is a cohesive book, and scriptr should treat the imported prose as authoritative prior context. Style rules for chapter 4 generation are not retroactively applied to chapter 3's prose, which is fine: style rules govern *new* output, not prior context.
+
 ### `Story` — no type changes
 
 All publishing metadata already exists on `Story`: `title`, `subtitle`, `authorPenName`, `description`, `copyrightYear`, `language`, `bisacCategory`, `keywords`, `isbn`. The Export page just wires UI to fields already on disk.
@@ -97,14 +99,14 @@ New module `lib/publish/cleanup.ts`:
 
 ```ts
 export type CleanupStep =
-  | "stripChatCruft"
   | "normalizeLineEndings"
+  | "stripChatCruft"
   | "trimTrailingWhitespace"
   | "collapseInternalSpaces"
   | "normalizeQuotes"
-  | "normalizeDashes"
   | "normalizeSceneBreaks"
-  | "parseMarkdownEmphasis"  // preserves the markdown markers; does not transform to HTML
+  | "normalizeDashes"
+  | "preserveMarkdownEmphasis"
   | "collapseBlankLines"
   | "splitIntoSections";
 
@@ -122,20 +124,22 @@ All steps default to `true`. `opts` allows individual disabling via the UI toggl
 
 ### Pipeline order (fixed; steps run in this order)
 
-1. **`stripChatCruft`** — remove leading/trailing lines that match chat-preamble / sign-off heuristics. Matchers are small and specific (documented in the Appendix). Warnings list each stripped line so the user can see what was removed. Over-stripping is the main regression risk — tests exercise novel-looking prose that happens to start with "Sure" or similar to ensure it isn't clobbered.
-2. **`normalizeLineEndings`** — CRLF / CR → LF.
+Order matters — specifically, `normalizeSceneBreaks` must run before `normalizeDashes` so that `---` (three hyphens, a common external scene-break marker and also scriptr's own internal marker) is normalized to the canonical form before `--` → `—` would consume its hyphens. `normalizeLineEndings` runs first so every subsequent step can treat `\n` as the sole paragraph / line separator.
+
+1. **`normalizeLineEndings`** — CRLF / CR → LF. All subsequent steps assume LF.
+2. **`stripChatCruft`** — remove leading / trailing lines that match chat-preamble / sign-off heuristics. Matchers are small and specific (documented in the Appendix). Warnings list each stripped line so the user can see what was removed. Over-stripping is the main regression risk — tests exercise novel-looking prose that happens to start with "Sure" or similar to ensure it isn't clobbered.
 3. **`trimTrailingWhitespace`** — per line.
 4. **`collapseInternalSpaces`** — runs of ≥ 2 spaces inside a paragraph → single space. Double-space-after-period is a subset.
 5. **`normalizeQuotes`** — straight `"` / `'` → contextually-correct curly. Opening after whitespace or line start, closing otherwise. Apostrophes in contractions (e.g. `don't`, `he'd`) use the closing curly `'`. Already-curly quotes preserved.
-6. **`normalizeDashes`** — `--` (two hyphens) → `—` (em dash). Hyphens in compound words untouched. Already-em-dashes preserved.
-7. **`normalizeSceneBreaks`** — lines matching `/^\s*(\*\s*\*\s*\*|\*\*\*|#|—{3,}|-{3,}|={3,})\s*$/` → scriptr's `---` marker. Runs of ≥ 3 consecutive blank lines also collapse to `---`. The `---` marker is the internal section-break convention already used by `lib/stream.ts`.
-8. **`parseMarkdownEmphasis`** — no-op at cleanup time. Kept as a named step so the UI can surface "markdown emphasis preserved" affordance; actual `*italic*` / `**bold**` stays in `content` verbatim. The renderer transforms it at display time (see EPUB renderer below).
-9. **`collapseBlankLines`** — runs of > 1 blank line (that weren't scene breaks — step 7 already consumed those) collapse to exactly one. Preserves paragraph-separator blank lines.
-10. **`splitIntoSections`** — split on `---` markers. Each non-empty chunk becomes a string in `sections[]`. Leading / trailing `---` do not produce empty sections. The caller wraps each string into a `Section` with a fresh UUID.
+6. **`normalizeSceneBreaks`** — lines matching `/^\s*(\*\s*\*\s*\*|\*\*\*|#|—{3,}|-{3,}|={3,})\s*$/` → scriptr's `---` marker. Runs of ≥ 3 consecutive blank lines also collapse to `---`. The `---` marker is the internal section-break convention already used by `lib/stream.ts`.
+7. **`normalizeDashes`** — `--` (two hyphens) → `—` (em dash). Hyphens in compound words untouched. Already-em-dashes preserved. Runs *after* scene-break normalization so that `---` scene markers (already rewritten to scriptr's canonical `---` form in step 6) are still recognizable as whole-line matches and their hyphens survive — step 7's regex excludes lines that are exactly `---`.
+8. **`preserveMarkdownEmphasis`** — when enabled (default), leaves `*italic*` / `**bold**` in `content` verbatim; the renderer transforms them at display time. When disabled, strips `*` and `**` pairs, keeping the text inside — so the toggle has an observable effect (the rendered prose loses emphasis). This is the only step whose on / off produces different text output but whose "on" behavior is a pure pass-through.
+9. **`collapseBlankLines`** — runs of > 1 blank line (that weren't scene breaks — step 6 already consumed those) collapse to exactly one. Preserves paragraph-separator blank lines.
+10. **`splitIntoSections`** — split on `---` markers (whole-line only). Each non-empty chunk becomes a string in `sections[]`. Leading / trailing `---` do not produce empty sections. The caller wraps each string into a `Section` with a fresh UUID.
 
 ### Idempotency
 
-`cleanPaste(cleanPaste(x).sections.join("\n\n---\n\n")).sections` equals the first call's `sections`. Tested with a snapshot.
+`cleanPaste(cleanPaste(x).sections.join("\n\n---\n\n")).sections` equals the first call's `sections`. Tested with a snapshot. This works because (a) step 6 recognizes `---` as a whole-line scene-break match and rewrites it to the same `---` form; (b) step 7 explicitly excludes lines that are exactly `---` from its `--` → `—` substitution; and (c) steps 5 and 8, when applied to already-normalized output, are no-ops.
 
 ### Warnings
 
@@ -164,20 +168,28 @@ Library: **`epub-gen-memory`** (pure JS, no native deps). Validation: **`epubche
 
 Pure function; unit-tested against golden outputs.
 
-- Escape HTML entities in raw section text first.
-- Split on double-newline → wrap each paragraph in `<p>`.
-- Markdown subset only: `**bold**` → `<strong>`, `*italic*` → `<em>`. Nested emphasis (e.g. `**bold with *italic* inside**`) supported. Everything else is passed through escaped.
-- Sections within a chapter join with a centered scene-break `<div class="scene-break">* * *</div>`.
-- Chapter opens with `<h1 class="chapter-title">Chapter {n}</h1>` followed by `<p class="chapter-subtitle">{chapter.title}</p>` if present.
+Algorithm, applied in order to each section's `content`:
+
+1. Escape HTML entities in the raw text (`&` → `&amp;`, `<` → `&lt;`, `>` → `&gt;`). This guarantees any `<` / `>` emitted later by the transformer is the only HTML in the output.
+2. Two-pass emphasis. First pass: replace `\*\*([^*\n]+?)\*\*` with `<strong>$1</strong>` (bold, non-greedy, no newline crossing). Second pass, on the result: replace `\*([^*\n]+?)\*` with `<em>$1</em>` (italic). Because the bold pass already consumed `**…**` boundaries and rewrote them to `<strong>…</strong>`, a nested `*italic*` inside a bold run is handled on the second pass. Literal asterisks need to be doubled in the source (`\*` is not supported as an escape in this subset — users writing asterisks in prose is rare; if it matters, they can delete the star in the import dialog's source pane).
+3. Split on runs of one or more blank lines → wrap each paragraph in `<p>`. Single newlines within a paragraph are collapsed to spaces (EPUB-friendly; line breaks inside a paragraph are not meaningful).
+4. Sections within a chapter join with a centered scene-break block: `<div class="scene-break">* * *</div>`.
+5. Chapter opens with `<h1 class="chapter-title">Chapter {n}</h1>` followed by `<p class="chapter-subtitle">{chapter.title}</p>` if `chapter.title` is non-empty.
+
+Snapshot tests pin the exact byte output for a small set of representative inputs (plain paragraph, paragraph with italic, paragraph with bold, nested italic-in-bold, HTML entity escaping, multi-section chapter).
 
 ### EPUB3 package structure
 
 - `mimetype`, `META-INF/container.xml`, `OEBPS/content.opf`
-- `cover.xhtml` + `cover.jpg` (or a 1600×2560 SVG title card if `coverPath` is absent)
+- `cover.xhtml` + `cover.jpg`. If no cover uploaded, the renderer generates a 1600×2560 title-card SVG (solid background, centered title + author) and rasterizes it to JPEG via `sharp` (a transitive dep of Next.js 15 — verified present in `node_modules/next/package.json`) before packaging. Every EPUB ships with a real JPEG cover — Kindle ingestion pipelines can be finicky about SVG covers, so we avoid them entirely.
 - Title page — title, subtitle, author, copyright line, ISBN if present
 - Auto-generated NCX + nav TOC from the chapter list
 - One XHTML per chapter, produced by the transformer
 - Single `styles.css`: serif body, 1.5 line-height, justified paragraphs, 1.5em first-line indent, centered `.scene-break`, `page-break-before: always` on `h1.chapter-title`
+
+### Library confirmation
+
+Both `epub-gen-memory` and `epubcheck-wasm` are available on npm under permissive licenses and work on Node 20+. The implementation plan's first task verifies install + basic "build empty EPUB" happy-path before any UI work begins. If either library is unexpectedly unavailable or broken, the plan substitutes a near-equivalent (`jszip`-based hand-rolled EPUB build; skip validation) and flags the trade-off.
 
 ### Preview coupling
 
@@ -218,11 +230,19 @@ Three new routes. All local-only; no egress.
 
 Body: `{ raw: string; cleanupOptions?: CleanupOptions; title?: string; generateRecap?: boolean }`.
 
-Behavior: runs `cleanPaste(raw, cleanupOptions)`, wraps each section string into a `Section` with a fresh UUID, builds a `Chapter` with `source: "imported"` and the provided `title` (or the inferred title if `title` absent), writes it via `lib/storage/chapters.ts`, appends its id to `story.chapterOrder`, returns `{ ok: true, data: Chapter }`.
+Behavior: runs `cleanPaste(raw, cleanupOptions)`, wraps each section string into a `Section` with a fresh UUID, builds a `Chapter` with `source: "imported"` and the provided `title` (or the inferred title if `title` absent — rules below), writes it via `lib/storage/chapters.ts`, appends its id to `story.chapterOrder`, returns `{ ok: true, data: Chapter }`.
 
-If `generateRecap: true`, fires the existing `/api/generate/recap` flow asynchronously after save — same code path native chapters use, so it's already covered by existing privacy exemptions.
+**Recap integration.** The import route itself never calls Grok and never invokes the recap handler. Instead, on a successful POST response, if the user checked "Generate recap via Grok" in the dialog, the **client** (`ImportChapterDialog`) fires a follow-up `POST /api/generate/recap` with the new chapter's id. This keeps the import route entirely local: the only route that touches `api.x.ai` is the existing `/api/generate/recap`, which is already on the privacy-smoke exemption list. The route test for the import endpoint asserts that no outbound fetch ever originates from the handler.
+
+**Title inference rules** (applied when `title` is absent from the request body), in priority order:
+
+1. First line that matches `/^(?:chapter|ch\.?)\s+(\d+|[ivxlcdm]+)(?:\s*[:\-—.]\s*(.+))?$/i`. If capture group 2 is present, use it as the title; otherwise use `"Chapter {n}"` where `{n}` is the detected number.
+2. First line whose length is between 3 and 60 characters and that is followed by a blank line (i.e. a standalone short line). Use that line verbatim.
+3. Fallback: the first 60 characters of the first paragraph, truncated at the nearest word boundary, with `"…"` appended if truncation occurred.
 
 **The raw paste is never written to disk.** The route test asserts this by stubbing the filesystem writer and checking that no call's payload contains a fragment of the raw paste.
+
+**Paste size limit.** The handler reads the request body via `req.text()` and checks `body.length` against a 1 MB cap before parsing JSON. Next.js 15 App Router does not enforce body-size limits on route handlers by default, so the cap is explicit in the handler. Over-limit requests return 413 before any cleanup work runs.
 
 ### `PUT /api/stories/[slug]/cover`
 
@@ -234,7 +254,7 @@ Behavior: server-side validation — MIME must be `image/jpeg` or `image/png`, b
 
 Body: none (reads everything from disk).
 
-Behavior: loads story + all chapters + cover (if present), calls `buildEpubBytes`, writes the output to `data/stories/<slug>/exports/<slug>.epub` (overwriting any prior build), runs `epubcheck-wasm` on the bytes, returns `{ ok: true, data: { path, bytes, warnings } }`. Validation warnings do not prevent the write.
+Behavior: loads story + all chapters + cover (if present), calls `buildEpubBytes`, runs `epubcheck-wasm` on the bytes in memory, then writes the output to `data/stories/<slug>/exports/<slug>.epub` via write-to-temp-then-rename (same-directory `.epub.tmp` → rename). This makes re-builds atomic: a failed or crashed build leaves the previous `.epub` in place. Returns `{ ok: true, data: { path, bytes, warnings } }`. Validation warnings do not prevent the write.
 
 ## Privacy
 
@@ -377,8 +397,16 @@ All of these, on a line by themselves (with optional surrounding whitespace), co
 
 ### Markdown emphasis subset (renderer, not cleanup)
 
-- `**text**` → `<strong>text</strong>`. Non-greedy; nested `*italic*` supported.
-- `*text*` → `<em>text</em>`. Does not match inside words (e.g. `snake_case` left alone — though the rule uses `*`, not `_`, so this is largely moot).
-- Literal asterisks produced by escaping (`\*`) are passed through as a single `*` character.
+Applied as two sequential regex passes on already-HTML-entity-escaped text:
+
+1. `**text**` → `<strong>text</strong>` via `/\*\*([^*\n]+?)\*\*/g`.
+2. Then on the result, `*text*` → `<em>text</em>` via `/\*([^*\n]+?)\*/g`.
+
+Nested `*italic*` inside `**bold**` works because pass 1 rewrites the bold boundaries, leaving `*italic*` as the only asterisks on pass 2. Newlines inside emphasis are not supported (the regex refuses to cross line boundaries). Literal asterisks in prose are unsupported in this subset — users who truly need one can delete it in the import dialog's source pane before saving.
 
 No other markdown syntax is interpreted. Headings, links, lists, code blocks all pass through as literal text.
+
+### `preserveMarkdownEmphasis` step (cleanup pipeline step 8)
+
+- **On (default):** no-op pass-through. `*italic*` and `**bold**` stay in `content`; the renderer handles them at display time.
+- **Off:** strips `**` and `*` pairs but preserves the text inside. Regex passes: `/\*\*([^*\n]+?)\*\*/g` → `$1`, then `/\*([^*\n]+?)\*/g` → `$1`. Toggling this off is for users who want their pasted prose stored as pure plain text with no markdown at all.
