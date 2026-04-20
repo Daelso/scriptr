@@ -64,3 +64,81 @@ export function resolveStyleRules(
 
   return merged;
 }
+
+export function formatStyleRules(rules: Required<StyleRules>): string {
+  const lines: string[] = [];
+
+  if (rules.useContractions) {
+    lines.push("Use contractions (I'm, don't, won't) in narration and dialogue.");
+  }
+  if (rules.noEmDashes) {
+    lines.push("Do not use em-dashes. Use commas, periods, or parentheses instead.");
+  }
+  if (rules.noSemicolons) {
+    lines.push("Do not use semicolons.");
+  }
+  if (rules.noNotXButY) {
+    lines.push(`Avoid "it wasn't X, it was Y" constructions.`);
+  }
+  if (rules.noRhetoricalQuestions) {
+    lines.push("Avoid rhetorical questions in narration.");
+  }
+  if (rules.sensoryGrounding) {
+    lines.push("Favor concrete sensory detail over abstract emotion statements.");
+  }
+
+  switch (rules.tense) {
+    case "past":
+      lines.push("Write in past tense.");
+      break;
+    case "present":
+      lines.push("Write in present tense.");
+      break;
+    // unknown values → omit
+  }
+
+  switch (rules.explicitness) {
+    case "fade":
+      lines.push(
+        "Explicitness: fade-to-black — suggest intimacy, cut before physical detail.",
+      );
+      break;
+    case "suggestive":
+      lines.push(
+        "Explicitness: suggestive — evocative but non-graphic; imply rather than describe.",
+      );
+      break;
+    case "explicit":
+      lines.push(
+        "Explicitness: explicit — detailed physical and sensory description, no censorship or fade-outs.",
+      );
+      break;
+    case "graphic":
+      lines.push(
+        "Explicitness: graphic — unflinching, anatomically specific, no euphemism.",
+      );
+      break;
+    // unknown values → omit
+  }
+
+  if (rules.dialogueTags === "prefer-said") {
+    lines.push(
+      `Prefer "said" as the default dialogue tag. Vary only when the tag carries information.`,
+    );
+  }
+  // "vary" is the no-op default — emit nothing.
+
+  // Emit all zero-argument toggles first, then customRules addendum if present.
+  const trimmedCustom = rules.customRules.trim();
+
+  // Caller-friendly empty case: everything off AND no custom rules.
+  if (lines.length === 0 && !trimmedCustom) return "";
+
+  const numbered = lines.map((line, i) => `${i + 1}. ${line}`);
+
+  if (trimmedCustom) {
+    numbered.push(`${numbered.length + 1}. Additional rules:\n${trimmedCustom}`);
+  }
+
+  return `# Style rules\n${numbered.join("\n")}`;
+}
