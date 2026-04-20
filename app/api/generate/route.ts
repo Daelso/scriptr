@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import type OpenAI from "openai";
 import { readJson } from "@/lib/api";
 import { loadConfig, effectiveDataDir } from "@/lib/config";
 import { getStory } from "@/lib/storage/stories";
@@ -51,7 +52,7 @@ type ChapterStreamOptions = {
   prompt: { system: string; user: string };
   /** Initial sections snapshot — new sections are appended to this. */
   initialSections: Section[];
-  client: { chat: { completions: { create: (...args: unknown[]) => unknown } } };
+  client: OpenAI;
   abort: AbortController;
   jobId: string;
   /** When true, generate a recap after the done event (full/continue modes only). */

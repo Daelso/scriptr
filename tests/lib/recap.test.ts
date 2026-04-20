@@ -42,7 +42,7 @@ describe("generateRecap", () => {
   it("happy path — returns trimmed content from non-empty response", async () => {
     vi.mocked(callGrokWithRetry).mockResolvedValueOnce({
       choices: [{ message: { content: "Alice finds a key and opens a door." } }],
-    } as unknown as ReturnType<typeof callGrokWithRetry>);
+    } as unknown as Awaited<ReturnType<typeof callGrokWithRetry>>);
 
     const result = await generateRecap(fakeClient, "model-x", story, chapter);
     expect(result).toBe("Alice finds a key and opens a door.");
@@ -51,7 +51,7 @@ describe("generateRecap", () => {
   it("empty content — returns empty string", async () => {
     vi.mocked(callGrokWithRetry).mockResolvedValueOnce({
       choices: [{ message: { content: "" } }],
-    } as unknown as ReturnType<typeof callGrokWithRetry>);
+    } as unknown as Awaited<ReturnType<typeof callGrokWithRetry>>);
 
     const result = await generateRecap(fakeClient, "model-x", story, chapter);
     expect(result).toBe("");
@@ -70,7 +70,7 @@ describe("generateRecap", () => {
   it("trims leading and trailing whitespace from content", async () => {
     vi.mocked(callGrokWithRetry).mockResolvedValueOnce({
       choices: [{ message: { content: "  padded   \n" } }],
-    } as unknown as ReturnType<typeof callGrokWithRetry>);
+    } as unknown as Awaited<ReturnType<typeof callGrokWithRetry>>);
 
     const result = await generateRecap(fakeClient, "model-x", story, chapter);
     expect(result).toBe("padded");
@@ -78,7 +78,7 @@ describe("generateRecap", () => {
 
   it("malformed / missing choices — returns empty string safely", async () => {
     vi.mocked(callGrokWithRetry).mockResolvedValueOnce(
-      {} as unknown as ReturnType<typeof callGrokWithRetry>
+      {} as unknown as Awaited<ReturnType<typeof callGrokWithRetry>>
     );
 
     const result = await generateRecap(fakeClient, "model-x", story, chapter);
@@ -88,7 +88,7 @@ describe("generateRecap", () => {
   it("calls callGrokWithRetry with stream: false and correct messages", async () => {
     vi.mocked(callGrokWithRetry).mockResolvedValueOnce({
       choices: [{ message: { content: "recap text" } }],
-    } as unknown as ReturnType<typeof callGrokWithRetry>);
+    } as unknown as Awaited<ReturnType<typeof callGrokWithRetry>>);
 
     await generateRecap(fakeClient, "model-y", story, chapter);
 

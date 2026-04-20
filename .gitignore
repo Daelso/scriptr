@@ -46,6 +46,7 @@ next-env.d.ts
 # scriptr-specific
 .superpowers/
 data/
+.playwright-mcp/
 
 # scriptr runtime artifacts
 *.local
