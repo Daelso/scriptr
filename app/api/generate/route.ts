@@ -9,11 +9,12 @@ import { getGrokClient, MissingKeyError } from "@/lib/grok";
 import { callGrokWithRetry, GrokError } from "@/lib/grok-retry";
 import type { RetryOptions } from "@/lib/grok-retry";
 import { buildChapterPrompt, buildSectionRegenPrompt, buildContinuePrompt } from "@/lib/prompts";
+import { generateRecap } from "@/lib/recap";
 import { chunkBySectionBreak } from "@/lib/stream";
 import { registerJob, clearJob } from "@/lib/generation-job";
 import { writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import type { GenerateEvent, GenerateRequest, Section } from "@/lib/types";
+import type { GenerateEvent, GenerateRequest, Section, Story } from "@/lib/types";
 
 const PERSIST_INTERVAL_MS = 2000;
 
@@ -53,6 +54,10 @@ type ChapterStreamOptions = {
   client: { chat: { completions: { create: (...args: unknown[]) => unknown } } };
   abort: AbortController;
   jobId: string;
+  /** When true, generate a recap after the done event (full/continue modes only). */
+  autoRecap?: boolean;
+  /** The full story object, used for recap generation. */
+  story?: Story;
 };
 
 /**
@@ -63,7 +68,7 @@ type ChapterStreamOptions = {
  * Option Y from the design doc: extract into a shared helper to avoid duplication.
  */
 function runChapterStream(opts: ChapterStreamOptions): Response {
-  const { dataDir, storySlug, chapterId, model, prompt, initialSections, client, abort, jobId } = opts;
+  const { dataDir, storySlug, chapterId, model, prompt, initialSections, client, abort, jobId, autoRecap, story } = opts;
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -168,6 +173,33 @@ function runChapterStream(opts: ChapterStreamOptions): Response {
         await writeQueue;
 
         controller.enqueue(sse({ type: "done", finishReason }));
+
+        // Auto-recap: best-effort, wrapped in try/catch. Errors are swallowed;
+        // the chapter already saved successfully with recap = "".
+        if (autoRecap && story) {
+          let recap = "";
+          try {
+            // Re-read chapter from disk so the recap prompt sees the just-written sections.
+            const freshChapter = await getChapter(dataDir, storySlug, chapterId);
+            if (freshChapter) {
+              recap = await generateRecap(
+                client as Parameters<typeof generateRecap>[0],
+                model,
+                story,
+                freshChapter,
+                _RETRY_OPTIONS
+              );
+            }
+          } catch {
+            // Recap is best-effort; chapter still saved with recap = ""
+          }
+          try {
+            await updateChapter(dataDir, storySlug, chapterId, { recap });
+          } catch {
+            // best-effort
+          }
+          controller.enqueue(sse({ type: "recap", text: recap }));
+        }
       } catch (err) {
         clearInterval(persistTimer);
 
@@ -276,6 +308,8 @@ async function handleFull(body: GenerateRequest): Promise<Response> {
     client,
     abort,
     jobId,
+    autoRecap: config.autoRecap,
+    story,
   });
 }
 
@@ -362,6 +396,8 @@ async function handleContinue(body: GenerateRequest): Promise<Response> {
     client,
     abort,
     jobId,
+    autoRecap: config.autoRecap,
+    story,
   });
 }
 
