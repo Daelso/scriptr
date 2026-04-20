@@ -10,7 +10,7 @@ import { getGrokClient, MissingKeyError } from "@/lib/grok";
 import { callGrokWithRetry, GrokError } from "@/lib/grok-retry";
 import type { RetryOptions } from "@/lib/grok-retry";
 import { buildChapterPrompt, buildSectionRegenPrompt, buildContinuePrompt } from "@/lib/prompts";
-import { DEFAULT_STYLE } from "@/lib/style";
+import { resolveStyleRules } from "@/lib/style";
 import { generateRecap } from "@/lib/recap";
 import { chunkBySectionBreak } from "@/lib/stream";
 import { registerJob, clearJob } from "@/lib/generation-job";
@@ -271,7 +271,7 @@ async function handleFull(body: GenerateRequest): Promise<Response> {
     chapter,
     includeLastChapterFullText: config.includeLastChapterFullText,
     lastChapterFullText,
-    style: DEFAULT_STYLE,
+    style: resolveStyleRules(config, bible),
   });
 
   const model = story.modelOverride ?? config.defaultModel;
@@ -360,7 +360,7 @@ async function handleContinue(body: GenerateRequest): Promise<Response> {
   // Build a chapter snapshot with the truncated sections for prompt building
   const truncatedChapter = { ...originalChapter, sections: truncatedSections };
 
-  const prompt = buildContinuePrompt({ story, bible, priorRecaps, chapter: truncatedChapter, regenNote, style: DEFAULT_STYLE });
+  const prompt = buildContinuePrompt({ story, bible, priorRecaps, chapter: truncatedChapter, regenNote, style: resolveStyleRules(config, bible) });
   const model = story.modelOverride ?? config.defaultModel;
 
   // Write .last-payload.json — exactly four fields, no headers, no key
@@ -434,7 +434,7 @@ async function handleSection(body: GenerateRequest): Promise<Response> {
     chapter,
     targetSectionId: body.sectionId,
     regenNote,
-    style: DEFAULT_STYLE,
+    style: resolveStyleRules(config, bible),
   });
 
   const model = story.modelOverride ?? config.defaultModel;
