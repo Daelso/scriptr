@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
+import { DEFAULT_STYLE, type StyleRules } from "@/lib/style";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -28,6 +29,7 @@ interface SettingsData {
   theme: "light" | "dark" | "system";
   autoRecap: boolean;
   includeLastChapterFullText: boolean;
+  styleDefaults?: StyleRules;
 }
 
 interface FormState {
@@ -37,6 +39,7 @@ interface FormState {
   theme: "light" | "dark" | "system";
   autoRecap: boolean;
   includeLastChapter: boolean;
+  style: Required<StyleRules>;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -54,6 +57,7 @@ const DEFAULT_FORM: FormState = {
   theme: "system",
   autoRecap: true,
   includeLastChapter: false,
+  style: { ...DEFAULT_STYLE },
 };
 
 function formFromData(data: SettingsData): FormState {
@@ -64,6 +68,7 @@ function formFromData(data: SettingsData): FormState {
     theme: data.theme,
     autoRecap: data.autoRecap,
     includeLastChapter: data.includeLastChapterFullText,
+    style: { ...DEFAULT_STYLE, ...(data.styleDefaults ?? {}) },
   };
 }
 
