@@ -340,7 +340,7 @@ No change required. The three new routes are fully local and do not need to be a
 | Cover image under 1600×2560 | Cover route succeeds with a warning; UI renders the warning below the drop zone. |
 | EPUB build fails (internal) | Export route returns 500 with the exception message; UI shows an error panel with a "Retry" button. |
 | `epubcheck-wasm` emits warnings | File still written; warnings listed under the last-build panel; build count and byte size still render. |
-| Missing cover at build time | Export succeeds with a generated SVG title card; warning listed. |
+| Missing cover at build time | Export succeeds with a generated title card (rasterized to JPEG via `sharp`); warning listed. |
 | Re-build with no chapter changes | Succeeds; overwrites the existing `.epub` in place. No versioning. |
 
 ## Open questions resolved during brainstorm
