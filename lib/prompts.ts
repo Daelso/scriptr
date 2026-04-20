@@ -1,4 +1,5 @@
 import type { Story, Bible, Chapter, Character } from "@/lib/types";
+import { formatStyleRules, type StyleRules } from "@/lib/style";
 
 export type ChapterPromptInput = {
   story: Story;
@@ -7,6 +8,7 @@ export type ChapterPromptInput = {
   chapter: Chapter;
   includeLastChapterFullText?: boolean;
   lastChapterFullText?: string;
+  style: Required<StyleRules>;
 };
 
 export type SectionRegenInput = {
@@ -71,11 +73,14 @@ export function buildChapterPrompt(input: ChapterPromptInput): PromptPair {
   const userPromptBlock = input.chapter.prompt ? `Author guidance: ${input.chapter.prompt}\n\n` : "";
   const targetBlock = input.chapter.targetWords ? `Target length: ~${input.chapter.targetWords} words.\n\n` : "";
 
+  const rulesBlock = formatStyleRules(input.style);
+  const rulesSection = rulesBlock ? `\n\n${rulesBlock}` : "";
+
   const user =
     `# Story bible\n${bibleBlock}\n\n` +
     `# Prior chapter recaps\n${priorRecapsBlock}\n\n` +
     `# Current chapter: ${input.chapter.title}\n${summaryBlock}${userPromptBlock}${targetBlock}` +
-    `Beats:\n${beatsBlock}${lastChapterSection}\n\n` +
+    `Beats:\n${beatsBlock}${lastChapterSection}${rulesSection}\n\n` +
     `Write this chapter now. Separate scenes with a line containing exactly '---'.`;
 
   return { system, user };
