@@ -56,6 +56,9 @@ export function EditorPane({ slug, chapterId }: EditorPaneProps) {
   const startSectionRegen = useGenerationStore((s) => s.startSectionRegen);
   const endSectionRegen = useGenerationStore((s) => s.endSectionRegen);
   const activeChapterId = useGenerationStore((s) => s.activeChapterId);
+  const regeneratingChapterId = useGenerationStore(
+    (s) => s.regeneratingChapterId,
+  );
   const isStreaming = useGenerationStore((s) => s.isStreaming);
   const lastRunMode = useGenerationStore((s) => s.lastRunMode);
 
@@ -71,6 +74,15 @@ export function EditorPane({ slug, chapterId }: EditorPaneProps) {
   // nav pane mid-stream.
   const activeSingleKey = activeChapterId
     ? `/api/stories/${slug}/chapters/${activeChapterId}`
+    : null;
+
+  // Section-mode analogue: the chapter that owns the section being
+  // regenerated. `activeChapterId` is intentionally null during section regen,
+  // so we can't reuse `activeSingleKey` — we'd fall back to the viewer's
+  // `singleKey`, which points to a different chapter if the user navigated
+  // away mid-stream, leaving the real target chapter's SWR cache stale.
+  const regenChapterKey = regeneratingChapterId
+    ? `/api/stories/${slug}/chapters/${regeneratingChapterId}`
     : null;
 
   // Mirror the hook's last-section text into the store. Only the tail section
@@ -114,9 +126,11 @@ export function EditorPane({ slug, chapterId }: EditorPaneProps) {
   //
   // Mode routing: `lastRunMode` tells us whether to call endGeneration()
   // (chapter mode) or endSectionRegen() (section mode). For section regen,
-  // the relevant SWR key is the *current* chapterId (we know the section
-  // belongs to the open chapter — EditorPane only kicks off regen for its
-  // own sections).
+  // the relevant SWR key is derived from `regeneratingChapterId` — the
+  // chapter that owned the section when the regen started. We can't use
+  // the viewer's `singleKey` because the user may have navigated to a
+  // different chapter mid-stream; revalidating the viewed chapter would
+  // leave the real target's client cache stale until the user returns.
   useEffect(() => {
     if (status !== "done" && status !== "error" && status !== "stopped") return;
 
@@ -128,10 +142,11 @@ export function EditorPane({ slug, chapterId }: EditorPaneProps) {
 
     const run = async () => {
       if (modeAtTerminal === "section") {
-        // Section regen was scoped to the currently-open chapter. Revalidate
-        // the single chapter so the replaced section content (or the
-        // untouched original on error) appears.
-        if (singleKey) await globalMutate(singleKey);
+        // Section regen was scoped to `regeneratingChapterId`. Revalidate
+        // that chapter so the replaced section content (or the untouched
+        // original on error) appears — even if the user has since navigated
+        // to a different chapter.
+        if (regenChapterKey) await globalMutate(regenChapterKey);
         // Word count may have shifted if the replacement is a different
         // length — refresh the sidebar.
         void globalMutate(listKey);
@@ -154,7 +169,7 @@ export function EditorPane({ slug, chapterId }: EditorPaneProps) {
     streamError,
     globalMutate,
     activeSingleKey,
-    singleKey,
+    regenChapterKey,
     listKey,
     endGeneration,
     endSectionRegen,
@@ -249,13 +264,13 @@ export function EditorPane({ slug, chapterId }: EditorPaneProps) {
 
   const handleSectionRegenerate = (sectionId: string) => {
     if (isStreaming || !chapterId) return;
-    startSectionRegen(sectionId);
+    startSectionRegen(sectionId, chapterId);
     start({ storySlug: slug, chapterId, mode: "section", sectionId });
   };
 
   const handleSectionRegenerateWithNote = (sectionId: string, note: string) => {
     if (isStreaming || !chapterId) return;
-    startSectionRegen(sectionId);
+    startSectionRegen(sectionId, chapterId);
     start({
       storySlug: slug,
       chapterId,
