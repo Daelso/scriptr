@@ -83,3 +83,23 @@ describe("stripChatCruft", () => {
     expect(out.sections[0]).toContain("Sure, here's chapter 3");
   });
 });
+
+describe("trimTrailingWhitespace + collapseInternalSpaces", () => {
+  it("trims trailing spaces on each line", () => {
+    const raw = "hello   \nworld  ";
+    const out = cleanPaste(raw, { stripChatCruft: false });
+    expect(out.sections[0]).toBe("hello\nworld");
+  });
+
+  it("collapses multiple internal spaces to one", () => {
+    const raw = "hello    world";
+    const out = cleanPaste(raw, { stripChatCruft: false });
+    expect(out.sections[0]).toBe("hello world");
+  });
+
+  it("collapses double-space-after-period", () => {
+    const raw = "A sentence.  Another sentence.";
+    const out = cleanPaste(raw, { stripChatCruft: false });
+    expect(out.sections[0]).toBe("A sentence. Another sentence.");
+  });
+});
