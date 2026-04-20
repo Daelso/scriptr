@@ -145,3 +145,44 @@ describe("normalizeQuotes", () => {
     expect(msg).toMatch(/\d+/);
   });
 });
+
+describe("normalizeSceneBreaks", () => {
+  const base = { stripChatCruft: false, normalizeQuotes: false };
+
+  it("converts * * * to ---", () => {
+    const raw = "a\n\n* * *\n\nb";
+    const out = cleanPaste(raw, base);
+    expect(out.sections).toEqual(["a", "b"]);
+  });
+
+  it("converts *** to ---", () => {
+    const raw = "a\n\n***\n\nb";
+    const out = cleanPaste(raw, base);
+    expect(out.sections).toEqual(["a", "b"]);
+  });
+
+  it("converts a lone # to ---", () => {
+    const raw = "a\n\n#\n\nb";
+    const out = cleanPaste(raw, base);
+    expect(out.sections).toEqual(["a", "b"]);
+  });
+
+  it("collapses 3+ blank lines to a scene break", () => {
+    const raw = "a\n\n\n\nb";
+    const out = cleanPaste(raw, base);
+    expect(out.sections).toEqual(["a", "b"]);
+  });
+
+  it("leaves already-canonical --- markers alone", () => {
+    const raw = "a\n\n---\n\nb";
+    const out = cleanPaste(raw, base);
+    expect(out.sections).toEqual(["a", "b"]);
+  });
+
+  it("warns per marker normalized", () => {
+    const raw = "a\n\n* * *\n\nb\n\n***\n\nc";
+    const out = cleanPaste(raw, base);
+    const msg = out.warnings.find((w) => /scene|break/i.test(w));
+    expect(msg).toBeDefined();
+  });
+});

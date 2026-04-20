@@ -67,6 +67,29 @@ function stripChatCruft(input: string, warnings: string[]): string {
   return paragraphs.join("\n\n");
 }
 
+function normalizeSceneBreaks(input: string, warnings: string[]): string {
+  const MARKER_LINE = /^\s*(?:\*\s*\*\s*\*|\*{3,}|#|\u2014{3,}|-{3,}|={3,})\s*$/;
+  let markersNormalized = 0;
+  const lines = input.split("\n");
+  const out: string[] = [];
+  for (const line of lines) {
+    if (MARKER_LINE.test(line)) {
+      if (line.trim() !== "---") markersNormalized++;
+      out.push("---");
+    } else {
+      out.push(line);
+    }
+  }
+  const joined = out.join("\n");
+  const blankRunCollapsed = joined.replace(/\n(?:\s*\n){3,}/g, "\n\n---\n\n");
+  if (blankRunCollapsed !== joined) markersNormalized++;
+
+  if (markersNormalized > 0) {
+    warnings.push(`Normalized ${markersNormalized} scene break marker(s).`);
+  }
+  return blankRunCollapsed;
+}
+
 function normalizeQuotes(input: string, warnings: string[]): string {
   let count = 0;
 
@@ -128,7 +151,15 @@ export function cleanPaste(raw: string, opts?: CleanupOptions): CleanResult {
   if (on.normalizeQuotes) {
     text = normalizeQuotes(text, warnings);
   }
+  if (on.normalizeSceneBreaks) {
+    text = normalizeSceneBreaks(text, warnings);
+  }
   // Individual steps filled in by subsequent tasks.
-  const sections = on.splitIntoSections ? text.split("\n---\n") : [text];
+  const sections = on.splitIntoSections
+    ? text
+        .split(/\n---\n/)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0)
+    : [text];
   return { sections, warnings };
 }
