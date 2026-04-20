@@ -224,3 +224,31 @@ describe("preserveMarkdownEmphasis", () => {
     expect(out.sections[0]).toBe("She was very tired. He was angry.");
   });
 });
+
+describe("collapseBlankLines + splitIntoSections", () => {
+  const base = { stripChatCruft: false, normalizeQuotes: false };
+
+  it("collapses runs of >1 blank line (that weren't scene breaks) to one", () => {
+    const raw = "a\n\n\nb"; // two blank lines; not a scene break (needs 3+)
+    const out = cleanPaste(raw, base);
+    expect(out.sections[0]).toBe("a\n\nb");
+  });
+
+  it("splits on --- markers into multiple sections", () => {
+    const raw = "first section\n\n---\n\nsecond section\n\n---\n\nthird";
+    const out = cleanPaste(raw, base);
+    expect(out.sections).toEqual(["first section", "second section", "third"]);
+  });
+
+  it("leading / trailing --- do not create empty sections", () => {
+    const raw = "---\n\na\n\n---\n\nb\n\n---";
+    const out = cleanPaste(raw, base);
+    expect(out.sections).toEqual(["a", "b"]);
+  });
+
+  it("a paste with no --- returns one section", () => {
+    const raw = "single scene only";
+    const out = cleanPaste(raw, base);
+    expect(out.sections).toEqual(["single scene only"]);
+  });
+});

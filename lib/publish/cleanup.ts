@@ -90,6 +90,11 @@ function normalizeSceneBreaks(input: string, warnings: string[]): string {
   return blankRunCollapsed;
 }
 
+function collapseBlankLines(input: string): string {
+  // Runs of >1 blank line (but less than 3+ that became scene breaks) → 1 blank.
+  return input.replace(/\n(?:\s*\n){2,}/g, "\n\n");
+}
+
 function preserveMarkdownEmphasis(input: string, enabled: boolean): string {
   if (enabled) return input;
   return input
@@ -176,10 +181,13 @@ export function cleanPaste(raw: string, opts?: CleanupOptions): CleanResult {
   }
   // "on" is a no-op; "off" strips markers.
   text = preserveMarkdownEmphasis(text, on.preserveMarkdownEmphasis);
+  if (on.collapseBlankLines) {
+    text = collapseBlankLines(text);
+  }
   // Individual steps filled in by subsequent tasks.
   const sections = on.splitIntoSections
     ? text
-        .split(/\n---\n/)
+        .split(/(?:^|\n)---(?:\n|$)/)
         .map((s) => s.trim())
         .filter((s) => s.length > 0)
     : [text];
