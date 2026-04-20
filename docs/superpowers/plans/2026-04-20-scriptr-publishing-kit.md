@@ -218,13 +218,23 @@ git commit -m "feat(types): add optional Chapter.source for import provenance"
 
 ---
 
-### Task 1.3: Add cover + exports path helpers
+### Task 1.3: Add `epubPath` helper (`coverPath` and `exportsDir` already exist)
 
 **Files:**
 - Modify: `lib/storage/paths.ts`
 - Test: `tests/lib/paths.test.ts` (create or append)
 
-- [ ] **Step 1: Write failing tests for the three new helpers**
+**Context.** `lib/storage/paths.ts` already exports `coverPath(dataDir, slug)` → `…/cover.jpg` and `exportsDir(dataDir, slug)` → `…/exports`. Both compose via `storyDir(…)`. Re-exporting them would collide; the only new helper this task adds is `epubPath`.
+
+- [ ] **Step 1: Sanity check — confirm the two existing helpers still have the signatures we expect**
+
+```bash
+grep -nE "^export function (coverPath|exportsDir|epubPath)" lib/storage/paths.ts
+```
+
+Expected output: lines for `exportsDir` and `coverPath`, nothing for `epubPath`. If `epubPath` already exists, skip this task entirely and continue to Task 1.4. If the existing `coverPath` returns anything other than `…/cover.jpg` or the existing `exportsDir` anything other than `…/exports`, escalate before proceeding — downstream code assumes the paths.
+
+- [ ] **Step 2: Write failing test for `epubPath`**
 
 Create or append to `tests/lib/paths.test.ts`:
 
@@ -236,11 +246,11 @@ describe("publishing paths", () => {
   const dataDir = "/data";
   const slug = "my-story";
 
-  it("coverPath returns the cover.jpg path under the story dir", () => {
+  it("coverPath (existing helper) returns the cover.jpg path under the story dir", () => {
     expect(coverPath(dataDir, slug)).toBe("/data/stories/my-story/cover.jpg");
   });
 
-  it("exportsDir returns the exports subdir", () => {
+  it("exportsDir (existing helper) returns the exports subdir", () => {
     expect(exportsDir(dataDir, slug)).toBe("/data/stories/my-story/exports");
   });
 
@@ -252,49 +262,39 @@ describe("publishing paths", () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+The two `coverPath` / `exportsDir` tests are value-lock regression tests — they assert the EXISTING helpers continue to produce the paths this plan depends on. If someone later changes `storyDir`'s composition, these tests catch it. They should pass immediately.
 
-Run: `npm test -- tests/lib/paths.test.ts`
-Expected: FAIL — `coverPath`, `exportsDir`, `epubPath` not exported.
+- [ ] **Step 3: Run — expect `epubPath` test to fail, others to pass**
 
-- [ ] **Step 3: Implement the helpers**
+```bash
+npm test -- tests/lib/paths.test.ts
+```
 
-Open [lib/storage/paths.ts](../../../lib/storage/paths.ts) and add (next to existing helpers like `chaptersDir`):
+- [ ] **Step 4: Implement `epubPath`**
+
+Open [lib/storage/paths.ts](../../../lib/storage/paths.ts). Add `epubPath` next to the existing `exportsDir` helper, composing via it:
 
 ```ts
-import { join } from "node:path";
-// (keep existing imports — this is additive)
-
-export function coverPath(dataDir: string, slug: string): string {
-  return join(dataDir, "stories", slug, "cover.jpg");
-}
-
-export function exportsDir(dataDir: string, slug: string): string {
-  return join(dataDir, "stories", slug, "exports");
-}
-
-export function epubPath(dataDir: string, slug: string): string {
-  return join(exportsDir(dataDir, slug), `${slug}.epub`);
+export function epubPath(dataDir: string, storySlug: string) {
+  return join(exportsDir(dataDir, storySlug), `${storySlug}.epub`);
 }
 ```
 
-If existing `paths.ts` uses a `storyDir` helper as a base, follow that pattern — the new helpers should compose the same way `chaptersDir` composes.
+Follow the file's existing style — parameter name `storySlug`, no explicit return type, `join` already imported.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [ ] **Step 5: Run — all pass**
 
-Run: `npm test -- tests/lib/paths.test.ts`
-Expected: PASS.
+- [ ] **Step 6: Quality gates**
 
-- [ ] **Step 5: Quality gates**
+```bash
+npm run typecheck && npm run lint && npm test
+```
 
-Run: `npm run typecheck && npm run lint && npm test`
-Expected: all green.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add lib/storage/paths.ts tests/lib/paths.test.ts
-git commit -m "feat(paths): add coverPath, exportsDir, epubPath helpers"
+git commit -m "feat(paths): add epubPath helper"
 ```
 
 ---
@@ -682,13 +682,21 @@ function stripChatCruft(input: string, warnings: string[]): string {
   if (paragraphs.length === 0) return input;
 
   const first = paragraphs[0].trim();
-  // Strip preamble if:
-  //  - short (≤140 chars) AND ends with colon/dash AND matches a preamble pattern, OR
-  //  - short AND matches a preamble pattern AND has no internal sentence break (no ". [A-Z]")
+  // Strip preamble ONLY if the first paragraph is "obviously chat metadata":
+  //  1. Matches a preamble trigger pattern (starts with "Sure, here's…", etc.), AND
+  //  2. One of:
+  //     a. Ends with `:` or `-` (typical chat lead-in like "Sure, here's chapter 3:"), OR
+  //     b. Is a short single sentence (≤60 chars, no internal sentence-end
+  //        followed by another capital/quote/opener — i.e. genuinely one utterance).
+  //
+  // The 60-char ceiling is the key guard against eating novel prose that
+  // happens to start with "Sure," — real prose almost always runs longer
+  // or contains a sentence break before the paragraph ends.
+  const SENTENCE_BREAK = /\.\s+["'\u201C\u2018A-Z]/;
   const looksLikeChatPreamble =
-    first.length <= 140 &&
     PREAMBLE_PATTERNS.some((p) => p.test(first)) &&
-    (/[:\-]\s*$/.test(first) || !/\.\s+[A-Z]/.test(first));
+    (/[:\-]\s*$/.test(first) ||
+      (first.length <= 60 && !SENTENCE_BREAK.test(first)));
 
   if (looksLikeChatPreamble) {
     const removed = paragraphs.shift() ?? "";
@@ -716,7 +724,17 @@ if (on.stripChatCruft) {
 }
 ```
 
-The preamble logic is narrow on purpose. If test 3 still over-strips ("Sure, it was a fine morning..."), widen the short-length escape clause. Make sure the happy path has a trailing colon: in test 1 the match is because of the `:` at end of "Sure, here's chapter 3:".
+The heuristic is narrow on purpose — over-stripping is the main failure mode, not under-stripping. Two escape hatches:
+
+1. **Trailing-colon/dash test.** Chat-style lead-ins end with `:` or `-`. Novel prose almost never does.
+2. **Short-single-sentence test.** If the paragraph is ≤60 chars AND contains no sentence break followed by a capital letter *or an opening quote* (to catch dialogue like `. "Pity,"`), it's plausibly a standalone chat utterance like "Okay, got it." or "Absolutely."
+
+The "Sure, it was a fine morning..." test passes because:
+- Length > 60 chars → short-sentence branch fails.
+- Doesn't end with `:` or `-` → trailing-punctuation branch fails.
+- Result: preamble stays. ✓
+
+The "Sure, here's chapter 3:" test passes because it ends with `:`.
 
 - [ ] **Step 4: Run — all pass**
 
@@ -1913,7 +1931,28 @@ export async function ensureCoverOrFallback(
   <text x="800" y="1200" text-anchor="middle" font-family="Georgia, serif" font-size="96" fill="#f5f5f5" font-weight="600">${escapeXml(meta.title)}</text>
   <text x="800" y="1360" text-anchor="middle" font-family="Georgia, serif" font-size="56" fill="#bbbbbb" font-style="italic">${escapeXml(meta.author)}</text>
 </svg>`;
-  const jpeg = await sharp(Buffer.from(svg, "utf-8")).jpeg({ quality: 88 }).toBuffer();
+
+  let jpeg: Buffer;
+  try {
+    // Happy path: sharp rasterizes the SVG via librsvg.
+    jpeg = await sharp(Buffer.from(svg, "utf-8")).jpeg({ quality: 88 }).toBuffer();
+  } catch {
+    // Fallback: sharp binary lacks SVG support on this platform (rare, but
+    // musl-based CI images sometimes ship without libvips SVG bindings).
+    // Produce a solid dark-grey 1600x2560 JPEG. No title text, but a valid
+    // JPEG so the EPUB build doesn't fail.
+    jpeg = await sharp({
+      create: {
+        width: 1600,
+        height: 2560,
+        channels: 3,
+        background: { r: 0x2a, g: 0x2a, b: 0x2a },
+      },
+    })
+      .jpeg({ quality: 88 })
+      .toBuffer();
+  }
+
   return writeCoverJpeg(dataDir, slug, jpeg);
 }
 ```
@@ -2639,6 +2678,10 @@ export function ImportChapterDialog({
 
       if (generateRecap) {
         // Fire-and-forget; recap runs async via existing route.
+        // IMPORTANT: before committing, open app/api/generate/recap/route.ts
+        // and confirm the POST body shape matches. The MVP uses
+        // { storySlug, chapterId } (see tests/api/generate.recap.test.ts);
+        // adjust here if the route has since changed its request contract.
         fetch("/api/generate/recap", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -2843,12 +2886,25 @@ const [importOpen, setImportOpen] = useState(false);
   open={importOpen}
   onOpenChange={setImportOpen}
   onImported={() => {
-    // Trigger a chapter-list refresh — use the existing SWR mutate or parent callback.
+    // Trigger a chapter-list refresh.
+    // ChapterList uses SWR keyed on `/api/stories/${slug}/chapters` —
+    // call `mutate()` from that SWR hook to re-fetch. If ChapterList
+    // doesn't expose mutate directly, lift the callback to the parent
+    // that holds the SWR hook. `router.refresh()` from next/navigation
+    // is a portable fallback but triggers a full server re-render.
   }}
 />
 ```
 
-Map `onImported` to whatever mechanism ChapterList already uses to refresh (SWR `mutate` of `/api/stories/[slug]/chapters`, or a parent callback). If unclear, `router.refresh()` from `next/navigation` is the safest portable fallback.
+Exact refresh mechanism: open the file and find the existing SWR call — typical pattern:
+
+```tsx
+const { data, mutate } = useSWR<Chapter[]>(`/api/stories/${slug}/chapters`, fetcher);
+// …
+onImported={() => mutate()}
+```
+
+If no SWR hook exists in ChapterList (e.g. the chapter list comes from a server-rendered prop), fall back to `router.refresh()` from `next/navigation`.
 
 - [ ] **Step 3: Manual smoke**
 
@@ -2958,8 +3014,9 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
   const patch = async (fields: Partial<Story>) => {
     setSaving(true);
     try {
+      // Existing stories route exports PATCH (not PUT); use it as-is.
       const res = await fetch(`/api/stories/${story.slug}`, {
-        method: "PUT",
+        method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(fields),
       });
@@ -3190,13 +3247,29 @@ function Field({
 }
 ```
 
-**Unicode note:** the snippet contains a few Unicode escape sequences (`\u2026`, `\u00d7`, etc.) written as TypeScript string escape notation inside JSX curly-braces text. If your editor stores the file with literal characters (ellipsis, times sign, check), that's fine — both forms render identically. If you paste the snippet verbatim, the escape sequences only work inside attribute or expression contexts; for JSX text nodes, replace with the literal character or use `{"\u2026"}`. Re-read the JSX above and ensure every `\u…` sequence is inside a `{"…"}` expression, not bare JSX text. A quick sweep before saving is worth the 30 seconds.
+**CRITICAL — Unicode escapes in JSX text are rendered LITERALLY.** The snippet above contains sequences like `Saving\u2026`, `1600\u00d72560`, `\u2713 Built`, `\u00b7 {w}` written directly as JSX text. TypeScript / React does NOT interpret `\u2026` inside a bare JSX text node — users would see the literal six-character sequence `\u2026` on screen, not an ellipsis. Fix pattern: either paste the literal character (`…`, `×`, `✓`, `·`) or wrap the string in `{"\u2026"}`.
+
+**Concrete pre-commit verification step** (do not skip):
+
+```bash
+grep -nE '>\s*[^<{]*\\u[0-9a-fA-F]{4}' components/publish/ExportPage.tsx
+```
+
+Expected output: empty. If any line matches, there is still an un-escaped `\uXXXX` sitting in a JSX text node — replace with the literal character or `{"\uXXXX"}`. Re-run grep until empty before committing.
+
+Character reference:
+- `\u2026` → `…` (horizontal ellipsis)
+- `\u00d7` → `×` (multiplication sign)
+- `\u2713` → `✓` (check mark)
+- `\u00b7` → `·` (middle dot)
 
 Use shadcn `Input`, `Textarea`, `Button`, `Field` primitives from [components/ui/](../../../components/ui/) if available — swap in before committing.
 
-- [ ] **Step 2: Verify `PUT /api/stories/[slug]` accepts the metadata fields**
+- [ ] **Step 2: Verify `PATCH /api/stories/[slug]` accepts the metadata fields**
 
-Read [app/api/stories/[slug]/route.ts](../../../app/api/stories/[slug]/route.ts) and confirm the `PUT` handler accepts every field the form uses: `title`, `subtitle`, `authorPenName`, `description`, `copyrightYear`, `language`, `isbn`, `bisacCategory`, `keywords`. If there's an `allowed` list that omits any, extend it. If a field is missing, add a corresponding test in [tests/api/stories.slug.test.ts](../../../tests/api/stories.slug.test.ts) asserting round-trip.
+Read [app/api/stories/[slug]/route.ts](../../../app/api/stories/[slug]/route.ts) and confirm the exported handler is `PATCH` (it is — not `PUT`). Confirm it accepts every field the form uses: `title`, `subtitle`, `authorPenName`, `description`, `copyrightYear`, `language`, `isbn`, `bisacCategory`, `keywords`. If there's an `allowed` list that omits any, extend it. If a field is missing, add a corresponding test in [tests/api/stories.slug.test.ts](../../../tests/api/stories.slug.test.ts) asserting round-trip.
+
+**Important:** The snippet uses `method: "PATCH"`. Do NOT change it to `PUT`; the route does not export a `PUT` handler and every autosave would 405.
 
 - [ ] **Step 3: Quality gates**
 
@@ -3312,9 +3385,12 @@ test("import paste \u2192 preview \u2192 save \u2192 export EPUB on disk", async
 
   await page.getByTestId("import-paste").fill(SAMPLE_PASTE);
 
-  // Preview populated
-  await expect(page.getByText(/Chapter 1/)).toBeVisible();
-  await expect(page.locator(".epub-preview").first()).toContainText("\u2014");
+  // Preview populated — scope to .epub-preview since "Chapter 1" also
+  // appears in the paste textarea (raw source) which would make the
+  // locator ambiguous.
+  const preview = page.locator(".epub-preview").first();
+  await expect(preview).toContainText("Chapter 1");
+  await expect(preview).toContainText("\u2014");
 
   await page.getByTestId("import-save").click();
 
