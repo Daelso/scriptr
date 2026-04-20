@@ -208,3 +208,19 @@ describe("normalizeDashes", () => {
     expect(out.sections[0]).toBe("state-of-the-art");
   });
 });
+
+describe("preserveMarkdownEmphasis", () => {
+  const base = { stripChatCruft: false, normalizeQuotes: false };
+
+  it("leaves *italic* and **bold** in content by default (on)", () => {
+    const raw = "She was *very* tired. He was **angry**.";
+    const out = cleanPaste(raw, base);
+    expect(out.sections[0]).toBe("She was *very* tired. He was **angry**.");
+  });
+
+  it("strips markdown markers when disabled (off), keeping inner text", () => {
+    const raw = "She was *very* tired. He was **angry**.";
+    const out = cleanPaste(raw, { ...base, preserveMarkdownEmphasis: false });
+    expect(out.sections[0]).toBe("She was very tired. He was angry.");
+  });
+});
