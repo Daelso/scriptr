@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { ChapterHeader } from "@/components/editor/ChapterHeader";
 import { SectionList } from "@/components/editor/SectionList";
 import { GenerateChapterButton } from "@/components/editor/GenerateChapterButton";
+import { StreamOverlay } from "@/components/editor/StreamOverlay";
 import { useGenerationStore } from "@/components/editor/generation-store";
 import { useStreamGenerate } from "@/hooks/useStreamGenerate";
 import type { Chapter } from "@/lib/types";
@@ -37,7 +38,7 @@ export function EditorPane({ slug, chapterId }: EditorPaneProps) {
   // (via the Zustand store) and the future StreamOverlay (task 7.3) can
   // share the same hook instance.
   const stream = useStreamGenerate();
-  const { status, sections: streamSections, error: streamError, start } = stream;
+  const { status, sections: streamSections, error: streamError, start, stop } = stream;
 
   const startGeneration = useGenerationStore((s) => s.startGeneration);
   const setLiveText = useGenerationStore((s) => s.setLiveText);
@@ -103,6 +104,42 @@ export function EditorPane({ slug, chapterId }: EditorPaneProps) {
     void run();
   }, [status, streamError, globalMutate, activeSingleKey, listKey, endGeneration]);
 
+  // Pending-steer orchestration (Task 7.3 "Steer" button).
+  //
+  // `onSteer(note)` stores the note here and calls stop(). The terminal-state
+  // effect above then awaits SWR revalidation (so `data.sections` reflects any
+  // partial content the server persisted) before calling endGeneration(),
+  // which flips `isStreaming` to false.
+  //
+  // This effect observes that transition: when we are no longer streaming and
+  // a pending note is present, read the freshly revalidated chapter, pick the
+  // last persisted section id, and dispatch a `continue`-mode generation using
+  // that id as the pivot. The key invariant: the pivot is the last section
+  // ID AFTER server-side persistence — never the pre-stop id.
+  const pendingSteerNoteRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (isStreaming) return;
+    const note = pendingSteerNoteRef.current;
+    if (note === null) return;
+    if (!data || data.sections.length === 0) {
+      // Nothing persisted yet — cannot continue without a pivot. Drop the
+      // request rather than silently misbehaving.
+      pendingSteerNoteRef.current = null;
+      toast.error("No content to steer from yet.");
+      return;
+    }
+    const lastSectionId = data.sections[data.sections.length - 1].id;
+    pendingSteerNoteRef.current = null;
+    startGeneration(chapterId!);
+    start({
+      storySlug: slug,
+      chapterId: chapterId!,
+      mode: "continue",
+      sectionId: lastSectionId,
+      regenNote: note,
+    });
+  }, [isStreaming, data, chapterId, slug, startGeneration, start]);
+
   if (chapterId === null) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -137,6 +174,20 @@ export function EditorPane({ slug, chapterId }: EditorPaneProps) {
     start({ storySlug: slug, chapterId, mode: "full" });
   };
 
+  const overlayActive = isStreaming && activeChapterId === chapterId;
+
+  const handleStop = () => {
+    stop();
+  };
+
+  const handleSteer = (note: string) => {
+    // Record the note, then stop. The secondary effect above picks up the
+    // transition to !isStreaming and dispatches a continue-mode generation
+    // using the freshly revalidated last-section id as the pivot.
+    pendingSteerNoteRef.current = note;
+    stop();
+  };
+
   return (
     <div className="max-w-[72ch] mx-auto py-8 px-4">
       <ChapterHeader key={chapterId} slug={slug} chapter={data} />
@@ -153,6 +204,9 @@ export function EditorPane({ slug, chapterId }: EditorPaneProps) {
           }
         />
       </div>
+      {overlayActive ? (
+        <StreamOverlay onStop={handleStop} onSteer={handleSteer} />
+      ) : null}
     </div>
   );
 }
