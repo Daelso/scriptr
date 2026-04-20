@@ -10,6 +10,7 @@ import { getGrokClient, MissingKeyError } from "@/lib/grok";
 import { callGrokWithRetry, GrokError } from "@/lib/grok-retry";
 import type { RetryOptions } from "@/lib/grok-retry";
 import { buildChapterPrompt, buildSectionRegenPrompt, buildContinuePrompt } from "@/lib/prompts";
+import { DEFAULT_STYLE } from "@/lib/style";
 import { generateRecap } from "@/lib/recap";
 import { chunkBySectionBreak } from "@/lib/stream";
 import { registerJob, clearJob } from "@/lib/generation-job";
@@ -270,6 +271,7 @@ async function handleFull(body: GenerateRequest): Promise<Response> {
     chapter,
     includeLastChapterFullText: config.includeLastChapterFullText,
     lastChapterFullText,
+    style: DEFAULT_STYLE,
   });
 
   const model = story.modelOverride ?? config.defaultModel;
