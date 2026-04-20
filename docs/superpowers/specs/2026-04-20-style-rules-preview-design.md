@@ -91,8 +91,10 @@ None required. `formatStyleRules` is a pure function over a typed `Required<Styl
 Unit tests in `tests/components/settings/StyleRulesPreview.test.tsx` (new directory if none exists):
 
 1. **Renders formatted rules.** Given a representative `Required<StyleRules>` with a mix of toggles, assert the `<pre>` contains the exact output of `formatStyleRules(rules)`.
-2. **Renders empty-state placeholder.** Given all-off rules (every boolean false, tense/explicitness/dialogueTags set to values that emit nothing, empty `customRules`), assert the placeholder copy is present and the copy button is absent.
+2. **Renders empty-state placeholder.** Reaching `formatStyleRules`'s `return ""` branch requires tense/explicitness outside their known enums (both `DEFAULT_STYLE.tense = "past"` and `DEFAULT_STYLE.explicitness = "explicit"` emit lines). Rather than construct a synthetic `Required<StyleRules>` with out-of-enum strings (which would trip `logger.warn` and couple the test to `formatStyleRules` internals), the test mocks `formatStyleRules` to return `""` and asserts the placeholder is rendered and the copy button is absent.
 3. **Copy button invokes clipboard.** Mock `navigator.clipboard.writeText`, click the copy button, assert it was called with the rendered text.
+
+The copy button must carry an `aria-label` (e.g., `"Copy style rules"`) matching the existing eye/eye-off pattern at [SettingsForm.tsx:195](../../../components/settings/SettingsForm.tsx#L195).
 
 No e2e test required — the feature has no backend and no cross-page interactions.
 
