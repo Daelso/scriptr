@@ -54,3 +54,9 @@ cover*.jpg
 cover*.jpeg
 cover*.png
 exports/
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/

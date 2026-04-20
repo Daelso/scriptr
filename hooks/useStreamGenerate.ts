@@ -58,7 +58,14 @@ export function useStreamGenerate(): UseStreamGenerateReturn {
 
   // Unmount cleanup: abort any in-flight fetch so the read loop doesn't keep
   // calling setState after the component is gone.
+  //
+  // Note: mountedRef is initialized to `true` above. In React Strict Mode (dev),
+  // effects fire twice (mount → cleanup → remount). `useRef(true)` returns the
+  // SAME ref on remount (initial value only applies to the first creation), so
+  // we must explicitly re-set `current = true` here to restore the invariant
+  // after the simulated-unmount cleanup ran.
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       if (abortRef.current) {
