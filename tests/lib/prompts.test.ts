@@ -332,6 +332,7 @@ describe("buildContinuePrompt", () => {
       priorRecaps: [],
       chapter: truncatedChapter,
       regenNote: "",
+      style: DEFAULT_STYLE,
     });
     expect(typeof result.system).toBe("string");
     expect(typeof result.user).toBe("string");
@@ -346,6 +347,7 @@ describe("buildContinuePrompt", () => {
       priorRecaps: [],
       chapter: truncatedChapter,
       regenNote: "",
+      style: DEFAULT_STYLE,
     });
     expect(user).toContain("Scene A prose.");
     expect(user).toContain("Scene B prose.");
@@ -358,6 +360,7 @@ describe("buildContinuePrompt", () => {
       priorRecaps: [],
       chapter: truncatedChapter,
       regenNote: "add more tension",
+      style: DEFAULT_STYLE,
     });
     expect(user).toContain("Regen note: add more tension");
   });
@@ -369,6 +372,7 @@ describe("buildContinuePrompt", () => {
       priorRecaps: [],
       chapter: truncatedChapter,
       regenNote: "",
+      style: DEFAULT_STYLE,
     });
     expect(user).not.toContain("Regen note:");
   });
@@ -380,6 +384,7 @@ describe("buildContinuePrompt", () => {
       priorRecaps: [],
       chapter: truncatedChapter,
       regenNote: "",
+      style: DEFAULT_STYLE,
     });
     expect(system).toContain("continuing");
     expect(system).toContain("---");
@@ -392,6 +397,7 @@ describe("buildContinuePrompt", () => {
       priorRecaps: [],
       chapter: truncatedChapter,
       regenNote: "",
+      style: DEFAULT_STYLE,
     });
     expect(user.endsWith("Continue writing. Separate scenes with a line containing exactly '---'.")).toBe(true);
   });
@@ -404,8 +410,50 @@ describe("buildContinuePrompt", () => {
       priorRecaps: [],
       chapter: emptyChapter,
       regenNote: "",
+      style: DEFAULT_STYLE,
     });
     expect(user).toContain("(nothing yet)");
+  });
+});
+
+describe("buildContinuePrompt with style rules", () => {
+  const truncatedChapter: Chapter = {
+    ...baseChapter,
+    sections: [
+      { id: "sec-a", content: "Scene A prose." },
+      { id: "sec-b", content: "Scene B prose." },
+    ],
+  };
+
+  it("injects # Style rules after the current-text block and before the final directive", () => {
+    const { user } = buildContinuePrompt({
+      story: baseStory,
+      bible: baseBible,
+      priorRecaps: [],
+      chapter: truncatedChapter,
+      regenNote: "",
+      style: DEFAULT_STYLE,
+    } as Parameters<typeof buildContinuePrompt>[0]);
+
+    const currentIdx = user.indexOf("Current text so far");
+    const rulesIdx = user.indexOf("# Style rules");
+    const continueIdx = user.indexOf("Continue writing");
+
+    expect(currentIdx).toBeGreaterThan(-1);
+    expect(rulesIdx).toBeGreaterThan(currentIdx);
+    expect(continueIdx).toBeGreaterThan(rulesIdx);
+  });
+
+  it("leaves system prompt free of style content", () => {
+    const { system } = buildContinuePrompt({
+      story: baseStory,
+      bible: baseBible,
+      priorRecaps: [],
+      chapter: truncatedChapter,
+      regenNote: "",
+      style: DEFAULT_STYLE,
+    } as Parameters<typeof buildContinuePrompt>[0]);
+    expect(system).not.toMatch(/# Style rules/);
   });
 });
 

@@ -119,6 +119,7 @@ export type ContinuePromptInput = {
   /** chapter already truncated to include only sections up to and including the pivot */
   chapter: Chapter;
   regenNote: string;
+  style: Required<StyleRules>;
 };
 
 /**
@@ -141,6 +142,9 @@ export function buildContinuePrompt(input: ContinuePromptInput): PromptPair {
   const currentText = input.chapter.sections.map((s) => s.content).join("\n---\n");
   const regenBlock = input.regenNote ? `Regen note: ${input.regenNote}\n\n` : "";
 
+  const rulesBlock = formatStyleRules(input.style);
+  const rulesSection = rulesBlock ? `\n\n${rulesBlock}` : "";
+
   const user =
     `# Story bible\n${bibleBlock}\n\n` +
     `# Prior chapter recaps\n${priorRecapsBlock}\n\n` +
@@ -148,7 +152,7 @@ export function buildContinuePrompt(input: ContinuePromptInput): PromptPair {
     (input.chapter.summary ? `Summary: ${input.chapter.summary}\n\n` : "") +
     `Beats:\n${beatsBlock}\n\n` +
     `${regenBlock}` +
-    `Current text so far:\n${currentText || "(nothing yet)"}\n\n` +
+    `Current text so far:\n${currentText || "(nothing yet)"}${rulesSection}\n\n` +
     `Continue writing. Separate scenes with a line containing exactly '---'.`;
 
   return { system, user };
