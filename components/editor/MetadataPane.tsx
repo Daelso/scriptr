@@ -98,17 +98,11 @@ interface InnerPaneProps {
 }
 
 function InnerPane({ slug, chapterId, data, mutate, mutateList }: InnerPaneProps) {
-  // Recap key: remount only on chapter switch, consistent with the other fields.
-  // The retry path updates local state explicitly in RecapField.handleRetry instead
-  // of relying on a remount, which would discard characters typed during the
-  // debounce+mutate window on the normal autosave path.
-  const recapKey = chapterId;
-
   return (
     <div className="flex flex-col">
       {/* Word count + target words — keyed to chapterId for remount on switch */}
       <WordCountHeader
-        key={chapterId}
+        key={`word-count-${chapterId}`}
         slug={slug}
         chapterId={chapterId}
         wordCount={data.wordCount}
@@ -119,7 +113,7 @@ function InnerPane({ slug, chapterId, data, mutate, mutateList }: InnerPaneProps
 
       <div className="flex flex-col gap-5 px-4 py-4">
         <SummaryField
-          key={chapterId}
+          key={`summary-${chapterId}`}
           slug={slug}
           chapterId={chapterId}
           value={data.summary}
@@ -128,7 +122,7 @@ function InnerPane({ slug, chapterId, data, mutate, mutateList }: InnerPaneProps
         />
 
         <BeatList
-          key={chapterId}
+          key={`beats-${chapterId}`}
           slug={slug}
           chapterId={chapterId}
           value={data.beats}
@@ -137,7 +131,7 @@ function InnerPane({ slug, chapterId, data, mutate, mutateList }: InnerPaneProps
         />
 
         <PromptField
-          key={chapterId}
+          key={`prompt-${chapterId}`}
           slug={slug}
           chapterId={chapterId}
           value={data.prompt}
@@ -146,7 +140,7 @@ function InnerPane({ slug, chapterId, data, mutate, mutateList }: InnerPaneProps
         />
 
         <RecapField
-          key={recapKey}
+          key={`recap-${chapterId}`}
           slug={slug}
           chapterId={chapterId}
           chapter={data}
