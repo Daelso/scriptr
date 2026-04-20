@@ -59,4 +59,21 @@ describe("config", () => {
       expect(raw.apiKey).toBe("xai-abc1234567890ab");
     });
   });
+
+  it("persists and reloads styleDefaults", async () => {
+    await withTemp(async (dir) => {
+      await saveConfig(dir, { styleDefaults: { tense: "present", noEmDashes: false } });
+      delete process.env.XAI_API_KEY;
+      const cfg = await loadConfig(dir);
+      expect(cfg.styleDefaults).toEqual({ tense: "present", noEmDashes: false });
+    });
+  });
+
+  it("leaves styleDefaults undefined when not saved", async () => {
+    await withTemp(async (dir) => {
+      delete process.env.XAI_API_KEY;
+      const cfg = await loadConfig(dir);
+      expect(cfg.styleDefaults).toBeUndefined();
+    });
+  });
 });
