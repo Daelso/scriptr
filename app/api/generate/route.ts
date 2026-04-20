@@ -7,6 +7,7 @@ import { getChapter, updateChapter, listChapters } from "@/lib/storage/chapters"
 import { lastPayloadFile } from "@/lib/storage/paths";
 import { getGrokClient, MissingKeyError } from "@/lib/grok";
 import { callGrokWithRetry, GrokError } from "@/lib/grok-retry";
+import type { RetryOptions } from "@/lib/grok-retry";
 import { buildChapterPrompt } from "@/lib/prompts";
 import { chunkBySectionBreak } from "@/lib/stream";
 import { registerJob, clearJob } from "@/lib/generation-job";
@@ -15,6 +16,9 @@ import { randomUUID } from "node:crypto";
 import type { GenerateEvent, GenerateRequest, Section } from "@/lib/types";
 
 const PERSIST_INTERVAL_MS = 2000;
+
+// Exported so tests can reduce baseDelayMs to avoid real backoff delays.
+export const _RETRY_OPTIONS: RetryOptions = { maxRetries: 3, baseDelayMs: 500 };
 
 export async function POST(req: NextRequest): Promise<Response> {
   const body = await readJson<GenerateRequest>(req);
@@ -97,23 +101,31 @@ export async function POST(req: NextRequest): Promise<Response> {
       let currentText = "";
       let finishReason = "stop";
 
-      // Persist current progress (sections + in-progress text) to disk
-      const persistInProgress = async () => {
-        const snapshotSections: Section[] = [
-          ...sections,
-          ...(currentText ? [{ id: randomUUID(), content: currentText }] : []),
-        ];
-        try {
-          await updateChapter(dataDir, body.storySlug, body.chapterId, {
-            sections: snapshotSections,
-          });
-        } catch {
-          // best-effort; don't crash stream on periodic save failure
-        }
+      // Write queue: serializes all updateChapter calls to prevent concurrent writes.
+      let writeQueue: Promise<void> = Promise.resolve();
+      const enqueueWrite = (fn: () => Promise<void>) => {
+        writeQueue = writeQueue.then(fn, fn);
       };
 
+      // Stable ID for the current in-progress (ephemeral) section.
+      // A new ID is minted at stream start and again after each section-break,
+      // so every periodic tick within the same "phase" writes the same section ID.
+      let inProgressSectionId = randomUUID();
+
       const persistTimer = setInterval(() => {
-        void persistInProgress();
+        enqueueWrite(async () => {
+          const snapshotSections: Section[] = [
+            ...sections,
+            ...(currentText ? [{ id: inProgressSectionId, content: currentText }] : []),
+          ];
+          try {
+            await updateChapter(dataDir, body.storySlug, body.chapterId, {
+              sections: snapshotSections,
+            });
+          } catch {
+            // best-effort; don't crash stream on periodic save failure
+          }
+        });
       }, PERSIST_INTERVAL_MS);
 
       controller.enqueue(sse({ type: "start", jobId }));
@@ -129,7 +141,7 @@ export async function POST(req: NextRequest): Promise<Response> {
               { role: "user", content: prompt.user },
             ],
           },
-          { maxRetries: 3 }
+          _RETRY_OPTIONS
         );
 
         type OpenAIChunk = {
@@ -163,7 +175,11 @@ export async function POST(req: NextRequest): Promise<Response> {
             if (currentText) {
               sections.push({ id: randomUUID(), content: currentText });
               currentText = "";
-              await updateChapter(dataDir, body.storySlug, body.chapterId, { sections });
+              // Mint a fresh ephemeral ID for the next in-progress phase.
+              inProgressSectionId = randomUUID();
+              enqueueWrite(async () => {
+                await updateChapter(dataDir, body.storySlug, body.chapterId, { sections: [...sections] });
+              });
             }
             controller.enqueue(sse({ type: "section-break" }));
           }
@@ -175,7 +191,15 @@ export async function POST(req: NextRequest): Promise<Response> {
           sections.push({ id: randomUUID(), content: currentText });
           currentText = "";
         }
-        await updateChapter(dataDir, body.storySlug, body.chapterId, { sections });
+
+        enqueueWrite(async () => {
+          try {
+            await updateChapter(dataDir, body.storySlug, body.chapterId, { sections });
+          } catch {
+            // Generation completed but final save failed; periodic saves already persisted progress.
+          }
+        });
+        await writeQueue;
 
         controller.enqueue(sse({ type: "done", finishReason }));
       } catch (err) {

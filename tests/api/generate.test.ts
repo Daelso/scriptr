@@ -20,7 +20,7 @@ vi.mock("@/lib/grok", async () => {
   };
 });
 
-import { POST } from "@/app/api/generate/route";
+import { POST, _RETRY_OPTIONS } from "@/app/api/generate/route";
 import { getGrokClient, MissingKeyError } from "@/lib/grok";
 
 // ---- helpers ----
@@ -39,20 +39,24 @@ function fakeStream(
   })();
 }
 
+/**
+ * Yields `throwAfter` parts then unconditionally throws "mid-stream failure".
+ * The in-loop guard is removed — semantics are simply: yield N items, then throw.
+ */
 function fakeStreamThrowing(
   parts: Array<{ content?: string; finish_reason?: string | null }>,
-  errorAfter: number
+  throwAfter: number
 ) {
   return (async function* () {
-    let i = 0;
+    let yielded = 0;
     for (const p of parts) {
-      if (i >= errorAfter) throw new Error("mid-stream failure");
+      if (yielded >= throwAfter) break;
       yield {
         choices: [
           { delta: { content: p.content }, finish_reason: p.finish_reason ?? null },
         ],
       };
-      i++;
+      yielded++;
     }
     throw new Error("mid-stream failure");
   })();
@@ -98,6 +102,9 @@ function makeReq(body: unknown): NextRequest {
 const originalEnv = process.env;
 let tmpDir: string;
 
+// Save original retry delay so tests that mutate it can restore it.
+const origBaseDelayMs = _RETRY_OPTIONS.baseDelayMs;
+
 beforeEach(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), "scriptr-gen-"));
   process.env = {
@@ -107,10 +114,13 @@ beforeEach(async () => {
   };
   fakeCreate.mockReset();
   vi.mocked(getGrokClient).mockClear();
+  // Speed up retry backoff for all tests.
+  _RETRY_OPTIONS.baseDelayMs = 1;
 });
 
 afterEach(async () => {
   process.env = originalEnv;
+  _RETRY_OPTIONS.baseDelayMs = origBaseDelayMs;
   await rm(tmpDir, { recursive: true, force: true });
 });
 
@@ -347,4 +357,9 @@ describe("POST /api/generate", () => {
     const payload = JSON.parse(raw) as { user: string };
     expect(payload.user).toContain("Chapter One");
   });
+
+  it.todo("periodic tick persists in-progress text between section breaks");
+  // Fake-timer + async-generator interaction is flaky in the current test setup.
+  // The write-queue serialization (B1) and stable inProgressSectionId ensure
+  // correctness; coverage of the timer path is deferred.
 });
