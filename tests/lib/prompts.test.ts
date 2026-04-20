@@ -540,3 +540,27 @@ describe("buildRecapPrompt", () => {
     expect(user).toContain("Beta content.");
   });
 });
+
+describe("buildRecapPrompt never receives or emits style", () => {
+  it("has a signature that does not include a style parameter", () => {
+    const _typeCheck: Parameters<typeof buildRecapPrompt>[0] = {
+      story: baseStory,
+      chapter: baseChapter,
+      // @ts-expect-error style must NOT be on RecapPromptInput
+      style: DEFAULT_STYLE,
+    };
+    expect(_typeCheck).toBeTruthy();
+  });
+
+  it("output contains no # Style rules block", () => {
+    const { user, system } = buildRecapPrompt({
+      story: baseStory,
+      chapter: {
+        ...baseChapter,
+        sections: [{ id: "s1", content: "She opened the door." }],
+      },
+    });
+    expect(user).not.toMatch(/# Style rules/);
+    expect(system).not.toMatch(/# Style rules/);
+  });
+});
