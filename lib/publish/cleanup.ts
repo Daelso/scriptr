@@ -67,6 +67,29 @@ function stripChatCruft(input: string, warnings: string[]): string {
   return paragraphs.join("\n\n");
 }
 
+function normalizeQuotes(input: string, warnings: string[]): string {
+  let count = 0;
+
+  let out = input.replace(/"/g, (_, offset: number, full: string) => {
+    count++;
+    const prev = full[offset - 1] ?? "";
+    const opening = offset === 0 || /[\s([{\u2014\u2013\-]/.test(prev);
+    return opening ? "\u201C" : "\u201D";
+  });
+
+  out = out.replace(/'/g, (_, offset: number, full: string) => {
+    count++;
+    const prev = full[offset - 1] ?? "";
+    const next = full[offset + 1] ?? "";
+    if (/[A-Za-z]/.test(prev) && /[A-Za-z]/.test(next)) return "\u2019";
+    if (offset === 0 || /[\s([{\u2014\u2013\-]/.test(prev)) return "\u2018";
+    return "\u2019";
+  });
+
+  if (count > 0) warnings.push(`Converted ${count} straight quotes to curly.`);
+  return out;
+}
+
 const DEFAULTS: Required<CleanupOptions> = {
   normalizeLineEndings: true,
   stripChatCruft: true,
@@ -101,6 +124,9 @@ export function cleanPaste(raw: string, opts?: CleanupOptions): CleanResult {
       .split("\n")
       .map((line) => line.replace(/ {2,}/g, " "))
       .join("\n");
+  }
+  if (on.normalizeQuotes) {
+    text = normalizeQuotes(text, warnings);
   }
   // Individual steps filled in by subsequent tasks.
   const sections = on.splitIntoSections ? text.split("\n---\n") : [text];

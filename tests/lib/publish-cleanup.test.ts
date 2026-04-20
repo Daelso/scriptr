@@ -79,7 +79,7 @@ describe("stripChatCruft", () => {
 
   it("can be disabled", () => {
     const raw = "Sure, here's chapter 3:\n\nProse.";
-    const out = cleanPaste(raw, { stripChatCruft: false });
+    const out = cleanPaste(raw, { stripChatCruft: false, normalizeQuotes: false });
     expect(out.sections[0]).toContain("Sure, here's chapter 3");
   });
 });
@@ -101,5 +101,47 @@ describe("trimTrailingWhitespace + collapseInternalSpaces", () => {
     const raw = "A sentence.  Another sentence.";
     const out = cleanPaste(raw, { stripChatCruft: false });
     expect(out.sections[0]).toBe("A sentence. Another sentence.");
+  });
+});
+
+describe("normalizeQuotes", () => {
+  it("converts straight doubles to curly contextually", () => {
+    const raw = '"You\'re here," she said.';
+    const out = cleanPaste(raw, { stripChatCruft: false });
+    expect(out.sections[0]).toContain("\u201CYou");
+    expect(out.sections[0]).toContain(",\u201D she said");
+  });
+
+  it("uses closing single for contractions (don't, he'd)", () => {
+    const raw = "don't he'd won't";
+    const out = cleanPaste(raw, { stripChatCruft: false });
+    expect(out.sections[0]).toBe("don\u2019t he\u2019d won\u2019t");
+  });
+
+  it("uses opening single after whitespace", () => {
+    const raw = "He said, 'no.'";
+    const out = cleanPaste(raw, { stripChatCruft: false });
+    expect(out.sections[0]).toContain("\u2018no");
+    expect(out.sections[0]).toContain("no.\u2019");
+  });
+
+  it("preserves already-curly quotes", () => {
+    const raw = "\u201Calready curly\u201D";
+    const out = cleanPaste(raw, { stripChatCruft: false });
+    expect(out.sections[0]).toBe("\u201Calready curly\u201D");
+  });
+
+  it("can be disabled", () => {
+    const raw = '"foo"';
+    const out = cleanPaste(raw, { normalizeQuotes: false, stripChatCruft: false });
+    expect(out.sections[0]).toBe('"foo"');
+  });
+
+  it("emits a warning with the count of converted quotes", () => {
+    const raw = '"a" "b" don\'t';
+    const out = cleanPaste(raw, { stripChatCruft: false });
+    const msg = out.warnings.find((w) => /quote/i.test(w));
+    expect(msg).toBeDefined();
+    expect(msg).toMatch(/\d+/);
   });
 });
