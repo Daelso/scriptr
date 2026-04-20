@@ -98,4 +98,25 @@ describe("saveBible", () => {
       expect(reloaded!.updatedAt).not.toBe(originalUpdatedAt);
     });
   });
+
+  it("round-trips Bible.styleOverrides", async () => {
+    await withTemp(async (dir) => {
+      const story = await createStory(dir, { title: "Style Overrides Test" });
+      const bible = {
+        characters: [],
+        setting: "",
+        pov: "third-limited" as const,
+        tone: "",
+        styleNotes: "",
+        nsfwPreferences: "",
+        styleOverrides: { tense: "present", customRules: "no metaphors" },
+      };
+      await saveBible(dir, story.slug, bible);
+      const loaded = await getBible(dir, story.slug);
+      expect(loaded?.styleOverrides).toEqual({
+        tense: "present",
+        customRules: "no metaphors",
+      });
+    });
+  });
 });
