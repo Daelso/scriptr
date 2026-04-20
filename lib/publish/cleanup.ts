@@ -90,6 +90,13 @@ function normalizeSceneBreaks(input: string, warnings: string[]): string {
   return blankRunCollapsed;
 }
 
+function preserveMarkdownEmphasis(input: string, enabled: boolean): string {
+  if (enabled) return input;
+  return input
+    .replace(/\*\*([^*\n]+?)\*\*/g, "$1")
+    .replace(/\*([^*\n]+?)\*/g, "$1");
+}
+
 function normalizeDashes(input: string): string {
   return input
     .split("\n")
@@ -167,6 +174,8 @@ export function cleanPaste(raw: string, opts?: CleanupOptions): CleanResult {
   if (on.normalizeDashes) {
     text = normalizeDashes(text);
   }
+  // "on" is a no-op; "off" strips markers.
+  text = preserveMarkdownEmphasis(text, on.preserveMarkdownEmphasis);
   // Individual steps filled in by subsequent tasks.
   const sections = on.splitIntoSections
     ? text
