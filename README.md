@@ -33,6 +33,7 @@ Everything else — your story files, your bible, your chapter drafts, your API 
 8. **Local crash logs only.** On server error, write to `data/logs/` (gitignored). Never phone home.
 9. **Permanent deletes.** Delete-story removes the whole story folder including exports. No trash, no soft-delete.
 10. **README privacy section.** First section: "What this app sends externally, and to whom."
+11. **Publishing Kit is local-only.** Paste-import, cover upload, and EPUB export all run entirely on your machine. No paste, cover image, or exported file is ever sent over the network.
 
 The privacy receipt is also available on disk at `data/stories/<slug>/.last-payload.json` (gitignored). It contains only `{ model, mode, system, user }` — no headers, no key. View it in-app via **Settings → Privacy**.
 
