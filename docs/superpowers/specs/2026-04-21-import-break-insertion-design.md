@@ -32,9 +32,11 @@ Chapter break: `=== CHAPTER ===` on its own line, case-insensitive, with relaxed
 
 The pre-split recognizer in `splitChapterChunks` (run BEFORE cleanup) matches `^\s*={3,}\s*chapter\s*={3,}\s*$` (case-insensitive). This accepts `=== CHAPTER ===`, `===CHAPTER===`, `=== chapter ===`, `==== Chapter ====`, etc. The all-caps form is what the toolbar button inserts; the relaxed regex just prevents typo footguns.
 
-Lines containing `===` without the word `chapter` (case-insensitive) fall through to the cleanup pipeline's `normalizeSceneBreaks` (`={3,}` recognizer) and become scene breaks. This is intentional — backward-compatible with users who already type `===` for scene breaks.
+A plain line of only `===` (no embedded word) falls through to the cleanup pipeline's `normalizeSceneBreaks` (`={3,}` recognizer) and becomes a scene break. This is backward-compatible with users who already type `===` for scene breaks.
 
-**Defense-in-depth warning.** When `cleanPaste` sees a line matching `={3,}` that contains an `=== … ===`-style word that ISN'T `chapter` (e.g., `=== END ===`, `=== INTERLUDE ===`), it emits a warning: `"Saw === word === but did not split into chapters; did you mean === CHAPTER ===?"` This catches user typos before they ship a merged-chapter EPUB. The warning surfaces in the dialog's warnings panel.
+A line with an embedded word — `=== END ===`, `=== INTERLUDE ===`, `=== CHAPTER ===` — does NOT match the existing `normalizeSceneBreaks` regex (which requires the whole line to be `={3,}`), so the line stays in the prose as literal text. Combined with the warning below, this gives clear user feedback: their typo is visible in the preview AND they see a hint telling them how to fix it.
+
+**Defense-in-depth warning.** When `cleanPaste` sees a `=== word ===`-style line where the word isn't `chapter`, it emits a warning: `"Saw === word === but did not split into chapters; did you mean === CHAPTER ===?"`. The warning surfaces in the dialog's warnings panel.
 
 `splitChapterChunks` is a literal regex split — it does NOT run cleanup. Order of operations is encoded in the function contract (and asserted by a test): pre-split → per-chunk cleanup. The cleanup module has no Node-only deps and is safe to import from both client (preview) and server (route); do not introduce any Node-only deps in this change.
 
