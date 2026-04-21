@@ -18,7 +18,7 @@ import {
   arrayMove,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import { Plus } from "lucide-react";
+import { Plus, Upload } from "lucide-react";
 
 import {
   Dialog,
@@ -31,6 +31,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ChapterListItem } from "@/components/editor/ChapterListItem";
+import { ImportChapterDialog } from "@/components/publish/ImportChapterDialog";
 import type { Chapter } from "@/lib/types";
 
 // ─── Fetcher ──────────────────────────────────────────────────────────────────
@@ -63,6 +64,7 @@ export function ChapterList({ slug, selectedChapterId, onSelect }: ChapterListPr
   const [deleting, setDeleting] = useState(false);
   const [newChapterTitle, setNewChapterTitle] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   // ── DnD sensors ───────────────────────────────────────────────────────────
 
@@ -276,6 +278,29 @@ export function ChapterList({ slug, selectedChapterId, onSelect }: ChapterListPr
           </Button>
         )}
       </div>
+
+      {/* ── Import chapter button ─────────────────────────────────────────── */}
+      <div className="px-2 py-1.5">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => setImportOpen(true)}
+          className="w-full justify-start gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <Upload className="size-3.5" />
+          Import chapter
+        </Button>
+      </div>
+
+      <ImportChapterDialog
+        slug={slug}
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        onImported={() => {
+          void mutate();
+        }}
+      />
 
       {/* ── Delete confirm dialog ─────────────────────────────────────────── */}
       {(() => {
