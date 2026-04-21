@@ -3,7 +3,11 @@ import { ok, fail } from "@/lib/api";
 import { getStory } from "@/lib/storage/stories";
 import { createImportedChapter } from "@/lib/storage/chapters";
 import { effectiveDataDir } from "@/lib/config";
-import { cleanPaste, type CleanupOptions } from "@/lib/publish/cleanup";
+import {
+  cleanPaste,
+  splitChapterChunks,
+  type CleanupOptions,
+} from "@/lib/publish/cleanup";
 
 type Ctx = { params: Promise<{ slug: string }> };
 
@@ -68,16 +72,41 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       ? parsed.title.trim()
       : undefined;
 
-  const { sections, warnings } = cleanPaste(raw, cleanupOptions);
-  if (sections.length === 0) {
+  // Pre-split on chapter markers. Single-chapter paste yields a 1-element array.
+  const rawChunks = splitChapterChunks(raw)
+    .map((c) => c.trim())
+    .filter((c) => c.length > 0);
+  if (rawChunks.length === 0) {
     return fail("no prose detected after cleanup", 400);
   }
 
-  const title = providedTitle ?? inferTitle(raw);
-  const chapter = await createImportedChapter(effectiveDataDir(), slug, {
-    title,
-    sectionContents: sections,
-  });
+  type Cleaned = { sections: string[]; warnings: string[]; sourceRaw: string };
+  const cleanedChunks: Cleaned[] = [];
+  for (const chunk of rawChunks) {
+    const { sections, warnings } = cleanPaste(chunk, cleanupOptions);
+    if (sections.length === 0) continue; // silent drop per spec
+    cleanedChunks.push({ sections, warnings, sourceRaw: chunk });
+  }
 
-  return ok({ chapter, warnings }, { status: 201 });
+  if (cleanedChunks.length === 0) {
+    return fail("no prose detected after cleanup", 400);
+  }
+
+  const dataDir = effectiveDataDir();
+  const chapters: Awaited<ReturnType<typeof createImportedChapter>>[] = [];
+  const allWarnings: string[][] = [];
+
+  for (let i = 0; i < cleanedChunks.length; i++) {
+    const { sections, warnings, sourceRaw } = cleanedChunks[i];
+    const title =
+      i === 0 && providedTitle ? providedTitle : inferTitle(sourceRaw);
+    const chapter = await createImportedChapter(dataDir, slug, {
+      title,
+      sectionContents: sections,
+    });
+    chapters.push(chapter);
+    allWarnings.push(warnings);
+  }
+
+  return ok({ chapters, warnings: allWarnings }, { status: 201 });
 }
