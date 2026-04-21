@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cleanPaste, type CleanupOptions } from "@/lib/publish/cleanup";
-import { renderChapterPreviewHtml, EPUB_STYLESHEET } from "@/lib/publish/epub";
+import { renderChapterPreviewHtml, EPUB_STYLESHEET } from "@/lib/publish/epub-preview";
 import { SafeHtml } from "@/lib/publish/safe-html";
 import type { Chapter } from "@/lib/types";
 
