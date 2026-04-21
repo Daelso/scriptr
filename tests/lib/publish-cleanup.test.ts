@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { cleanPaste, type CleanupStep } from "@/lib/publish/cleanup";
+import {
+  cleanPaste,
+  splitChapterChunks,
+  type CleanupStep,
+} from "@/lib/publish/cleanup";
 
 describe("cleanPaste — skeleton", () => {
   it("returns a result with sections[] and warnings[]", () => {
@@ -298,5 +302,47 @@ describe("cleanPaste idempotency + end-to-end", () => {
     expect(out.sections[0]).toContain("\u2014");
     expect(out.sections[0]).toContain("\u201CYou");
     expect(out.warnings.length).toBeGreaterThan(0);
+  });
+});
+
+describe("splitChapterChunks", () => {
+  it("returns [raw] when no marker present", () => {
+    expect(splitChapterChunks("just prose")).toEqual(["just prose"]);
+  });
+
+  it("splits on canonical === CHAPTER === marker", () => {
+    const raw = "chapter one prose\n\n=== CHAPTER ===\n\nchapter two prose";
+    expect(splitChapterChunks(raw)).toEqual([
+      "chapter one prose\n\n",
+      "\n\nchapter two prose",
+    ]);
+  });
+
+  it("accepts case-insensitive variants", () => {
+    const lower = "a\n=== chapter ===\nb";
+    const title = "a\n=== Chapter ===\nb";
+    const tight = "a\n===CHAPTER===\nb";
+    const wide = "a\n==== CHAPTER ====\nb";
+    for (const raw of [lower, title, tight, wide]) {
+      const out = splitChapterChunks(raw);
+      expect(out).toHaveLength(2);
+    }
+  });
+
+  it("does NOT split on === without the word 'chapter'", () => {
+    expect(splitChapterChunks("a\n===\nb")).toEqual(["a\n===\nb"]);
+    expect(splitChapterChunks("a\n=== END ===\nb")).toEqual(["a\n=== END ===\nb"]);
+  });
+
+  it("handles multiple markers", () => {
+    const raw = "a\n=== CHAPTER ===\nb\n=== CHAPTER ===\nc";
+    expect(splitChapterChunks(raw)).toHaveLength(3);
+  });
+
+  it("preserves leading / trailing empty chunks for caller to filter", () => {
+    const raw = "=== CHAPTER ===\nonly";
+    const out = splitChapterChunks(raw);
+    expect(out).toHaveLength(2);
+    expect(out[0].trim()).toBe("");
   });
 });
