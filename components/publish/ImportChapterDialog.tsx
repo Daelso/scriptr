@@ -7,7 +7,12 @@ import { BookmarkPlus, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { cleanPaste, type CleanupOptions } from "@/lib/publish/cleanup";
+import {
+  cleanPaste,
+  inferTitle,
+  splitChapterChunks,
+  type CleanupOptions,
+} from "@/lib/publish/cleanup";
 import { renderChapterPreviewHtml, EPUB_STYLESHEET } from "@/lib/publish/epub-preview";
 import { SafeHtml } from "@/lib/publish/safe-html";
 import type { Chapter } from "@/lib/types";
@@ -75,26 +80,47 @@ export function ImportChapterDialog({
   const insertSceneBreak = () => insertAtCursor("\n\n* * *\n\n");
   const insertChapterBreak = () => insertAtCursor("\n\n=== CHAPTER ===\n\n");
 
-  const cleaned = useMemo(() => cleanPaste(raw, options), [raw, options]);
+  const chunks = useMemo(() => {
+    const split = splitChapterChunks(raw)
+      .map((c) => c.trim())
+      .filter((c) => c.length > 0);
+    return split.length === 0 ? [""] : split;
+  }, [raw]);
 
-  const previewChapter: Chapter | null = useMemo(() => {
-    if (cleaned.sections.length === 0) return null;
-    return {
-      id: "preview",
-      title: title || "Untitled",
-      summary: "",
-      beats: [],
-      prompt: "",
-      recap: "",
-      sections: cleaned.sections.map((c, i) => ({ id: `p${i}`, content: c })),
-      wordCount: 0,
-    };
-  }, [cleaned, title]);
+  const perChunk = useMemo(() => {
+    return chunks.map((chunk, i) => {
+      const result = cleanPaste(chunk, options);
+      const previewChapter: Chapter | null =
+        result.sections.length === 0
+          ? null
+          : {
+              id: `preview-${i}`,
+              title:
+                i === 0 ? title || "Untitled" : inferTitle(chunk) || "Untitled",
+              summary: "",
+              beats: [],
+              prompt: "",
+              recap: "",
+              sections: result.sections.map((c, j) => ({
+                id: `p${i}-${j}`,
+                content: c,
+              })),
+              wordCount: 0,
+            };
+      return {
+        warnings: result.warnings,
+        previewChapter,
+        previewHtml: previewChapter
+          ? renderChapterPreviewHtml(previewChapter, { chapterNumber: i + 1 })
+          : "",
+        sectionCount: result.sections.length,
+      };
+    });
+  }, [chunks, options, title]);
 
-  const previewHtml = useMemo(
-    () => (previewChapter ? renderChapterPreviewHtml(previewChapter) : ""),
-    [previewChapter],
-  );
+  const totalSections = perChunk.reduce((acc, p) => acc + p.sectionCount, 0);
+  const allWarnings = perChunk.flatMap((p) => p.warnings);
+  const isMulti = perChunk.length > 1;
 
   const handleSave = useCallback(async () => {
     if (!raw.trim()) return;
@@ -222,13 +248,13 @@ export function ImportChapterDialog({
               </div>
             </div>
 
-            {cleaned.warnings.length > 0 && (
+            {allWarnings.length > 0 && (
               <div>
                 <div className="text-xs uppercase text-muted-foreground mb-1">
                   Warnings
                 </div>
                 <ul className="text-xs text-muted-foreground flex flex-col gap-0.5">
-                  {cleaned.warnings.map((w, i) => (
+                  {allWarnings.map((w, i) => (
                     <li key={i}>{w}</li>
                   ))}
                 </ul>
@@ -237,7 +263,7 @@ export function ImportChapterDialog({
 
             <div className="flex flex-col gap-2">
               <label className="text-xs text-muted-foreground">
-                Chapter title
+                {isMulti ? "Chapter title (first chapter)" : "Chapter title"}
               </label>
               <Input
                 type="text"
@@ -263,13 +289,30 @@ export function ImportChapterDialog({
               EPUB preview
             </div>
             <style>{EPUB_STYLESHEET}</style>
-            <SafeHtml
-              html={previewHtml}
-              className="flex-1 overflow-auto border border-border rounded p-4 bg-background"
-            />
+            <div className="flex-1 overflow-auto border border-border rounded p-4 bg-background">
+              {perChunk.map((p, i) => (
+                <div key={i}>
+                  {i > 0 && (
+                    <div className="flex items-center gap-2 my-6 text-xs uppercase text-muted-foreground">
+                      <div className="flex-1 border-t border-border" />
+                      <span>Chapter {i + 1}</span>
+                      <div className="flex-1 border-t border-border" />
+                    </div>
+                  )}
+                  {p.previewHtml ? (
+                    <SafeHtml html={p.previewHtml} />
+                  ) : (
+                    <div className="text-xs text-muted-foreground italic">
+                      Empty chapter {"\u2014"} will be skipped.
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
             <div className="text-xs text-muted-foreground">
-              {cleaned.sections.length} section
-              {cleaned.sections.length === 1 ? "" : "s"}
+              {isMulti
+                ? `${perChunk.length} chapters \u00B7 ${totalSections} sections total`
+                : `${totalSections} section${totalSections === 1 ? "" : "s"}`}
             </div>
           </div>
         </div>

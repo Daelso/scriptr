@@ -153,6 +153,33 @@ export function splitChapterChunks(raw: string): string[] {
   return raw.split(CHAPTER_MARKER);
 }
 
+export function inferTitle(raw: string): string {
+  // Rule 1: "Chapter N" heading regex.
+  const m = raw.match(
+    /^(?:chapter|ch\.?)\s+(\d+|[ivxlcdm]+)(?:\s*[:\-\u2014.]\s*(.+))?$/im
+  );
+  if (m) {
+    const explicit = m[2]?.trim();
+    if (explicit) return explicit;
+    return `Chapter ${m[1]}`;
+  }
+  // Rule 2: Short standalone line followed by a blank line.
+  const lines = raw.split(/\r?\n/);
+  for (let i = 0; i < lines.length - 1; i++) {
+    const line = lines[i].trim();
+    const next = lines[i + 1].trim();
+    if (line.length >= 3 && line.length <= 60 && next.length === 0) {
+      return line;
+    }
+  }
+  // Rule 3: First-paragraph truncation.
+  const firstPara = raw.trim().split(/\n\s*\n/)[0] ?? "";
+  if (firstPara.length <= 60) return firstPara;
+  const trunc = firstPara.slice(0, 60);
+  const lastSpace = trunc.lastIndexOf(" ");
+  return (lastSpace > 20 ? trunc.slice(0, lastSpace) : trunc) + "\u2026";
+}
+
 const DEFAULTS: Required<CleanupOptions> = {
   normalizeLineEndings: true,
   stripChatCruft: true,
