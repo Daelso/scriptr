@@ -15,7 +15,7 @@ type Props = {
   slug: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onImported: (chapter: Chapter) => void;
+  onImported: (chapters: Chapter[]) => void;
 };
 
 type DraftOptions = Required<CleanupOptions>;
@@ -84,11 +84,16 @@ export function ImportChapterDialog({
         toast.error(body.error ?? `Import failed (${res.status})`);
         return;
       }
-      const chapter = body.data.chapter as Chapter;
-      toast.success(`Imported "${chapter.title}".`);
-      onImported(chapter);
+      const chapters = body.data.chapters as Chapter[];
+      if (chapters.length === 1) {
+        toast.success(`Imported "${chapters[0].title}".`);
+      } else {
+        toast.success(`Imported ${chapters.length} chapters.`);
+      }
+      onImported(chapters);
 
-      if (generateRecap) {
+      if (generateRecap && chapters.length === 1) {
+        const chapter = chapters[0];
         // Fire-and-forget; recap runs async via the existing route.
         // Body shape matches app/api/generate/recap/route.ts.
         fetch("/api/generate/recap", {
@@ -99,6 +104,7 @@ export function ImportChapterDialog({
           toast.error("Recap failed to start; you can regenerate later.");
         });
       }
+      // Multi-chapter recap: see Task 6.
 
       onOpenChange(false);
       setRaw("");

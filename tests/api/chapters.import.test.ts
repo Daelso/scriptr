@@ -51,7 +51,7 @@ describe("/api/stories/[slug]/chapters/import", () => {
     expect(res.status).toBe(404);
   });
 
-  it("creates a chapter with source=imported and returns { chapter, warnings }", async () => {
+  it("creates a chapter with source=imported and returns { chapters, warnings }", async () => {
     const story = await createStory(tmpDir, { title: "S" });
     const raw = [
       "Chapter 1: Opening",
@@ -66,9 +66,9 @@ describe("/api/stories/[slug]/chapters/import", () => {
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.ok).toBe(true);
-    expect(body.data.chapter.source).toBe("imported");
-    expect(body.data.chapter.title).toBe("Opening");
-    expect(body.data.chapter.sections.length).toBe(2);
+    expect(body.data.chapters[0].source).toBe("imported");
+    expect(body.data.chapters[0].title).toBe("Opening");
+    expect(body.data.chapters[0].sections.length).toBe(2);
     expect(Array.isArray(body.data.warnings)).toBe(true);
 
     const chapters = await listChapters(tmpDir, story.slug);
@@ -110,6 +110,41 @@ describe("/api/stories/[slug]/chapters/import", () => {
     const res = await callPost(story.slug, { raw });
     expect(res.status).toBe(201);
     const body = await res.json();
-    expect(body.data.warnings.length).toBeGreaterThan(0);
+    expect(body.data.warnings[0].length).toBeGreaterThan(0);
+  });
+
+  it("splits a paste with === CHAPTER === into multiple chapters in order", async () => {
+    const story = await createStory(tmpDir, { title: "S" });
+    const raw = [
+      "Chapter 1: Opening",
+      "",
+      "First chapter prose.",
+      "",
+      "=== CHAPTER ===",
+      "",
+      "Chapter 2: Middle",
+      "",
+      "Second chapter prose.",
+    ].join("\n");
+    const res = await callPost(story.slug, { raw });
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.data.chapters).toHaveLength(2);
+    expect(body.data.chapters[0].title).toBe("Opening");
+    expect(body.data.chapters[1].title).toBe("Middle");
+    expect(body.data.warnings).toHaveLength(2);
+
+    const chapters = await listChapters(tmpDir, story.slug);
+    expect(chapters).toHaveLength(2);
+    expect(chapters.map((c) => c.title)).toEqual(["Opening", "Middle"]);
+  });
+
+  it("drops empty chunks silently (leading marker, back-to-back)", async () => {
+    const story = await createStory(tmpDir, { title: "S" });
+    const raw = "=== CHAPTER ===\n\nOnly one chapter actually.\n\n=== CHAPTER ===\n\n=== CHAPTER ===\n\nAnother.";
+    const res = await callPost(story.slug, { raw });
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.data.chapters).toHaveLength(2);
   });
 });
