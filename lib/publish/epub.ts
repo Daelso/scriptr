@@ -136,3 +136,63 @@ export async function buildEpubBytes(input: EpubInput): Promise<Uint8Array> {
 
   return new Uint8Array(buffer);
 }
+
+// EPUB validation. The plan named `epubcheck-wasm` but that package does not
+// exist on npm; Chunk 1 substituted `@likecoin/epubcheck-ts@0.6.0` per the
+// spec's fallback clause. Its API exposes `EpubCheck.validate(data, options?)`
+// returning `{ valid, messages: ValidationMessage[], warningCount, ... }` where
+// each message has `{ id, severity, message }`. The validator accepts a
+// `Uint8Array` directly, so no temp file is needed.
+//
+// We use dynamic `import()` rather than `require()` because the package is
+// pure ESM (`"type": "module"`) and one of its transitive deps
+// (`libxml2-wasm`) uses top-level await — which CJS `require()` cannot load.
+//
+// We surface every non-info / non-usage message as a warning string.
+// Validation is non-blocking — any throw is caught and reported as a single
+// warning instead of propagating.
+type EpubcheckMessage = {
+  id?: string;
+  severity?: string;
+  message?: string;
+};
+type EpubcheckResult = {
+  valid?: boolean;
+  messages?: EpubcheckMessage[];
+};
+type EpubcheckModule = {
+  EpubCheck?: {
+    validate?: (data: Uint8Array) => Promise<EpubcheckResult>;
+  };
+  default?: {
+    EpubCheck?: {
+      validate?: (data: Uint8Array) => Promise<EpubcheckResult>;
+    };
+  };
+};
+
+export type ValidationResult = { warnings: string[] };
+
+export async function validateEpub(bytes: Uint8Array): Promise<ValidationResult> {
+  try {
+    const mod = (await import("@likecoin/epubcheck-ts")) as EpubcheckModule;
+    const ns = mod.default ?? mod;
+    const validate = ns.EpubCheck?.validate;
+    if (typeof validate !== "function") {
+      return { warnings: ["validator error: @likecoin/epubcheck-ts API not recognized"] };
+    }
+    const report = await validate(bytes);
+    const messages = report.messages ?? [];
+    const warnings = messages
+      .filter((m) => m.severity !== "info" && m.severity !== "usage")
+      .map((m) => {
+        const sev = m.severity ? `[${m.severity}] ` : "";
+        const id = m.id ? `${m.id}: ` : "";
+        return `${sev}${id}${m.message ?? ""}`.trim();
+      });
+    return { warnings };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { warnings: [`validator error: ${msg}`] };
+  }
+}
