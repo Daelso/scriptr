@@ -180,12 +180,23 @@ describe("unmatched === word === warning", () => {
     expect(out.warnings.some((w) => /did you mean/i.test(w))).toBe(false);
   });
 
-  it("does NOT warn on a line containing 'chapter' (the canonical marker survives pre-split, so the cleanup stage never sees it — and if it does, it's fine)", () => {
-    // cleanup pipeline is the fallback if pre-split missed it; this test just
+  it("does NOT warn on the canonical === CHAPTER === form", () => {
+    // cleanup pipeline is the fallback if pre-split missed it; this test
     // verifies we don't self-trigger on the canonical form.
     const raw = "a\n\n=== CHAPTER ===\n\nb";
     const out = cleanPaste(raw, { stripChatCruft: false, normalizeQuotes: false });
     expect(out.warnings.some((w) => /did you mean/i.test(w))).toBe(false);
+  });
+
+  it("leaves === CHAPTER === in the prose if pre-split didn't consume it (defense-in-depth)", () => {
+    // The existing MARKER_LINE regex does NOT match lines with embedded words,
+    // so the canonical marker survives cleanup as literal text. This verifies
+    // the survival — if a regression ever widens MARKER_LINE to swallow
+    // `=== CHAPTER ===`, this test catches it.
+    const raw = "a\n\n=== CHAPTER ===\n\nb";
+    const out = cleanPaste(raw, { stripChatCruft: false, normalizeQuotes: false });
+    expect(out.sections.join("\n")).toContain("=== CHAPTER ===");
+    expect(out.sections.join("\n")).not.toContain("\n---\n");
   });
 });
 ```
@@ -214,7 +225,7 @@ for (const line of input.split("\n")) {
 // (existing MARKER_LINE loop continues below unchanged)
 ```
 
-Don't change the `MARKER_LINE` behavior itself — a `=== END ===` line STILL gets normalized to a scene break (`---`); we just emit a warning alongside.
+**Important behavior note:** the existing `MARKER_LINE` regex only matches whole-line `={3,}` with NO embedded word — so `=== END ===` does NOT get normalized to `---`; it stays in the prose as a literal line. The warning is the only signal to the user that their typo didn't produce a chapter split. This is good defense-in-depth: the user sees their unfamiliar marker in the preview AND gets a warning.
 
 - [ ] **Step 4: Run tests, all pass**
 
@@ -502,15 +513,17 @@ const insertSceneBreak = () => insertAtCursor("\n\n* * *\n\n");
 const insertChapterBreak = () => insertAtCursor("\n\n=== CHAPTER ===\n\n");
 ```
 
-Wire the textarea:
+Wire the textarea. The current dialog uses the shadcn `<Textarea>` wrapper (not a bare `<textarea>`). React 19 forwards refs as regular props through function components, and the shadcn `Textarea` spreads `{...props}` to the underlying element — so `ref={textareaRef}` on `<Textarea>` resolves to the native DOM node. Keep the existing `<Textarea>` component and add the ref:
 
 ```tsx
-<textarea
+<Textarea
   ref={textareaRef}
   value={raw}
   // ... existing props ...
 />
 ```
+
+Do NOT swap to a bare `<textarea>` — that loses shadcn styling tokens and changes the visual.
 
 - [ ] **Step 2: Add the toolbar**
 
@@ -601,7 +614,7 @@ const perChunk = useMemo(() => {
         ? null
         : {
             id: `preview-${i}`,
-            title: i === 0 ? (title || "Untitled") : (inferPreviewTitle(chunk) || "Untitled"),
+            title: i === 0 ? (title || "Untitled") : (inferTitle(chunk) || "Untitled"),
             summary: "",
             beats: [],
             prompt: "",
@@ -625,33 +638,14 @@ const allWarnings = perChunk.flatMap((p) => p.warnings);
 const isMulti = perChunk.length > 1;
 ```
 
-Add a local `inferPreviewTitle` that mirrors the server's `inferTitle` (same rules — keep preview and server consistent):
+**Extract `inferTitle` to the shared module before wiring.** The server already has `inferTitle` in `app/api/stories/[slug]/chapters/import/route.ts`. Duplicating it client-side would drift over time. Instead:
 
-```ts
-function inferPreviewTitle(raw: string): string {
-  const m = raw.match(
-    /^(?:chapter|ch\.?)\s+(\d+|[ivxlcdm]+)(?:\s*[:\-\u2014.]\s*(.+))?$/im
-  );
-  if (m) {
-    const explicit = m[2]?.trim();
-    if (explicit) return explicit;
-    return `Chapter ${m[1]}`;
-  }
-  const lines = raw.split(/\r?\n/);
-  for (let i = 0; i < lines.length - 1; i++) {
-    const line = lines[i].trim();
-    const next = lines[i + 1].trim();
-    if (line.length >= 3 && line.length <= 60 && next.length === 0) return line;
-  }
-  const firstPara = raw.trim().split(/\n\s*\n/)[0] ?? "";
-  if (firstPara.length <= 60) return firstPara;
-  const trunc = firstPara.slice(0, 60);
-  const lastSpace = trunc.lastIndexOf(" ");
-  return (lastSpace > 20 ? trunc.slice(0, lastSpace) : trunc) + "\u2026";
-}
-```
+1. Move `inferTitle` (the function body, unchanged) from the route file into `lib/publish/cleanup.ts` as a named export.
+2. In the route, replace the local definition with `import { inferTitle } from "@/lib/publish/cleanup";`.
+3. In the dialog, import the same symbol: `import { cleanPaste, splitChapterChunks, inferTitle } from "@/lib/publish/cleanup";`.
+4. Run `npm test` — all existing route tests for title inference should still pass because the logic is byte-identical.
 
-(If the helper feels like it should live in a shared module to avoid duplication with the server, extract it to `lib/publish/cleanup.ts` in a follow-up. For now, the local copy keeps this task self-contained.)
+This is a small pre-step that belongs IN Task 5 because this is the first task that would create duplication. No separate commit — bundle the extraction with the preview-chunking commit.
 
 - [ ] **Step 2: Update the warnings panel + footer summary**
 
@@ -753,9 +747,10 @@ In `handleSave`, find the block guarded by `generateRecap && chapters.length ===
 
 ```ts
 if (generateRecap) {
-  // Close dialog first; fire recaps in the background sequentially so
-  // we don't slam Grok with N concurrent calls. Requests survive
-  // component unmount — they're owned by the browser.
+  // Fire recaps in the background, sequentially — await each before
+  // kicking the next so we don't slam Grok with N concurrent calls.
+  // The IIFE runs independently of the dialog close; requests survive
+  // component unmount because they're owned by the browser.
   void (async () => {
     for (const chapter of chapters) {
       try {
@@ -777,7 +772,7 @@ if (generateRecap) {
 }
 ```
 
-The dialog's `onOpenChange(false)` already runs before (or immediately after) this block in the existing flow — the async IIFE outlives the close.
+**Ordering verification:** after pasting, confirm the function still has `onOpenChange(false)` and the state-reset calls (`setRaw("")`, `setTitle("")`) BELOW the recap block. The dialog's existing `handleSave` already ends with those calls inside the `try` block — don't move them. The IIFE fires and returns immediately (it doesn't await); then the dialog closes and clears state on the same synchronous tick.
 
 - [ ] **Step 2: Manual smoke (optional)**
 
