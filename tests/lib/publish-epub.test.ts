@@ -152,3 +152,56 @@ describe("buildEpubBytes", () => {
     expect(bytes.byteLength).toBeGreaterThan(500);
   });
 });
+
+import { validateEpub } from "@/lib/publish/epub";
+
+describe("validateEpub", () => {
+  // Local helpers — `story()` and `chapters()` from the previous describe
+  // block are not in scope here. Same shape, so the test still exercises
+  // a real built EPUB.
+  function story(): Story {
+    return {
+      slug: "test-book",
+      title: "Test Book",
+      authorPenName: "J. Doe",
+      description: "A tiny test.",
+      copyrightYear: 2026,
+      language: "en",
+      bisacCategory: "FIC027000",
+      keywords: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      chapterOrder: ["c1", "c2"],
+    };
+  }
+  function chapters(): Chapter[] {
+    return [
+      {
+        id: "c1",
+        title: "Opening",
+        summary: "",
+        beats: [],
+        prompt: "",
+        recap: "",
+        sections: [{ id: "s1", content: "It began." }],
+        wordCount: 2,
+      },
+      {
+        id: "c2",
+        title: "Ending",
+        summary: "",
+        beats: [],
+        prompt: "",
+        recap: "",
+        sections: [{ id: "s2", content: "It ended." }],
+        wordCount: 2,
+      },
+    ];
+  }
+
+  it("returns a warnings array (possibly empty) for a built EPUB", async () => {
+    const bytes = await buildEpubBytes({ story: story(), chapters: chapters() });
+    const result = await validateEpub(bytes);
+    expect(Array.isArray(result.warnings)).toBe(true);
+  });
+});
