@@ -83,3 +83,56 @@ export function renderChapterPreviewHtml(
     : "";
   return `<div class="epub-preview"><h1 class="chapter-title">Chapter ${num}</h1>${subtitle}${sectionHtml}</div>`;
 }
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const epubGen: unknown = require("epub-gen-memory");
+
+type EpubGenFn = (
+  options: {
+    title: string;
+    author: string;
+    description?: string;
+    lang?: string;
+    cover?: string;
+    ignoreFailedDownloads?: boolean;
+    css?: string;
+  },
+  content: Array<{ title: string; content: string }>
+) => Promise<Buffer>;
+
+function getGenerator(): EpubGenFn {
+  const mod = epubGen as { default?: EpubGenFn } & EpubGenFn;
+  return (mod.default ?? mod) as EpubGenFn;
+}
+
+export async function buildEpubBytes(input: EpubInput): Promise<Uint8Array> {
+  const { story, chapters, coverPath } = input;
+
+  const content = chapters.map((chapter, idx) => {
+    const inner = renderChapterPreviewHtml(chapter, { chapterNumber: idx + 1 });
+    // Strip the outer .epub-preview wrapper — not meaningful in the package XHTML.
+    const stripped = inner
+      .replace(/^<div class="epub-preview">/, "")
+      .replace(/<\/div>$/, "");
+    return {
+      title: chapter.title || `Chapter ${idx + 1}`,
+      content: stripped,
+    };
+  });
+
+  const generator = getGenerator();
+  const buffer = await generator(
+    {
+      title: story.title,
+      author: story.authorPenName,
+      description: story.description,
+      lang: story.language || "en",
+      cover: coverPath,
+      ignoreFailedDownloads: true,
+      css: EPUB_STYLESHEET,
+    },
+    content
+  );
+
+  return new Uint8Array(buffer);
+}
