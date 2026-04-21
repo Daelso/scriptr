@@ -89,3 +89,66 @@ describe("renderSectionHtml (transformer)", () => {
     expect(html).toContain("<p>new para.</p>");
   });
 });
+
+import { buildEpubBytes } from "@/lib/publish/epub";
+import type { Story } from "@/lib/types";
+
+describe("buildEpubBytes", () => {
+  function story(): Story {
+    return {
+      slug: "test-book",
+      title: "Test Book",
+      authorPenName: "J. Doe",
+      description: "A tiny test.",
+      copyrightYear: 2026,
+      language: "en",
+      bisacCategory: "FIC027000",
+      keywords: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      chapterOrder: ["c1", "c2"],
+    };
+  }
+
+  function chapters(): Chapter[] {
+    return [
+      {
+        id: "c1",
+        title: "Opening",
+        summary: "",
+        beats: [],
+        prompt: "",
+        recap: "",
+        sections: [{ id: "s1", content: "It began." }],
+        wordCount: 2,
+      },
+      {
+        id: "c2",
+        title: "Ending",
+        summary: "",
+        beats: [],
+        prompt: "",
+        recap: "",
+        sections: [{ id: "s2", content: "It ended." }],
+        wordCount: 2,
+      },
+    ];
+  }
+
+  it("produces a ZIP-magic-byte-prefixed buffer", async () => {
+    const bytes = await buildEpubBytes({ story: story(), chapters: chapters() });
+    expect(bytes.byteLength).toBeGreaterThan(500);
+    const b = Buffer.from(bytes);
+    expect(b[0]).toBe(0x50);
+    expect(b[1]).toBe(0x4b);
+  });
+
+  it("handles missing coverPath without crashing", async () => {
+    const bytes = await buildEpubBytes({
+      story: story(),
+      chapters: chapters(),
+      coverPath: undefined,
+    });
+    expect(bytes.byteLength).toBeGreaterThan(500);
+  });
+});
