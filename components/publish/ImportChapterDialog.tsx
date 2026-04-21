@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   cleanPaste,
+  countWords,
   inferTitle,
   splitChapterChunks,
   type CleanupOptions,
@@ -124,6 +125,10 @@ export function ImportChapterDialog({
   const perChunk = useMemo(() => {
     return chunks.map((chunk, i) => {
       const result = cleanPaste(chunk, options);
+      const wordCount = result.sections.reduce(
+        (acc, s) => acc + countWords(s),
+        0
+      );
       const previewChapter: Chapter | null =
         result.sections.length === 0
           ? null
@@ -139,7 +144,7 @@ export function ImportChapterDialog({
                 id: `p${i}-${j}`,
                 content: c,
               })),
-              wordCount: 0,
+              wordCount,
             };
       return {
         warnings: result.warnings,
@@ -148,11 +153,13 @@ export function ImportChapterDialog({
           ? renderChapterPreviewHtml(previewChapter, { chapterNumber: i + 1 })
           : "",
         sectionCount: result.sections.length,
+        wordCount,
       };
     });
   }, [chunks, options, title]);
 
   const totalSections = perChunk.reduce((acc, p) => acc + p.sectionCount, 0);
+  const totalWords = perChunk.reduce((acc, p) => acc + p.wordCount, 0);
   const allWarnings = perChunk.flatMap((p) => p.warnings);
   const isMulti = perChunk.length > 1;
 
@@ -341,7 +348,9 @@ export function ImportChapterDialog({
                   {i > 0 && (
                     <div className="flex items-center gap-2 my-6 text-xs uppercase text-muted-foreground">
                       <div className="flex-1 border-t border-border" />
-                      <span>Chapter {i + 1}</span>
+                      <span>
+                        Chapter {i + 1} {"\u00B7"} {p.wordCount.toLocaleString()} words
+                      </span>
                       <div className="flex-1 border-t border-border" />
                     </div>
                   )}
@@ -357,8 +366,8 @@ export function ImportChapterDialog({
             </div>
             <div className="text-xs text-muted-foreground">
               {isMulti
-                ? `${perChunk.length} chapters \u00B7 ${totalSections} sections total`
-                : `${totalSections} section${totalSections === 1 ? "" : "s"}`}
+                ? `${totalWords.toLocaleString()} words \u00B7 ${totalSections} sections \u00B7 ${perChunk.length} chapters`
+                : `${totalWords.toLocaleString()} words \u00B7 ${totalSections} section${totalSections === 1 ? "" : "s"}`}
             </div>
           </div>
         </div>

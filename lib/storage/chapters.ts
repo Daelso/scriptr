@@ -2,6 +2,7 @@ import { mkdir, writeFile, readFile, readdir, rename, rm } from "node:fs/promise
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { chaptersDir, chapterFile } from "@/lib/storage/paths";
+import { countWords } from "@/lib/publish/cleanup";
 import { getStory, updateStory } from "@/lib/storage/stories";
 import type { Chapter } from "@/lib/types";
 
@@ -101,10 +102,6 @@ export type NewImportedChapterInput = {
   title: string;
   sectionContents: string[];
 };
-
-function countWords(text: string): number {
-  return text.trim().split(/\s+/).filter(Boolean).length;
-}
 
 export async function createImportedChapter(
   dataDir: string,

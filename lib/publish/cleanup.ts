@@ -153,6 +153,10 @@ export function splitChapterChunks(raw: string): string[] {
   return raw.split(CHAPTER_MARKER);
 }
 
+export function countWords(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
 export function inferTitle(raw: string): string {
   // Rule 1: "Chapter N" heading regex.
   const m = raw.match(
