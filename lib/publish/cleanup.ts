@@ -135,6 +135,15 @@ function normalizeQuotes(input: string, warnings: string[]): string {
   return out;
 }
 
+// Chapter-break pre-split. Runs BEFORE cleanup — the marker is consumed
+// as a chapter delimiter, not fed to normalizeSceneBreaks.
+// Matches whole-line `=== CHAPTER ===` with case-insensitive / relaxed whitespace.
+const CHAPTER_MARKER = /^[ \t]*={3,}[ \t]*chapter[ \t]*={3,}[ \t]*$/gim;
+
+export function splitChapterChunks(raw: string): string[] {
+  return raw.split(CHAPTER_MARKER);
+}
+
 const DEFAULTS: Required<CleanupOptions> = {
   normalizeLineEndings: true,
   stripChatCruft: true,
