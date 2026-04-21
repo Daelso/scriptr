@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useId } from "react";
 import { ChevronDown } from "lucide-react";
 
 import {
@@ -63,18 +63,17 @@ function stripIds(rows: CharacterRow[]): Bible["characters"] {
   return rows.map(({ id: _id, ...rest }) => rest);
 }
 
-/**
- * Adds stable client-only UUIDs to incoming characters at mount time.
- */
-function addIds(chars: Bible["characters"]): CharacterRow[] {
-  return chars.map((c) => ({ ...c, id: crypto.randomUUID() }));
-}
-
 export function BibleSection({ slug, bible }: BibleSectionProps) {
   // ── Local state ────────────────────────────────────────────────────────────
 
+  // Deterministic ID generation so SSR + hydration agree. `crypto.randomUUID()`
+  // in a useState initializer runs on both server and client with different
+  // results, causing a hydration mismatch. New rows added post-hydration via
+  // CharactersSubform.handleAdd keep using randomUUID — that's safe because
+  // it only runs on user click.
+  const rowIdPrefix = useId();
   const [characters, setCharacters] = useState<CharacterRow[]>(() =>
-    addIds(bible.characters),
+    bible.characters.map((c, i) => ({ ...c, id: `${rowIdPrefix}-${i}` })),
   );
   const [setting, setSetting] = useState(bible.setting);
   const [pov, setPov] = useState(bible.pov);
