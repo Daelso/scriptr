@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState, useCallback } from "react";
+import { useMemo, useRef, useState, useCallback } from "react";
 import { toast } from "sonner";
+import { BookmarkPlus, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,6 +45,35 @@ export function ImportChapterDialog({
   const [options, setOptions] = useState<DraftOptions>(DEFAULT_OPTIONS);
   const [generateRecap, setGenerateRecap] = useState(false);
   const [saving, setSaving] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  function insertAtCursor(marker: string) {
+    const el = textareaRef.current;
+    if (!el) {
+      setRaw((prev) => prev + marker);
+      return;
+    }
+    const start = el.selectionStart ?? raw.length;
+    const end = el.selectionEnd ?? raw.length;
+    const before = raw.slice(0, start);
+    const after = raw.slice(end);
+
+    // Trim redundant blank lines around the cursor so the marker doesn't pile up.
+    const trimmedBefore = before.replace(/\n*$/, "");
+    const trimmedAfter = after.replace(/^\n*/, "");
+    const spliced = `${trimmedBefore}${marker}${trimmedAfter}`;
+    setRaw(spliced);
+
+    // Restore focus and place cursor at end of inserted marker.
+    requestAnimationFrame(() => {
+      const newPos = (trimmedBefore + marker).length;
+      el.focus();
+      el.setSelectionRange(newPos, newPos);
+    });
+  }
+
+  const insertSceneBreak = () => insertAtCursor("\n\n* * *\n\n");
+  const insertChapterBreak = () => insertAtCursor("\n\n=== CHAPTER ===\n\n");
 
   const cleaned = useMemo(() => cleanPaste(raw, options), [raw, options]);
 
@@ -127,7 +157,30 @@ export function ImportChapterDialog({
             <div className="text-xs uppercase text-muted-foreground">
               Paste raw prose
             </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={insertSceneBreak}
+                title="Insert scene break (* * *)"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                Scene break
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={insertChapterBreak}
+                title="Insert chapter break (=== CHAPTER ===)"
+              >
+                <BookmarkPlus className="w-3.5 h-3.5" />
+                Chapter break
+              </Button>
+            </div>
             <Textarea
+              ref={textareaRef}
               value={raw}
               onChange={(e) => setRaw(e.target.value)}
               className="flex-1 font-mono text-xs p-2 bg-muted resize-none"
