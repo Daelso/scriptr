@@ -28,11 +28,15 @@ This is the multi-chapter-paste capability that v1's Publishing Kit explicitly d
 
 ## Marker convention
 
-Chapter break: `=== CHAPTER ===` on its own line.
+Chapter break: `=== CHAPTER ===` on its own line, case-insensitive, with relaxed whitespace.
 
-Distinctive (no realistic prose contains this verbatim), human-readable, easy to type if the user prefers keyboard. Three equals signs match the existing scene-break recognizer's regex (`={3,}`), but the all-caps `CHAPTER` word disambiguates — the import route's pre-split looks for the literal whole-line match `^\s*=== CHAPTER ===\s*$` BEFORE the cleanup pipeline runs, so the line is consumed as a chapter delimiter rather than mis-normalized into a scene break.
+The pre-split recognizer in `splitChapterChunks` (run BEFORE cleanup) matches `^\s*={3,}\s*chapter\s*={3,}\s*$` (case-insensitive). This accepts `=== CHAPTER ===`, `===CHAPTER===`, `=== chapter ===`, `==== Chapter ====`, etc. The all-caps form is what the toolbar button inserts; the relaxed regex just prevents typo footguns.
 
-If the user types only `===` (without `CHAPTER`), the cleanup pipeline still treats it as a scene break — backward-compatible.
+Lines containing `===` without the word `chapter` (case-insensitive) fall through to the cleanup pipeline's `normalizeSceneBreaks` (`={3,}` recognizer) and become scene breaks. This is intentional — backward-compatible with users who already type `===` for scene breaks.
+
+**Defense-in-depth warning.** When `cleanPaste` sees a line matching `={3,}` that contains an `=== … ===`-style word that ISN'T `chapter` (e.g., `=== END ===`, `=== INTERLUDE ===`), it emits a warning: `"Saw === word === but did not split into chapters; did you mean === CHAPTER ===?"` This catches user typos before they ship a merged-chapter EPUB. The warning surfaces in the dialog's warnings panel.
+
+`splitChapterChunks` is a literal regex split — it does NOT run cleanup. Order of operations is encoded in the function contract (and asserted by a test): pre-split → per-chunk cleanup. The cleanup module has no Node-only deps and is safe to import from both client (preview) and server (route); do not introduce any Node-only deps in this change.
 
 ## Data flow
 
@@ -103,7 +107,7 @@ Reuses the existing `inferTitle(raw)` helper from the import route. For each chu
 2. Short standalone line followed by blank line → use it verbatim.
 3. 60-char truncation of first paragraph → fallback.
 
-If the user provides an explicit `title` in the request body, it applies only to the **first** chapter; subsequent chapters use their inferred titles. The dialog's "Chapter title" input remains a single field — labeled "Chapter title (first chapter)" when N>1.
+If the user provides an explicit `title` in the request body, it applies only to the **first** chapter; subsequent chapters use their inferred titles. The dialog's "Chapter title" input remains a single field — its label updates from `"Chapter title"` to `"Chapter title (first chapter)"` once a chapter break is detected. **The typed value is preserved across this label change** — no clearing on N=1↔N>1 transitions. Users who started typing a title before inserting a break get to keep what they typed.
 
 ## API
 
@@ -121,7 +125,7 @@ POST /api/stories/[slug]/chapters/import
 
 No new fields. The `=== CHAPTER ===` markers live inside `raw`.
 
-### Response body — shape change
+### Response body — breaking shape change
 
 Before:
 
@@ -137,19 +141,28 @@ After:
 
 `warnings[i]` is the cleanup warning list for `chapters[i]`. Always an array (length 1 in the single-chapter case).
 
-The dialog's existing onImported callback signature changes from `(chapter: Chapter) => void` to `(chapters: Chapter[]) => void`. ChapterList's wiring point (`onImported={() => mutate()}`) doesn't read the argument, so no caller-side breakage.
+**This IS a breaking change to the route's JSON envelope.** The only in-tree caller is `ImportChapterDialog.tsx`, updated in the same commit series. There are no external API consumers (this is a local-first app, single user). Route tests are updated in the same commit series to assert the new envelope.
+
+The dialog's `onImported` callback signature changes from `(chapter: Chapter) => void` to `(chapters: Chapter[]) => void`. The only caller (`ChapterList.tsx`'s `onImported={() => { void mutate(); }}`) discards the argument, so the signature change is in-tree-safe.
 
 ### Error handling
 
-- A paste with `=== CHAPTER ===` but only whitespace between markers (e.g. user inserted two markers back-to-back) → that empty chunk is dropped silently. Warning emitted: `"Empty chapter between markers — skipped."`
-- A paste that is JUST a chapter marker (no prose anywhere) → returns 400, "no prose detected after cleanup."
-- A chunk that produces zero sections after cleanup → 400 only if it's the only chunk; otherwise dropped silently with a per-chunk warning.
+Empty-chunk handling is uniform: empty / whitespace-only chunks are dropped silently with no per-chunk warning. The user-facing signal is the resulting chapter count — they see N-1 chapters in the preview if they accidentally placed two markers back-to-back. No special warning text needed.
+
+- Paste with markers at start or end (`=== CHAPTER ===\n\nReal prose` or vice versa) → leading/trailing empty chunks dropped silently. Result: one chapter from the prose. This is almost always the user's intent.
+- Two markers back-to-back (`...\n=== CHAPTER ===\n\n=== CHAPTER ===\n...`) → middle empty chunk dropped silently. Result: chapters before and after, no third stub.
+- A paste that is JUST chapter markers and whitespace (no prose anywhere) → returns 400, `"no prose detected after cleanup."`
+- A non-empty chunk whose cleanup result has zero sections (rare — would require all-whitespace prose) → dropped silently. Same uniform rule.
+
+The per-chapter `warnings` array reflects the chapters that were actually saved. No "phantom" warnings about dropped chunks.
 
 ## Recap opt-in interaction
 
-When `generateRecap: true` is set on a multi-chapter paste, the client fires the `/api/generate/recap` route once per created chapter. Recaps run sequentially client-side (await each before firing the next) so we don't slam Grok with N concurrent calls.
+When `generateRecap: true` is set on a multi-chapter paste, the dialog still **closes immediately on save** — matching today's UX. Recap calls fire **sequentially in the background** (one awaited at a time so we don't slam Grok with N concurrent requests). On completion of each, a quiet toast: `"Recap ready for chapter N."` On any failure, an error toast for that chapter only — sequencing continues for the remaining chapters.
 
-If only one chapter results, behavior is identical to today.
+The single-chapter case is identical to today: one fire-and-forget request, no sequencing logic engaged.
+
+Implementation: `Promise` chain inside an unawaited async IIFE that runs after the dialog calls `onOpenChange(false)`. The dialog component unmounts but the in-flight requests survive — they're owned by the browser, not the React tree.
 
 ## Privacy
 
@@ -159,13 +172,21 @@ No change. Raw paste still travels only in the request body and is never persist
 
 ### Unit — cleanup module
 
-Add one test for the new shared helper `splitChapterChunks(raw: string): string[]`:
+Add tests for the new shared helper `splitChapterChunks(raw: string): string[]`:
 
 - No marker → returns `[raw]`.
-- One marker → returns 2 chunks (text before, text after).
+- Canonical `=== CHAPTER ===` → splits.
+- Case-insensitive variants (`=== chapter ===`, `=== Chapter ===`, `===CHAPTER===`) → all split.
 - Two markers → returns 3 chunks.
 - Whitespace-only chunk between markers → still returned (route filters empties later).
 - Marker at start or end of input → leading/trailing empty chunks returned (route filters).
+- Lines containing `===` but not `chapter` (e.g. `=== END ===`) → NOT split.
+
+Defense-in-depth test for `cleanPaste`:
+- Raw input containing `=== CHAPTER ===` (intact) is NOT mangled into a `---` by the existing scene-break recognizer when `cleanPaste` runs after `splitChapterChunks` would have consumed it — i.e., if the route somehow misses the pre-split, the marker survives into the output rather than silently morphing into a scene break. This catches regressions where the order of operations gets flipped.
+
+Test for the unmatched-`=== … ===` warning:
+- Input containing `=== END ===` produces a warning string containing both `END` and a hint about `=== CHAPTER ===`. No false positive on plain `===` (which has no surrounding word).
 
 ### Route — `chapters.import.test.ts`
 
