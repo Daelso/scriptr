@@ -97,3 +97,46 @@ test("import paste \u2192 preview \u2192 save \u2192 export EPUB on disk", async
   );
   expect(existsSync(epubPath)).toBe(true);
 });
+
+test("import paste with chapter-break marker creates multiple chapters", async ({
+  page,
+}) => {
+  const DATA_DIR = E2E_DATA_DIR;
+  expect(DATA_DIR).toBeTruthy();
+
+  const createRes = await page.request.post(
+    "http://127.0.0.1:3001/api/stories",
+    { data: { title: "Multi Chapter E2E", authorPenName: "Test Author" } },
+  );
+  const createBody = await createRes.json();
+  const story = createBody.data as { slug: string };
+
+  await page.goto(`http://127.0.0.1:3001/s/${story.slug}`);
+  await page.getByRole("button", { name: /import chapter/i }).click();
+
+  const paste = [
+    "Chapter 1: Opening",
+    "",
+    "She walked in.",
+    "",
+    "=== CHAPTER ===",
+    "",
+    "Chapter 2: The Middle",
+    "",
+    "He waited for her.",
+  ].join("\n");
+
+  await page.getByTestId("import-paste").fill(paste);
+
+  // Preview should now show two chapter blocks.
+  const previews = page.locator(".epub-preview");
+  await expect(previews).toHaveCount(2);
+
+  await page.getByTestId("import-save").click();
+
+  // Both chapters appear in the list.
+  await expect(page.getByText("Opening", { exact: true }).first()).toBeVisible();
+  await expect(
+    page.getByText("The Middle", { exact: true }).first(),
+  ).toBeVisible();
+});
