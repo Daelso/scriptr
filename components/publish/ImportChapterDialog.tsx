@@ -148,19 +148,30 @@ export function ImportChapterDialog({
       }
       onImported(chapters);
 
-      if (generateRecap && chapters.length === 1) {
-        const chapter = chapters[0];
-        // Fire-and-forget; recap runs async via the existing route.
-        // Body shape matches app/api/generate/recap/route.ts.
-        fetch("/api/generate/recap", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ storySlug: slug, chapterId: chapter.id }),
-        }).catch(() => {
-          toast.error("Recap failed to start; you can regenerate later.");
-        });
+      if (generateRecap) {
+        // Fire recaps in the background, sequentially — await each before
+        // kicking the next so we don't slam Grok with N concurrent calls.
+        // The IIFE runs independently of the dialog close; requests survive
+        // component unmount because they're owned by the browser.
+        void (async () => {
+          for (const chapter of chapters) {
+            try {
+              const res = await fetch("/api/generate/recap", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ storySlug: slug, chapterId: chapter.id }),
+              });
+              if (!res.ok) {
+                toast.error(`Recap failed for "${chapter.title}".`);
+              } else if (chapters.length > 1) {
+                toast.success(`Recap ready for "${chapter.title}".`);
+              }
+            } catch {
+              toast.error(`Recap failed for "${chapter.title}".`);
+            }
+          }
+        })();
       }
-      // Multi-chapter recap: see Task 6.
 
       onOpenChange(false);
       setRaw("");
