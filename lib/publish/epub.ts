@@ -50,17 +50,36 @@ function escapeHtml(s: string): string {
     .replace(/>/g, "&gt;");
 }
 
+export function renderSectionHtml(content: string): string {
+  let t = escapeHtml(content);
+  // Two-pass emphasis: bold first (lazy match across any non-newline chars,
+  // so it can wrap interior single-* italic markers), then italic on the
+  // result. The bold body uses `.+?` rather than `[^*\n]+?` so nested
+  // patterns like `**bold *with* italic**` survive pass 1; the italic pass
+  // then rewrites the now-isolated `*…*` runs.
+  t = t.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  t = t.replace(/\*([^*\n]+?)\*/g, "<em>$1</em>");
+
+  const paragraphs = t
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+
+  return paragraphs
+    .map((p) => `<p>${p.replace(/\n/g, " ")}</p>`)
+    .join("");
+}
+
 export function renderChapterPreviewHtml(
   chapter: Chapter,
   opts?: PreviewOpts
 ): string {
   const num = opts?.chapterNumber ?? 1;
-  // Minimal stub; full transformer lands in Task 3.2.
-  const body = chapter.sections
-    .map((s) => `<p>${escapeHtml(s.content)}</p>`)
-    .join("");
+  const sectionHtml = chapter.sections
+    .map((s) => renderSectionHtml(s.content))
+    .join('<div class="scene-break">* * *</div>');
   const subtitle = chapter.title
     ? `<p class="chapter-subtitle">${escapeHtml(chapter.title)}</p>`
     : "";
-  return `<div class="epub-preview"><h1 class="chapter-title">Chapter ${num}</h1>${subtitle}${body}</div>`;
+  return `<div class="epub-preview"><h1 class="chapter-title">Chapter ${num}</h1>${subtitle}${sectionHtml}</div>`;
 }
