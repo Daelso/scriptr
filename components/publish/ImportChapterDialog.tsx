@@ -13,6 +13,7 @@ import {
   splitChapterChunks,
   type CleanupOptions,
 } from "@/lib/publish/cleanup";
+import { htmlToMarkdown } from "@/lib/publish/html-to-markdown";
 import { renderChapterPreviewHtml, EPUB_STYLESHEET } from "@/lib/publish/epub-preview";
 import { SafeHtml } from "@/lib/publish/safe-html";
 import type { Chapter } from "@/lib/types";
@@ -79,6 +80,39 @@ export function ImportChapterDialog({
 
   const insertSceneBreak = () => insertAtCursor("\n\n* * *\n\n");
   const insertChapterBreak = () => insertAtCursor("\n\n=== CHAPTER ===\n\n");
+
+  function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const html = e.clipboardData.getData("text/html");
+    // Only intercept when HTML clipboard data is present AND it actually
+    // contains tags we care about. Otherwise fall through to default
+    // browser paste (which inserts plain text).
+    if (!html || !/<(strong|b|em|i|p|br)\b/i.test(html)) {
+      return;
+    }
+
+    e.preventDefault();
+
+    const converted = htmlToMarkdown(html);
+    if (!converted) return;
+
+    const el = textareaRef.current;
+    if (!el) {
+      setRaw((prev) => prev + converted);
+      return;
+    }
+    const start = el.selectionStart ?? raw.length;
+    const end = el.selectionEnd ?? raw.length;
+    const before = raw.slice(0, start);
+    const after = raw.slice(end);
+    const spliced = `${before}${converted}${after}`;
+    setRaw(spliced);
+
+    requestAnimationFrame(() => {
+      const newPos = (before + converted).length;
+      el.focus();
+      el.setSelectionRange(newPos, newPos);
+    });
+  }
 
   const chunks = useMemo(() => {
     const split = splitChapterChunks(raw)
@@ -220,6 +254,7 @@ export function ImportChapterDialog({
               ref={textareaRef}
               value={raw}
               onChange={(e) => setRaw(e.target.value)}
+              onPaste={handlePaste}
               className="flex-1 font-mono text-xs p-2 bg-muted resize-none"
               placeholder="Paste a chapter from Grok web UI here."
               data-testid="import-paste"
