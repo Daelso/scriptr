@@ -93,7 +93,12 @@ export function ReaderView({ story, chapters }: ReaderViewProps) {
         <Button variant="outline" size="sm" onClick={handleDownload}>
           Download .txt
         </Button>
-        <Button variant="ghost" size="sm" render={<Link href={`/s/${story.slug}`} />}>
+        <Button
+          variant="ghost"
+          size="sm"
+          nativeButton={false}
+          render={<Link href={`/s/${story.slug}`} />}
+        >
           Back to editor
         </Button>
       </div>
