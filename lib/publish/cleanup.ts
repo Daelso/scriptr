@@ -68,6 +68,15 @@ function stripChatCruft(input: string, warnings: string[]): string {
 }
 
 function normalizeSceneBreaks(input: string, warnings: string[]): string {
+  const UNMATCHED_WORD = /^[ \t]*={3,}[ \t]*([A-Za-z]+)[ \t]*={3,}[ \t]*$/;
+  for (const line of input.split("\n")) {
+    const m = line.match(UNMATCHED_WORD);
+    if (m && m[1].toLowerCase() !== "chapter") {
+      warnings.push(
+        `Saw "${line.trim()}" but did not split into chapters; did you mean === CHAPTER ===?`
+      );
+    }
+  }
   const MARKER_LINE = /^\s*(?:\*\s*\*\s*\*|\*{3,}|#|\u2014{3,}|-{3,}|={3,})\s*$/;
   let markersNormalized = 0;
   const lines = input.split("\n");

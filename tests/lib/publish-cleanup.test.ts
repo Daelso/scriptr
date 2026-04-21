@@ -305,6 +305,42 @@ describe("cleanPaste idempotency + end-to-end", () => {
   });
 });
 
+describe("unmatched === word === warning", () => {
+  it("warns when a ===-bracketed word other than 'chapter' appears", () => {
+    const raw = "a\n\n=== END ===\n\nb";
+    const out = cleanPaste(raw, { stripChatCruft: false, normalizeQuotes: false });
+    const msg = out.warnings.find((w) => /did you mean/i.test(w));
+    expect(msg).toBeDefined();
+    expect(msg).toMatch(/END/i);
+    expect(msg).toMatch(/CHAPTER/i);
+  });
+
+  it("does NOT warn on plain === (no word)", () => {
+    const raw = "a\n\n===\n\nb";
+    const out = cleanPaste(raw, { stripChatCruft: false, normalizeQuotes: false });
+    expect(out.warnings.some((w) => /did you mean/i.test(w))).toBe(false);
+  });
+
+  it("does NOT warn on the canonical === CHAPTER === form", () => {
+    // cleanup pipeline is the fallback if pre-split missed it; this test
+    // verifies we don't self-trigger on the canonical form.
+    const raw = "a\n\n=== CHAPTER ===\n\nb";
+    const out = cleanPaste(raw, { stripChatCruft: false, normalizeQuotes: false });
+    expect(out.warnings.some((w) => /did you mean/i.test(w))).toBe(false);
+  });
+
+  it("leaves === CHAPTER === in the prose if pre-split didn't consume it (defense-in-depth)", () => {
+    // The existing MARKER_LINE regex does NOT match lines with embedded words,
+    // so the canonical marker survives cleanup as literal text. This verifies
+    // the survival — if a regression ever widens MARKER_LINE to swallow
+    // `=== CHAPTER ===`, this test catches it.
+    const raw = "a\n\n=== CHAPTER ===\n\nb";
+    const out = cleanPaste(raw, { stripChatCruft: false, normalizeQuotes: false });
+    expect(out.sections.join("\n")).toContain("=== CHAPTER ===");
+    expect(out.sections.join("\n")).not.toContain("\n---\n");
+  });
+});
+
 describe("splitChapterChunks", () => {
   it("returns [raw] when no marker present", () => {
     expect(splitChapterChunks("just prose")).toEqual(["just prose"]);
