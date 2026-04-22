@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 import { SectionCard } from "@/components/editor/SectionCard";
 import { useGenerationStore } from "@/components/editor/generation-store";
 import type { Section } from "@/lib/types";
@@ -66,6 +68,33 @@ export function SectionList({
   // can't stack two runs.
   const disableActions = isStreaming;
 
+  // Sticky-focus ownership: a single editing section id plus the last-captured
+  // click coords. Only one section is in edit mode at a time — swapping
+  // unmounts the previous SectionEditor, whose autosave flush fires from the
+  // hook's unmount cleanup.
+  const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
+  const [pendingCaret, setPendingCaret] = useState<{ x: number; y: number } | null>(null);
+
+  // Any generation in flight (chapter stream or single-section regen) must
+  // kick the currently-editing card out of edit mode so the SectionEditor
+  // unmounts and its autosave cleanup flushes BEFORE the stream's persistence
+  // writes land. We derive `effectiveEditingSectionId` instead of using an
+  // effect: storing a dedicated state slot would require a setState-in-effect
+  // (flagged by react-hooks/set-state-in-effect) and the prior-state
+  // comparison pattern would require setState-in-render (flagged by
+  // react-hooks/set-state-in-render). Derivation during render sidesteps both
+  // and still produces the correct unmount: SectionCard receives
+  // isEditing=false while streaming, so the editor unmounts and flushes.
+  //
+  // We intentionally KEEP `editingSectionId` state untouched while streaming
+  // so the user's intent survives a transient regen — but with caveats. Since
+  // `pendingCaret` was captured at click time, by the time streaming ends the
+  // coords would point to stale screen space. So when `disableActions` is
+  // true we also mask pendingCaret to null; if the user's prior card comes
+  // back into edit mode post-stream, SectionEditor falls back to focus('end').
+  const effectiveEditingSectionId = disableActions ? null : editingSectionId;
+  const effectivePendingCaret = disableActions ? null : pendingCaret;
+
   // Empty state: no sections on disk AND nothing being streamed for this chapter.
   if (sections.length === 0 && !isLiveHere) {
     return (
@@ -83,6 +112,16 @@ export function SectionList({
           section={section}
           isRegenerating={regeneratingSectionId === section.id}
           disableActions={disableActions}
+          isEditing={effectiveEditingSectionId === section.id}
+          caret={effectiveEditingSectionId === section.id ? effectivePendingCaret : null}
+          onRequestEdit={(id, caret) => {
+            setPendingCaret(caret);
+            setEditingSectionId(id);
+          }}
+          onExit={() => {
+            setEditingSectionId(null);
+            setPendingCaret(null);
+          }}
           onRegenerate={onSectionRegenerate}
           onRegenerateWithNote={onSectionRegenerateWithNote}
           onDelete={onSectionDelete}
