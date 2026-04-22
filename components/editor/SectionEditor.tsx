@@ -183,13 +183,8 @@ export function SectionEditor({
   // Place the cursor on mount. If a caret was captured from a click, resolve
   // it via posAtCoords; otherwise (or if coords don't map to a document
   // position), fall back to end-of-content so keyboard users can start typing.
-  // The `cursorPlacedRef` guard ensures we only run this once per mount, even
-  // if `editor` reference changes across renders.
-  const cursorPlacedRef = useRef(false);
   useEffect(() => {
     if (!editor) return;
-    if (cursorPlacedRef.current) return;
-    cursorPlacedRef.current = true;
     const c = caretOnMountRef.current;
     if (c) {
       const resolved = editor.view.posAtCoords({ left: c.x, top: c.y });

@@ -30,33 +30,57 @@ const commandsFocusSpy = vi.fn();
 const posAtCoordsStub = vi.fn<
   (_: { left: number; top: number }) => { pos: number; inside: number } | null
 >(() => ({ pos: 42, inside: -1 }));
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let capturedEditorOpts: any = null;
+
+// Shape of the fake editor returned by our `useEditor` mock. Mirrors the
+// narrow slice of Tiptap's Editor API that SectionEditor consumes.
+type FakeEditor = {
+  view: { posAtCoords: typeof posAtCoordsStub };
+  commands: { focus: typeof commandsFocusSpy };
+  chain: () => Record<string, (...args: unknown[]) => unknown>;
+  __opts: Record<string, unknown>;
+};
+
+// Module-level fake editor ref. Real Tiptap v3's `useEditor` returns a stable
+// Editor instance across renders, so we memoize the fake editor here and
+// return the same reference for every call within a test. `beforeEach` below
+// resets this to null so each test starts fresh.
+let fakeEditor: FakeEditor | null = null;
+
+function capturedEditorOpts(): Record<string, unknown> | null {
+  return fakeEditor?.__opts ?? null;
+}
 
 vi.mock("@tiptap/react", () => {
   const useEditor = (opts: Record<string, unknown>) => {
-    capturedEditorOpts = opts;
-    // Chainable builder: every method returns `chain` itself except `run()`.
-    const chain: Record<string, (...args: unknown[]) => unknown> = {};
-    chain.setTextSelection = (...args: unknown[]) => {
-      setTextSelectionSpy(...args);
-      return chain;
-    };
-    chain.focus = (...args: unknown[]) => {
-      chainFocusSpy(...args);
-      return chain;
-    };
-    chain.run = () => true;
-    return {
-      view: {
-        posAtCoords: posAtCoordsStub,
-      },
-      commands: {
-        focus: commandsFocusSpy,
-      },
-      chain: () => chain,
-      __opts: opts,
-    };
+    if (!fakeEditor) {
+      // Chainable builder: every method returns `chain` itself except `run()`.
+      const chain: Record<string, (...args: unknown[]) => unknown> = {};
+      chain.setTextSelection = (...args: unknown[]) => {
+        setTextSelectionSpy(...args);
+        return chain;
+      };
+      chain.focus = (...args: unknown[]) => {
+        chainFocusSpy(...args);
+        return chain;
+      };
+      chain.run = () => true;
+      fakeEditor = {
+        view: {
+          posAtCoords: posAtCoordsStub,
+        },
+        commands: {
+          focus: commandsFocusSpy,
+        },
+        chain: () => chain,
+        __opts: opts,
+      };
+    } else {
+      // Preserve identity across re-renders; just refresh the captured opts so
+      // tests can read the latest handlers (matches real Tiptap behavior where
+      // the Editor instance is stable but configuration can be updated).
+      fakeEditor.__opts = opts;
+    }
+    return fakeEditor;
   };
   const EditorContent = () => <div data-testid="proseMirror" />;
   return { useEditor, EditorContent };
@@ -98,7 +122,7 @@ beforeEach(() => {
   commandsFocusSpy.mockClear();
   posAtCoordsStub.mockClear();
   posAtCoordsStub.mockReturnValue({ pos: 42, inside: -1 });
-  capturedEditorOpts = null;
+  fakeEditor = null;
 });
 
 describe("SectionEditor sticky-focus behavior", () => {
@@ -200,10 +224,13 @@ describe("SectionEditor sticky-focus behavior", () => {
       />,
     );
     // Invoke the captured blur handler directly.
-    const blurHandler = capturedEditorOpts?.editorProps?.handleDOMEvents?.blur;
+    const opts = capturedEditorOpts() as
+      | { editorProps?: { handleDOMEvents?: { blur?: (...args: unknown[]) => unknown } } }
+      | null;
+    const blurHandler = opts?.editorProps?.handleDOMEvents?.blur;
     expect(blurHandler).toBeTypeOf("function");
     act(() => {
-      blurHandler({}, new Event("blur"));
+      blurHandler!({}, new Event("blur"));
     });
     expect(onExit).not.toHaveBeenCalled();
     unmount();
@@ -219,10 +246,13 @@ describe("SectionEditor sticky-focus behavior", () => {
         onExit={vi.fn()}
       />,
     );
-    const blurHandler = capturedEditorOpts?.editorProps?.handleDOMEvents?.blur;
+    const opts = capturedEditorOpts() as
+      | { editorProps?: { handleDOMEvents?: { blur?: (...args: unknown[]) => unknown } } }
+      | null;
+    const blurHandler = opts?.editorProps?.handleDOMEvents?.blur;
     expect(blurHandler).toBeTypeOf("function");
     act(() => {
-      blurHandler({}, new Event("blur"));
+      blurHandler!({}, new Event("blur"));
     });
     expect(flushSpy).toHaveBeenCalledTimes(1);
     unmount();
