@@ -83,7 +83,7 @@ All publishing metadata already exists on `Story`: `title`, `subtitle`, `authorP
 
 ### Cover image — on disk, no type reference
 
-Stored at `data/stories/<slug>/cover.jpg` (or `.png`). Presence-on-disk is the signal; no reference stored in `story.json`. Server-side validation on upload: JPEG or PNG, ≥ 1600×2560 recommended (warn-on-smaller, don't reject), ≤ 10 MB. The renderer checks for the file and falls back to a generated title-card SVG if absent — export does not fail on missing cover.
+Stored at `data/stories/<slug>/cover.jpg` (or `.png`). Presence-on-disk is the signal; no reference stored in `story.json`. Server-side validation on upload: JPEG or PNG, ≥ 1600×2560 recommended (warn-on-smaller, don't reject), ≤ 20 MB. The renderer checks for the file and falls back to a generated title-card SVG if absent — export does not fail on missing cover.
 
 ### Raw paste — transient, never persisted
 
@@ -251,7 +251,7 @@ Behavior: runs `cleanPaste(raw, cleanupOptions)`, wraps each section string into
 
 Body: multipart file upload (one file, field name `cover`).
 
-Behavior: server-side validation — MIME must be `image/jpeg` or `image/png`, bytes ≤ 10 MB. Writes to `data/stories/<slug>/cover.jpg` (converting PNG to JPEG server-side if needed; `sharp` is already a transitive dep via Next.js). Dimensions < 1600×2560 emit a warning in the response; the upload still succeeds.
+Behavior: server-side validation — MIME must be `image/jpeg` or `image/png`, bytes ≤ 20 MB. Writes to `data/stories/<slug>/cover.jpg` (converting PNG to JPEG server-side if needed; `sharp` is already a transitive dep via Next.js). Dimensions < 1600×2560 emit a warning in the response; the upload still succeeds.
 
 ### `POST /api/stories/[slug]/export/epub`
 
@@ -314,7 +314,7 @@ The cleanup pipeline (`cleanPaste`), the renderer (`buildEpubBytes`/`renderChapt
 ### Route tests
 
 - `POST /api/stories/[slug]/chapters/import` — persists `Chapter` with `source: "imported"`; appends to `chapterOrder`; raw paste fragment absent from all filesystem writes; `generateRecap: true` triggers the recap route exactly once.
-- `PUT /api/stories/[slug]/cover` — writes file; rejects non-JPEG/PNG; rejects > 10 MB; undersized image produces warning but succeeds.
+- `PUT /api/stories/[slug]/cover` — writes file; rejects non-JPEG/PNG; rejects > 20 MB; undersized image produces warning but succeeds.
 - `POST /api/stories/[slug]/export/epub` — with `version: 3`, writes `exports/<slug>-epub3.epub` and returns `{ path, bytes, version: 3, warnings }`; with `version: 2`, writes `exports/<slug>-epub2.epub` and returns `{ path, bytes, version: 2, warnings }`; an empty / missing version in the body behaves as `version: 3`; back-to-back builds with different versions leave both files in place; re-builds of the same version are idempotent (overwrite).
 
 ### E2E — extend `tests/e2e/golden-path.spec.ts` (or add sibling spec)
@@ -339,7 +339,7 @@ No change required. The three new routes are fully local and do not need to be a
 | Paste is > 1 MB | Import route returns 413; dialog shows "Paste is too large — split into smaller chapters." |
 | Cleanup produces zero sections | Import route returns 400; dialog shows "No prose detected after cleanup." |
 | Cover image wrong MIME | Cover route returns 415 with the accepted types. |
-| Cover image too large | Cover route returns 413 with the 10 MB limit. |
+| Cover image too large | Cover route returns 413 with the 20 MB limit. |
 | Cover image under 1600×2560 | Cover route succeeds with a warning; UI renders the warning below the drop zone. |
 | EPUB build fails (internal) | Export route returns 500 with the exception message; UI shows an error panel with a "Retry" button. |
 | `epubcheck-wasm` emits warnings | File still written; warnings listed under the last-build panel; build count and byte size still render. |

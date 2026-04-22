@@ -44,9 +44,9 @@ describe("/api/stories/[slug]/cover PUT", () => {
     expect(res.status).toBe(415);
   });
 
-  it("rejects over-10MB with 413", async () => {
+  it("rejects over-20MB with 413", async () => {
     const story = await createStory(tmpDir, { title: "S" });
-    const huge = new Uint8Array(11 * 1024 * 1024);
+    const huge = new Uint8Array(21 * 1024 * 1024);
     huge[0] = 0xff; huge[1] = 0xd8; huge[2] = 0xff;
     const blob = new Blob([huge], { type: "image/jpeg" });
     const res = await callPut(story.slug, blob);
