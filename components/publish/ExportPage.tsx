@@ -224,7 +224,7 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
             className="hidden"
           />
           <div className="text-xs text-muted-foreground mt-1">
-            2:3 ratio, ≤10 MB
+            2:3 ratio, ≤20 MB
           </div>
         </div>
 

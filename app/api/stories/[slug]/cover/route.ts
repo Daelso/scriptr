@@ -7,7 +7,7 @@ import sharp from "sharp";
 
 type Ctx = { params: Promise<{ slug: string }> };
 
-const MAX_BYTES = 10 * 1024 * 1024;
+const MAX_BYTES = 20 * 1024 * 1024;
 const ACCEPTED = new Set(["image/jpeg", "image/png"]);
 
 export async function PUT(req: NextRequest, ctx: Ctx) {
@@ -31,7 +31,7 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
     return fail(`unsupported image type: ${entry.type}`, 415);
   }
   if (entry.size > MAX_BYTES) {
-    return fail("cover exceeds 10 MB limit", 413);
+    return fail("cover exceeds 20 MB limit", 413);
   }
 
   const inputBytes = Buffer.from(await entry.arrayBuffer());
