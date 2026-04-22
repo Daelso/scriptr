@@ -5,6 +5,9 @@ import { getChapter, listChapters } from "@/lib/storage/chapters";
 import { buildChapterPrompt, type PromptPair } from "@/lib/prompts";
 import { resolveStyleRules } from "@/lib/style";
 
+// Unlike storage helpers (which return null on not-found), assembleChapterPrompt
+// throws typed errors because both callers (generate route, prompt export route)
+// need to discriminate three not-found modes into different status codes.
 export class StoryNotFoundError extends Error {
   constructor(slug: string) {
     super(`story not found: ${slug}`);
