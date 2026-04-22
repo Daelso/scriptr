@@ -82,20 +82,44 @@ test("import paste \u2192 preview \u2192 save \u2192 export EPUB on disk", async
   await descField.fill("A tiny end-to-end test book.");
   await descField.blur();
 
+  // Default toggle is EPUB 3 — build it first.
+  await expect(page.getByTestId("export-version-epub3")).toHaveAttribute("aria-checked", "true");
   await page.getByTestId("export-build").click();
 
-  // Success UI
-  await expect(page.getByText(/Built \d+ KB/)).toBeVisible({ timeout: 15_000 });
+  // Success UI — EPUB 3 panel appears.
+  await expect(page.getByTestId("export-lastbuild-epub3")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("export-lastbuild-epub3")).toContainText(/EPUB 3/);
 
   // File on disk
-  const epubPath = join(
+  const epub3Path = join(
     DATA_DIR,
     "stories",
     story.slug,
     "exports",
-    `${story.slug}.epub`,
+    `${story.slug}-epub3.epub`,
   );
-  expect(existsSync(epubPath)).toBe(true);
+  expect(existsSync(epub3Path)).toBe(true);
+
+  // Switch to EPUB 2 and build it.
+  await page.getByTestId("export-version-epub2").click();
+  await expect(page.getByTestId("export-version-epub2")).toHaveAttribute("aria-checked", "true");
+  await page.getByTestId("export-build").click();
+
+  // EPUB 2 panel appears — EPUB 3 panel still visible simultaneously.
+  await expect(page.getByTestId("export-lastbuild-epub2")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("export-lastbuild-epub2")).toContainText(/EPUB 2/);
+  await expect(page.getByTestId("export-lastbuild-epub3")).toBeVisible();
+
+  // Both files on disk.
+  const epub2Path = join(
+    DATA_DIR,
+    "stories",
+    story.slug,
+    "exports",
+    `${story.slug}-epub2.epub`,
+  );
+  expect(existsSync(epub2Path)).toBe(true);
+  expect(existsSync(epub3Path)).toBe(true);
 });
 
 test("import paste with chapter-break marker creates multiple chapters", async ({
