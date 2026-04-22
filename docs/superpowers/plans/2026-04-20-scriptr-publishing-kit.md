@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship an end-to-end paste-to-EPUB workflow: a three-pane Import dialog that turns Grok web-UI paste into a first-class `Chapter`, and an Export page that builds a validated EPUB3 for the whole story — both driven by a single shared renderer so preview and export are byte-identical.
+**Goal:** Ship an end-to-end paste-to-EPUB workflow: a three-pane Import dialog that turns Grok web-UI paste into a first-class `Chapter`, and an Export page that builds a validated EPUB for the whole story — in either EPUB3 (Kindle / KDP) or EPUB2 (Smashwords, which does not accept EPUB3), chosen via a toggle at build time — both flows driven by a single shared renderer so preview and export are byte-identical.
 
-**Architecture:** Three new pure modules under `lib/publish/` (`cleanup.ts`, `epub.ts`, `epub-storage.ts`). Three new local-only API routes under `app/api/stories/[slug]/` (`chapters/import`, `cover`, `export/epub`). Two new React components under `components/publish/` (`ImportChapterDialog.tsx`, `ExportPage.tsx`). One new page at `app/s/[slug]/export/page.tsx`. Minor additive changes to [lib/types.ts](../../../lib/types.ts) (`Chapter.source?`), [lib/storage/paths.ts](../../../lib/storage/paths.ts) (cover + export paths), [lib/storage/chapters.ts](../../../lib/storage/chapters.ts) (new `createImportedChapter`), and [components/editor/ChapterList.tsx](../../../components/editor/ChapterList.tsx) (Import button + nav link to Export page). Zero new external egress.
+**Architecture:** Three new pure modules under `lib/publish/` (`cleanup.ts`, `epub.ts`, `epub-storage.ts`). Three new local-only API routes under `app/api/stories/[slug]/` (`chapters/import`, `cover`, `export/epub`). Two new React components under `components/publish/` (`ImportChapterDialog.tsx`, `ExportPage.tsx`). One new page at `app/s/[slug]/export/page.tsx`. Minor additive changes to [lib/types.ts](../../../lib/types.ts) (`Chapter.source?`), [lib/storage/paths.ts](../../../lib/storage/paths.ts) (cover + version-aware export paths), [lib/storage/chapters.ts](../../../lib/storage/chapters.ts) (new `createImportedChapter`), and [components/editor/ChapterList.tsx](../../../components/editor/ChapterList.tsx) (Import button + nav link to Export page). The EPUB renderer and export route thread a `version: 2 | 3` field end-to-end; EPUB2 and EPUB3 artifacts live side-by-side in `exports/` (different filenames) so dual-publishing to KDP and Smashwords does not require rebuilding the other version every time. Zero new external egress.
 
 **Tech Stack:** Next.js 16 (App Router), TypeScript, React 19, vitest, Playwright, shadcn/ui, SWR, Tailwind, plus three new runtime deps: `epub-gen-memory`, `isomorphic-dompurify`, `sharp`. `epubcheck-wasm` added as a dev dep.
 
@@ -68,10 +68,10 @@ At the end of every numbered task: commit. Small commits, frequent commits. Use 
 | Path | What changes |
 |------|--------------|
 | [lib/types.ts](../../../lib/types.ts) | Add `source?: "generated" \| "imported"` to `Chapter`. |
-| [lib/storage/paths.ts](../../../lib/storage/paths.ts) | Add `coverPath(dataDir, slug)`, `exportsDir(dataDir, slug)`, `epubPath(dataDir, slug)`. |
+| [lib/storage/paths.ts](../../../lib/storage/paths.ts) | Add `epubPath(dataDir, slug, version)` that returns `.../exports/<slug>-epub<version>.epub`. `coverPath` and `exportsDir` already exist. |
 | [lib/storage/chapters.ts](../../../lib/storage/chapters.ts) | Add `createImportedChapter(dataDir, slug, input)` — accepts pre-built sections + title + source. |
 | [components/editor/ChapterList.tsx](../../../components/editor/ChapterList.tsx) | Add "Import chapter" button next to "New chapter". Add "Export" nav link (or — if nav lives elsewhere — add it to the appropriate nav component). |
-| [tests/e2e/golden-path.spec.ts](../../../tests/e2e/golden-path.spec.ts) | Extend (or add sibling `publishing-kit.spec.ts`) — paste → preview → save → export → `.epub` on disk. |
+| [tests/e2e/golden-path.spec.ts](../../../tests/e2e/golden-path.spec.ts) | Extend (or add sibling `publishing-kit.spec.ts`) — paste → preview → save → export EPUB3 → switch toggle → export EPUB2 → both `.epub` files on disk. |
 | [README.md](../../../README.md) | Add one sentence to the privacy section about Publishing Kit being fully local. |
 | [package.json](../../../package.json) | Add `epub-gen-memory`, `isomorphic-dompurify`, `sharp`, `epubcheck-wasm` as deps. |
 
@@ -81,12 +81,14 @@ At the end of every numbered task: commit. Small commits, frequent commits. Use 
 
 Lays the groundwork: verifies the chosen EPUB libraries actually install and can emit a valid EPUB; extends types; adds filesystem-path helpers. No UI, no routes, no user-visible behavior yet. Each task is independently committable and leaves the quality gates green.
 
-### Task 1.1: Install dependencies + EPUB smoke test
+### Task 1.1: Install dependencies + EPUB smoke test (both versions)
 
 **Files:**
 - Modify: `package.json`
 - Modify: `package-lock.json`
 - Create: `tests/lib/publish-epub-smoke.test.ts`
+
+**Why this task proves both versions up-front.** The Publishing Kit targets both EPUB3 (Kindle / KDP) and EPUB2 (Smashwords, which does not accept EPUB3). `epub-gen-memory` produces EPUB3 by default; whether it also emits EPUB2 depends on its options surface. If it does NOT, downstream tasks need a fallback for EPUB2 (a hand-rolled `jszip` writer, per the spec's Library-confirmation fallback). We resolve that branch NOW, before any UI code is written, so the plan can't silently ship a broken Smashwords path.
 
 - [ ] **Step 1: Install the new deps**
 
@@ -95,9 +97,19 @@ npm install --save epub-gen-memory isomorphic-dompurify sharp
 npm install --save-dev epubcheck-wasm
 ```
 
-Expected: all four install cleanly. If any package fails to install or resolve on Node 20+, stop and investigate before continuing — the plan's rendering approach assumes `epub-gen-memory` and `epubcheck-wasm` work. If one is broken, consult the spec's "Library confirmation" fallback note (`jszip`-based EPUB build; skip validation) before deviating.
+Expected: all four install cleanly. If any package fails to install or resolve on Node 20+, stop and investigate before continuing.
 
-- [ ] **Step 2: Write a smoke test that builds an empty-ish EPUB with `epub-gen-memory`**
+- [ ] **Step 2: Read `epub-gen-memory`'s README / types to find its EPUB2 option (if any)**
+
+```bash
+ls node_modules/epub-gen-memory
+cat node_modules/epub-gen-memory/README.md 2>/dev/null | head -200
+grep -RIn "version\|epub2\|epub3\|ncx" node_modules/epub-gen-memory/lib 2>/dev/null | head -40
+```
+
+Look for a `version`, `epubVersion`, or equivalent option on the generator's `options` argument. The library is permissively typed — open `node_modules/epub-gen-memory/lib/index.d.ts` if the README is sparse. Record what you find in the commit message for this task (e.g., "epub-gen-memory exposes `options.version = 2 | 3`" or "epub-gen-memory only emits EPUB3 — EPUB2 will need a hand-rolled fallback in Task 3.3").
+
+- [ ] **Step 3: Write the smoke test — both versions**
 
 Create `tests/lib/publish-epub-smoke.test.ts`:
 
@@ -106,52 +118,85 @@ import { describe, it, expect } from "vitest";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const epub: { default: unknown } | unknown = require("epub-gen-memory");
 
+type GenFn = (opts: Record<string, unknown>, content: unknown) => Promise<Buffer>;
+
+function getGenerator(): GenFn {
+  const mod = epub as { default?: GenFn } & GenFn;
+  return (mod.default ?? mod) as GenFn;
+}
+
+function assertZipMagic(bytes: Uint8Array | Buffer) {
+  const b = Buffer.from(bytes);
+  expect(b.byteLength).toBeGreaterThan(100);
+  // ZIP magic bytes: 0x50 0x4B 0x03 0x04.
+  expect(b[0]).toBe(0x50);
+  expect(b[1]).toBe(0x4b);
+}
+
 describe("epub-gen-memory smoke", () => {
-  it("is importable and exposes a callable generator", async () => {
+  it("is importable and exposes a callable generator", () => {
     const candidate =
       (epub as { default?: unknown }).default ?? (epub as unknown);
     expect(typeof candidate).toBe("function");
   });
 
-  it("produces a non-empty Buffer / Uint8Array for a minimal book", async () => {
-    const mod = (await import("epub-gen-memory")) as unknown as {
-      default?: (opts: unknown, content: unknown) => Promise<Buffer>;
-    };
-    const generator = mod.default ?? (mod as unknown as (o: unknown, c: unknown) => Promise<Buffer>);
-    const bytes = await (generator as (o: unknown, c: unknown) => Promise<Buffer>)(
-      { title: "Smoke", author: "Test" },
+  it("produces a valid EPUB3 by default", async () => {
+    const gen = getGenerator();
+    const bytes = await gen(
+      { title: "Smoke v3", author: "Test" },
       [{ title: "Chapter 1", content: "<p>Hello.</p>" }]
     );
-    expect(bytes.byteLength ?? bytes.length).toBeGreaterThan(100);
-    // EPUB = ZIP; ZIP magic bytes are 0x50 0x4B 0x03 0x04.
-    const first4 = Buffer.from(bytes).subarray(0, 4);
-    expect(first4[0]).toBe(0x50);
-    expect(first4[1]).toBe(0x4b);
+    assertZipMagic(bytes);
+  });
+
+  // If this test passes, Task 3.3 uses epub-gen-memory for both versions.
+  // If it THROWS or produces an invalid ZIP, Task 3.3 needs a jszip-based
+  // EPUB2 fallback — flag it in that task's notes and escalate here.
+  it("produces a valid EPUB2 when asked (documents library capability)", async () => {
+    const gen = getGenerator();
+    try {
+      // The option name is tentative — Step 2 confirmed the exact key.
+      // Common names across EPUB libraries: `version`, `epubVersion`, `ebookVersion`.
+      const bytes = await gen(
+        { title: "Smoke v2", author: "Test", version: 2 },
+        [{ title: "Chapter 1", content: "<p>Hello.</p>" }]
+      );
+      assertZipMagic(bytes);
+    } catch (err) {
+      // Deliberate: if the library rejects `version: 2`, record that.
+      // Do NOT skip the test silently — rethrow with context so the
+      // implementer in Task 3.3 knows they need the fallback path.
+      throw new Error(
+        `epub-gen-memory did not accept version: 2 — Task 3.3 MUST add a jszip-based EPUB2 fallback. Underlying error: ${(err as Error).message}`
+      );
+    }
   });
 });
 ```
 
-This test uses `require` + dynamic `import` deliberately because `epub-gen-memory`'s published export shape has shifted between versions. Lock the actual API shape in Task 3.4 once it's confirmed.
+The test uses `require` + `getGenerator()` deliberately because `epub-gen-memory`'s published export shape has shifted between versions.
 
-- [ ] **Step 3: Run the smoke test**
+- [ ] **Step 4: Run the smoke test**
 
 Run: `npm test -- tests/lib/publish-epub-smoke.test.ts`
-Expected: PASS.
+Expected: both the EPUB3 and the EPUB2 test PASS.
 
-If the test fails with a missing-dependency error from `epub-gen-memory`, install whatever it requires and document in a PR note. If the library crashes on minimal input, escalate.
+If only the EPUB3 test passes and the EPUB2 test fails with the "MUST add a jszip-based EPUB2 fallback" message, that is an expected branch — **do not merge this task as-is**. Keep the failing test red, document the finding, and proceed to Task 1.2 only after adding a TODO to Task 3.3's preamble noting that EPUB2 needs a hand-rolled writer. A second option is to switch to a library that exposes both versions natively (e.g., `nodepub`, `jszip` + template); record whichever path you pick.
 
-- [ ] **Step 4: Quality gates**
+- [ ] **Step 5: Quality gates**
 
 Run: `npm run typecheck && npm run lint && npm test`
-Expected: all green.
+Expected: all green (or the EPUB2 test deliberately red as above, with a follow-up commit opening a jszip fallback branch).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add package.json package-lock.json tests/lib/publish-epub-smoke.test.ts
 git commit -m "chore(publishing-kit): install epub-gen-memory + sharp + isomorphic-dompurify + epubcheck-wasm
 
-Smoke test proves epub-gen-memory can emit a valid ZIP/EPUB on Node 20+."
+Smoke test proves epub-gen-memory can emit a valid EPUB3 and EPUB2 on Node 20+.
+Records the actual option key epub-gen-memory uses for EPUB2 selection
+so Task 3.3 can thread it through buildEpubBytes."
 ```
 
 ---
@@ -234,7 +279,7 @@ grep -nE "^export function (coverPath|exportsDir|epubPath)" lib/storage/paths.ts
 
 Expected output: lines for `exportsDir` and `coverPath`, nothing for `epubPath`. If `epubPath` already exists, skip this task entirely and continue to Task 1.4. If the existing `coverPath` returns anything other than `…/cover.jpg` or the existing `exportsDir` anything other than `…/exports`, escalate before proceeding — downstream code assumes the paths.
 
-- [ ] **Step 2: Write failing test for `epubPath`**
+- [ ] **Step 2: Write failing test for `epubPath(dataDir, slug, version)`**
 
 Create or append to `tests/lib/paths.test.ts`:
 
@@ -254,9 +299,15 @@ describe("publishing paths", () => {
     expect(exportsDir(dataDir, slug)).toBe("/data/stories/my-story/exports");
   });
 
-  it("epubPath returns exports/<slug>.epub", () => {
-    expect(epubPath(dataDir, slug)).toBe(
-      "/data/stories/my-story/exports/my-story.epub"
+  it("epubPath(version: 3) returns exports/<slug>-epub3.epub", () => {
+    expect(epubPath(dataDir, slug, 3)).toBe(
+      "/data/stories/my-story/exports/my-story-epub3.epub"
+    );
+  });
+
+  it("epubPath(version: 2) returns exports/<slug>-epub2.epub", () => {
+    expect(epubPath(dataDir, slug, 2)).toBe(
+      "/data/stories/my-story/exports/my-story-epub2.epub"
     );
   });
 });
@@ -264,7 +315,9 @@ describe("publishing paths", () => {
 
 The two `coverPath` / `exportsDir` tests are value-lock regression tests — they assert the EXISTING helpers continue to produce the paths this plan depends on. If someone later changes `storyDir`'s composition, these tests catch it. They should pass immediately.
 
-- [ ] **Step 3: Run — expect `epubPath` test to fail, others to pass**
+**Why the filename encodes the version.** Users dual-publishing to KDP (EPUB3) and Smashwords (EPUB2) upload both files. If the path were a single `<slug>.epub`, every build for one store would clobber the artifact for the other, forcing an extra rebuild before every Smashwords upload. Two filenames let both artifacts coexist in `exports/` and rebuilds of one version leave the other untouched. The spec locks this decision under "Open questions resolved".
+
+- [ ] **Step 3: Run — expect `epubPath` tests to fail, `coverPath` / `exportsDir` tests to pass**
 
 ```bash
 npm test -- tests/lib/paths.test.ts
@@ -275,12 +328,21 @@ npm test -- tests/lib/paths.test.ts
 Open [lib/storage/paths.ts](../../../lib/storage/paths.ts). Add `epubPath` next to the existing `exportsDir` helper, composing via it:
 
 ```ts
-export function epubPath(dataDir: string, storySlug: string) {
-  return join(exportsDir(dataDir, storySlug), `${storySlug}.epub`);
+export type EpubVersion = 2 | 3;
+
+export function epubPath(
+  dataDir: string,
+  storySlug: string,
+  version: EpubVersion
+) {
+  return join(
+    exportsDir(dataDir, storySlug),
+    `${storySlug}-epub${version}.epub`
+  );
 }
 ```
 
-Follow the file's existing style — parameter name `storySlug`, no explicit return type, `join` already imported.
+Follow the file's existing style — parameter name `storySlug`, no explicit return type, `join` already imported. Export `EpubVersion` so downstream modules (`lib/publish/epub.ts`, `lib/publish/epub-storage.ts`, the export route) import one canonical alias rather than re-declaring `2 | 3` three times.
 
 - [ ] **Step 5: Run — all pass**
 
@@ -1349,11 +1411,15 @@ Create `lib/publish/epub.ts`:
 
 ```ts
 import type { Chapter, Story } from "@/lib/types";
+import type { EpubVersion } from "@/lib/storage/paths";
 
 export type EpubInput = {
   story: Story;
   chapters: Chapter[];
   coverPath?: string;
+  // EPUB package version. Defaults to 3.
+  // EPUB3 = Kindle / KDP target. EPUB2 = Smashwords (which rejects EPUB3).
+  version?: EpubVersion;
 };
 
 export type PreviewOpts = { chapterNumber?: number };
@@ -1544,15 +1610,22 @@ git commit -m "feat(publish): renderSectionHtml transformer (entities, emphasis,
 
 ---
 
-### Task 3.3: Implement `buildEpubBytes`
+### Task 3.3: Implement `buildEpubBytes` (both EPUB2 and EPUB3)
 
-The exact `epub-gen-memory` API shape depends on the installed version. Task 1.1's smoke test confirmed the library is callable; read `node_modules/epub-gen-memory/README.md` or the `.d.ts` before writing this step. The snippet below assumes the common default-export signature `(options, contentArray) => Promise<Buffer>`; adapt if the installed version differs.
+The exact `epub-gen-memory` API shape depends on the installed version. Task 1.1's smoke test confirmed the library is callable AND whether it accepts a `version: 2` option. Before writing this step, re-read `node_modules/epub-gen-memory/README.md` (or `lib/index.d.ts`) to lock the exact option key. The snippet below assumes the common default-export signature `(options, contentArray) => Promise<Buffer>` and uses `options.version` for the EPUB package version — if the installed library uses a different key name (`epubVersion`, `ebookVersion`, etc.), substitute it.
+
+**If Task 1.1's EPUB2 smoke test failed** (i.e., `epub-gen-memory` does not emit EPUB2 no matter how it's invoked), you have two options — pick one before writing code:
+
+- **Option A (recommended):** Swap libraries. `nodepub` accepts `version: 2 | 3`. Re-run Task 1.1's smoke test against the new library to re-confirm both versions build.
+- **Option B:** Keep `epub-gen-memory` for EPUB3 and write a `jszip`-based EPUB2 writer. This adds ~150 lines (manifest OPF, NCX, chapter XHTML templates); follow the EPUB 2.0.1 spec at https://idpf.org/epub/20/spec/OPF_2.0.1_draft.htm. The section-to-HTML transformer output from Task 3.2 is XHTML-compatible, so chapter bodies carry over unchanged.
+
+Either way, the public `buildEpubBytes` signature is identical — callers pass `version: 2 | 3` and the implementation picks the right internal path.
 
 **Files:**
 - Modify: `lib/publish/epub.ts`
 - Modify: `tests/lib/publish-epub.test.ts`
 
-- [ ] **Step 1: Write failing tests**
+- [ ] **Step 1: Write failing tests for both versions**
 
 Append:
 
@@ -1602,28 +1675,77 @@ describe("buildEpubBytes", () => {
     ];
   }
 
-  it("produces a ZIP-magic-byte-prefixed buffer", async () => {
+  // Inspects the OPF inside the ZIP to recover the declared EPUB version.
+  // Implementation lives in tests/lib/helpers/epub-inspect.ts (added in Step 2).
+  async function packageVersionOf(bytes: Uint8Array): Promise<string> {
+    const { readOpfVersion } = await import("./helpers/epub-inspect");
+    return readOpfVersion(bytes);
+  }
+
+  it("produces a ZIP-magic-byte-prefixed buffer by default (EPUB3)", async () => {
     const bytes = await buildEpubBytes({ story: story(), chapters: chapters() });
     expect(bytes.byteLength).toBeGreaterThan(500);
     const b = Buffer.from(bytes);
     expect(b[0]).toBe(0x50);
     expect(b[1]).toBe(0x4b);
+    expect(await packageVersionOf(bytes)).toBe("3.0");
   });
 
-  it("handles missing coverPath without crashing", async () => {
+  it("produces EPUB2 when version: 2 is requested", async () => {
     const bytes = await buildEpubBytes({
       story: story(),
       chapters: chapters(),
-      coverPath: undefined,
+      version: 2,
     });
     expect(bytes.byteLength).toBeGreaterThan(500);
+    const b = Buffer.from(bytes);
+    expect(b[0]).toBe(0x50);
+    expect(b[1]).toBe(0x4b);
+    expect(await packageVersionOf(bytes)).toBe("2.0");
+  });
+
+  it("handles missing coverPath without crashing (both versions)", async () => {
+    for (const version of [3, 2] as const) {
+      const bytes = await buildEpubBytes({
+        story: story(),
+        chapters: chapters(),
+        coverPath: undefined,
+        version,
+      });
+      expect(bytes.byteLength).toBeGreaterThan(500);
+    }
   });
 });
 ```
 
-- [ ] **Step 2: Run — expect failures**
+- [ ] **Step 2: Add the `readOpfVersion` test helper**
 
-- [ ] **Step 3: Implement**
+Create `tests/lib/helpers/epub-inspect.ts`:
+
+```ts
+import JSZip from "jszip";
+
+// Opens the EPUB ZIP, finds the OPF file via META-INF/container.xml, and
+// returns the `package` element's `version` attribute (e.g., "2.0" / "3.0").
+export async function readOpfVersion(bytes: Uint8Array): Promise<string> {
+  const zip = await JSZip.loadAsync(bytes);
+  const containerXml = await zip.file("META-INF/container.xml")?.async("text");
+  if (!containerXml) throw new Error("no META-INF/container.xml");
+  const opfPath = /full-path="([^"]+)"/.exec(containerXml)?.[1];
+  if (!opfPath) throw new Error("container.xml missing full-path");
+  const opfXml = await zip.file(opfPath)?.async("text");
+  if (!opfXml) throw new Error(`no OPF at ${opfPath}`);
+  const match = /<package\b[^>]*\sversion="([^"]+)"/.exec(opfXml);
+  if (!match) throw new Error("OPF package element missing version attr");
+  return match[1];
+}
+```
+
+`jszip` is a transitive dep of `epub-gen-memory`; if import fails, add it explicitly via `npm install --save-dev jszip`.
+
+- [ ] **Step 3: Run — expect failures**
+
+- [ ] **Step 4: Implement `buildEpubBytes`**
 
 Add to `lib/publish/epub.ts`:
 
@@ -1640,6 +1762,9 @@ type EpubGenFn = (
     cover?: string;
     ignoreFailedDownloads?: boolean;
     css?: string;
+    // The exact key for EPUB version selection — verified against the
+    // installed library in Task 1.1 Step 2. Adapt if it differs.
+    version?: 2 | 3;
   },
   content: Array<{ title: string; content: string }>
 ) => Promise<Buffer>;
@@ -1650,7 +1775,7 @@ function getGenerator(): EpubGenFn {
 }
 
 export async function buildEpubBytes(input: EpubInput): Promise<Uint8Array> {
-  const { story, chapters, coverPath } = input;
+  const { story, chapters, coverPath, version = 3 } = input;
 
   const content = chapters.map((chapter, idx) => {
     const inner = renderChapterPreviewHtml(chapter, { chapterNumber: idx + 1 });
@@ -1674,6 +1799,7 @@ export async function buildEpubBytes(input: EpubInput): Promise<Uint8Array> {
       cover: coverPath,
       ignoreFailedDownloads: true,
       css: EPUB_STYLESHEET,
+      version,
     },
     content
   );
@@ -1684,24 +1810,43 @@ export async function buildEpubBytes(input: EpubInput): Promise<Uint8Array> {
 
 If the smoke test revealed a different API shape, adapt `EpubGenFn` accordingly.
 
-- [ ] **Step 4: Run — all pass**
+**If you took Option B** (jszip-based EPUB2 fallback because `epub-gen-memory` did not accept `version: 2`), `buildEpubBytes` branches on `version`:
 
-- [ ] **Step 5: Commit**
+```ts
+export async function buildEpubBytes(input: EpubInput): Promise<Uint8Array> {
+  const { version = 3 } = input;
+  if (version === 3) return buildEpub3ViaLibrary(input);
+  return buildEpub2HandRolled(input);
+}
+```
+
+Keep both internal functions in `lib/publish/epub.ts` so the shared transformer (`renderSectionHtml` from Task 3.2) and stylesheet are a single source of truth. `buildEpub2HandRolled` builds the ZIP manually with `jszip`: `mimetype` (stored, uncompressed), `META-INF/container.xml`, `OEBPS/content.opf` (with `<package version="2.0">`), `OEBPS/toc.ncx`, and one `OEBPS/chapter-N.xhtml` per chapter. Reference the EPUB 2.0.1 spec at https://idpf.org/epub/20/spec/OPF_2.0.1_draft.htm for the exact OPF / NCX shapes. Do not copy stale templates from the internet without verifying against the spec — EPUB 2 readers (including whatever Smashwords now uses in place of Meatgrinder) are strict.
+
+- [ ] **Step 5: Run — all pass**
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add lib/publish/epub.ts tests/lib/publish-epub.test.ts
-git commit -m "feat(publish): buildEpubBytes packages chapters into EPUB3"
+git add lib/publish/epub.ts tests/lib/publish-epub.test.ts tests/lib/helpers/epub-inspect.ts
+git commit -m "feat(publish): buildEpubBytes packages chapters into EPUB2 or EPUB3
+
+Version parameter (default 3) threads through to the generator. EPUB3 for
+Kindle/KDP; EPUB2 for Smashwords. Tests verify OPF package version matches."
 ```
+
+If Option B was required, adjust the commit message to reflect the jszip-based EPUB2 path.
 
 ---
 
 ### Task 3.4: Add `validateEpub` using `epubcheck-wasm`
 
+`epubcheck` (the underlying Adobe / DAISY tool that `epubcheck-wasm` wraps) auto-detects the EPUB version from the OPF — the wrapper does not need a version argument. A single `validateEpub(bytes)` call works for both EPUB2 and EPUB3 outputs; tests exercise both.
+
 **Files:**
 - Modify: `lib/publish/epub.ts`
 - Modify: `tests/lib/publish-epub.test.ts`
 
-- [ ] **Step 1: Write failing test**
+- [ ] **Step 1: Write failing test — exercise both versions**
 
 Append:
 
@@ -1709,8 +1854,18 @@ Append:
 import { validateEpub } from "@/lib/publish/epub";
 
 describe("validateEpub", () => {
-  it("returns a warnings array (possibly empty) for a built EPUB", async () => {
+  it("returns a warnings array for a built EPUB3", async () => {
     const bytes = await buildEpubBytes({ story: story(), chapters: chapters() });
+    const result = await validateEpub(bytes);
+    expect(Array.isArray(result.warnings)).toBe(true);
+  });
+
+  it("returns a warnings array for a built EPUB2", async () => {
+    const bytes = await buildEpubBytes({
+      story: story(),
+      chapters: chapters(),
+      version: 2,
+    });
     const result = await validateEpub(bytes);
     expect(Array.isArray(result.warnings)).toBe(true);
   });
@@ -1798,13 +1953,36 @@ describe("epub-storage", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it("writeEpub writes atomically to exports/<slug>.epub", async () => {
+  it("writeEpub(version: 3) writes atomically to exports/<slug>-epub3.epub", async () => {
     const story = await createStory(dir, { title: "Book" });
     const bytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3]);
-    const path = await writeEpub(dir, story.slug, bytes);
-    expect(path.endsWith(`/exports/${story.slug}.epub`)).toBe(true);
+    const path = await writeEpub(dir, story.slug, 3, bytes);
+    expect(path.endsWith(`/exports/${story.slug}-epub3.epub`)).toBe(true);
     const stats = await stat(path);
     expect(stats.size).toBe(bytes.length);
+  });
+
+  it("writeEpub(version: 2) writes to exports/<slug>-epub2.epub", async () => {
+    const story = await createStory(dir, { title: "Book" });
+    const bytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 9, 9, 9]);
+    const path = await writeEpub(dir, story.slug, 2, bytes);
+    expect(path.endsWith(`/exports/${story.slug}-epub2.epub`)).toBe(true);
+    const stats = await stat(path);
+    expect(stats.size).toBe(bytes.length);
+  });
+
+  it("writeEpub of both versions leaves both files on disk (coexistence)", async () => {
+    const story = await createStory(dir, { title: "Book" });
+    const v3Bytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 3, 3]);
+    const v2Bytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 2, 2]);
+    const v3Path = await writeEpub(dir, story.slug, 3, v3Bytes);
+    const v2Path = await writeEpub(dir, story.slug, 2, v2Bytes);
+    expect(v3Path).not.toBe(v2Path);
+    // EPUB3 file is still there after the EPUB2 write.
+    const v3Stats = await stat(v3Path);
+    expect(v3Stats.size).toBe(v3Bytes.length);
+    const v2Stats = await stat(v2Path);
+    expect(v2Stats.size).toBe(v2Bytes.length);
   });
 
   it("writeCoverJpeg writes a JPEG file", async () => {
@@ -1868,14 +2046,20 @@ Create `lib/publish/epub-storage.ts`:
 import { mkdir, writeFile, rename, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import sharp from "sharp";
-import { coverPath, epubPath, exportsDir } from "@/lib/storage/paths";
+import {
+  coverPath,
+  epubPath,
+  exportsDir,
+  type EpubVersion,
+} from "@/lib/storage/paths";
 
 export async function writeEpub(
   dataDir: string,
   slug: string,
+  version: EpubVersion,
   bytes: Uint8Array
 ): Promise<string> {
-  const finalPath = epubPath(dataDir, slug);
+  const finalPath = epubPath(dataDir, slug, version);
   const tempPath = `${finalPath}.tmp`;
   await mkdir(exportsDir(dataDir, slug), { recursive: true });
   await writeFile(tempPath, bytes);
@@ -2400,10 +2584,12 @@ describe("/api/stories/[slug]/export/epub POST", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  async function callPost(slug: string) {
+  async function callPost(slug: string, body?: { version?: 2 | 3 }) {
     const { POST } = await import("@/app/api/stories/[slug]/export/epub/route");
     const req = new Request(`http://localhost/api/stories/${slug}/export/epub`, {
       method: "POST",
+      headers: body ? { "content-type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
     }) as unknown as NextRequest;
     const ctx = { params: Promise.resolve({ slug }) };
     return POST(req, ctx);
@@ -2420,7 +2606,7 @@ describe("/api/stories/[slug]/export/epub POST", () => {
     expect(res.status).toBe(400);
   });
 
-  it("builds and writes an EPUB file, returns path + bytes + warnings", async () => {
+  it("defaults to EPUB3 when the body is empty / omits version", async () => {
     const story = await createStory(tmpDir, { title: "Book" });
     await createImportedChapter(tmpDir, story.slug, {
       title: "One",
@@ -2430,23 +2616,69 @@ describe("/api/stories/[slug]/export/epub POST", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
-    expect(body.data.path).toBe(epubPath(tmpDir, story.slug));
+    expect(body.data.version).toBe(3);
+    expect(body.data.path).toBe(epubPath(tmpDir, story.slug, 3));
     expect(body.data.bytes).toBeGreaterThan(500);
     expect(Array.isArray(body.data.warnings)).toBe(true);
     const s = await stat(body.data.path);
     expect(s.isFile()).toBe(true);
   });
 
-  it("is idempotent — re-running overwrites the previous .epub", async () => {
+  it("builds EPUB2 when requested, returns version in the response", async () => {
+    const story = await createStory(tmpDir, { title: "Book" });
+    await createImportedChapter(tmpDir, story.slug, {
+      title: "One",
+      sectionContents: ["Hello, world."],
+    });
+    const res = await callPost(story.slug, { version: 2 });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.version).toBe(2);
+    expect(body.data.path).toBe(epubPath(tmpDir, story.slug, 2));
+    const s = await stat(body.data.path);
+    expect(s.isFile()).toBe(true);
+  });
+
+  it("back-to-back builds of different versions leave both files on disk", async () => {
     const story = await createStory(tmpDir, { title: "Book" });
     await createImportedChapter(tmpDir, story.slug, {
       title: "One",
       sectionContents: ["Hi."],
     });
-    const first = await callPost(story.slug);
+    const v3 = await callPost(story.slug, { version: 3 });
+    expect(v3.status).toBe(200);
+    const v2 = await callPost(story.slug, { version: 2 });
+    expect(v2.status).toBe(200);
+    // Both files present — v3 build did not clobber v2 or vice versa.
+    await stat(epubPath(tmpDir, story.slug, 3));
+    await stat(epubPath(tmpDir, story.slug, 2));
+  });
+
+  it("is idempotent per version — re-running the same version overwrites that file only", async () => {
+    const story = await createStory(tmpDir, { title: "Book" });
+    await createImportedChapter(tmpDir, story.slug, {
+      title: "One",
+      sectionContents: ["Hi."],
+    });
+    const first = await callPost(story.slug, { version: 3 });
     expect(first.status).toBe(200);
-    const second = await callPost(story.slug);
+    const second = await callPost(story.slug, { version: 3 });
     expect(second.status).toBe(200);
+    // Only epub3 file exists; epub2 was never built, so its path must not exist.
+    await expect(stat(epubPath(tmpDir, story.slug, 2))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("returns 400 for invalid version values", async () => {
+    const story = await createStory(tmpDir, { title: "Book" });
+    await createImportedChapter(tmpDir, story.slug, {
+      title: "One",
+      sectionContents: ["Hi."],
+    });
+    // 1 is not a supported EPUB package version.
+    const res = await callPost(story.slug, { version: 1 as unknown as 2 | 3 });
+    expect(res.status).toBe(400);
   });
 });
 ```
@@ -2463,14 +2695,31 @@ import { ok, fail } from "@/lib/api";
 import { getStory } from "@/lib/storage/stories";
 import { listChapters } from "@/lib/storage/chapters";
 import { effectiveDataDir } from "@/lib/config";
+import type { EpubVersion } from "@/lib/storage/paths";
 import { buildEpubBytes, validateEpub } from "@/lib/publish/epub";
 import { ensureCoverOrFallback, writeEpub } from "@/lib/publish/epub-storage";
+import { readJson } from "@/lib/api";
 
 type Ctx = { params: Promise<{ slug: string }> };
 
-export async function POST(_req: NextRequest, ctx: Ctx) {
+type ExportBody = { version?: EpubVersion };
+
+function parseVersion(value: unknown): EpubVersion | null {
+  if (value === undefined || value === null) return 3;
+  if (value === 2 || value === 3) return value;
+  return null;
+}
+
+export async function POST(req: NextRequest, ctx: Ctx) {
   const { slug } = await ctx.params;
   const dataDir = effectiveDataDir();
+
+  // Body is optional; empty body = default (EPUB3).
+  const body = await readJson<ExportBody>(req).catch(() => ({} as ExportBody));
+  const version = parseVersion(body?.version);
+  if (version === null) {
+    return fail("version must be 2 or 3", 400);
+  }
 
   const story = await getStory(dataDir, slug);
   if (!story) return fail("story not found", 404);
@@ -2485,13 +2734,20 @@ export async function POST(_req: NextRequest, ctx: Ctx) {
     author: story.authorPenName,
   });
 
-  const bytes = await buildEpubBytes({ story, chapters, coverPath });
+  const bytes = await buildEpubBytes({ story, chapters, coverPath, version });
   const { warnings: validationWarnings } = await validateEpub(bytes);
-  const path = await writeEpub(dataDir, slug, bytes);
+  const path = await writeEpub(dataDir, slug, version, bytes);
 
-  return ok({ path, bytes: bytes.byteLength, warnings: validationWarnings });
+  return ok({
+    path,
+    bytes: bytes.byteLength,
+    version,
+    warnings: validationWarnings,
+  });
 }
 ```
+
+If `readJson` from [lib/api.ts](../../../lib/api.ts) throws on empty bodies in this codebase's convention (check the helper before wiring), wrap the call in a defensive `try/catch` as above — POST with no body is the default-EPUB3 path and must not 400.
 
 - [ ] **Step 4: Run — all pass**
 
@@ -3002,13 +3258,27 @@ type Props = {
   wordCount: number;
 };
 
-type LastBuild = { path: string; bytes: number; warnings: string[] };
+type EpubVersion = 2 | 3;
+
+type LastBuild = {
+  path: string;
+  bytes: number;
+  version: EpubVersion;
+  warnings: string[];
+};
 
 export function ExportPage({ story, chapterCount, wordCount }: Props) {
   const [draft, setDraft] = useState<Story>(story);
   const [saving, setSaving] = useState(false);
   const [building, setBuilding] = useState(false);
-  const [lastBuild, setLastBuild] = useState<LastBuild | null>(null);
+  // Which version the user has selected for the NEXT build.
+  // Transient per session; not persisted to story.json.
+  const [selectedVersion, setSelectedVersion] = useState<EpubVersion>(3);
+  // Last-build result, keyed by version, so the panel can show both files
+  // when the user has built both. A given version's entry is replaced on rebuild.
+  const [lastBuildByVersion, setLastBuildByVersion] = useState<
+    Partial<Record<EpubVersion, LastBuild>>
+  >({});
   const fileRef = useRef<HTMLInputElement>(null);
 
   const patch = async (fields: Partial<Story>) => {
@@ -3059,14 +3329,17 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
     try {
       const res = await fetch(`/api/stories/${story.slug}/export/epub`, {
         method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ version: selectedVersion }),
       });
       const body = await res.json();
       if (!body.ok) {
         toast.error(body.error ?? "Build failed");
         return;
       }
-      setLastBuild(body.data);
-      toast.success("EPUB built.");
+      const built = body.data as LastBuild;
+      setLastBuildByVersion((prev) => ({ ...prev, [built.version]: built }));
+      toast.success(`EPUB ${built.version} built.`);
     } finally {
       setBuilding(false);
     }
@@ -3194,38 +3467,90 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
 
         <div className="border-t border-border pt-4">
           <h2 className="text-sm font-semibold mb-1">Build</h2>
-          <div className="text-xs text-muted-foreground mb-2">
+          <div className="text-xs text-muted-foreground mb-3">
             {chapterCount} chapter{chapterCount === 1 ? "" : "s"} \u00b7{" "}
             {wordCount.toLocaleString()} words
           </div>
+
+          {/* EPUB version toggle — segmented control. Transient per-session. */}
+          <div
+            role="radiogroup"
+            aria-label="EPUB version"
+            className="grid grid-cols-2 gap-1 mb-3 rounded bg-muted p-1 text-xs"
+            data-testid="export-version-toggle"
+          >
+            <button
+              type="button"
+              role="radio"
+              aria-checked={selectedVersion === 3}
+              onClick={() => setSelectedVersion(3)}
+              className={
+                selectedVersion === 3
+                  ? "rounded bg-background py-1 font-medium shadow-sm"
+                  : "rounded py-1 text-muted-foreground"
+              }
+              data-testid="export-version-epub3"
+            >
+              EPUB 3 \u00b7 Kindle / KDP
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={selectedVersion === 2}
+              onClick={() => setSelectedVersion(2)}
+              className={
+                selectedVersion === 2
+                  ? "rounded bg-background py-1 font-medium shadow-sm"
+                  : "rounded py-1 text-muted-foreground"
+              }
+              data-testid="export-version-epub2"
+            >
+              EPUB 2 \u00b7 Smashwords
+            </button>
+          </div>
+
           <button
             onClick={handleBuild}
             disabled={!canBuild}
             className="w-full bg-primary text-primary-foreground rounded py-1.5 text-sm disabled:opacity-50"
             data-testid="export-build"
           >
-            {building ? "Building\u2026" : "Build EPUB"}
+            {building
+              ? "Building\u2026"
+              : `Build EPUB ${selectedVersion}`}
           </button>
         </div>
 
-        {lastBuild && (
-          <div className="rounded border border-green-700 bg-green-950/40 p-3 text-xs text-green-200">
-            <div>\u2713 Built {(lastBuild.bytes / 1024).toFixed(0)} KB</div>
-            <div className="font-mono text-green-300 break-all mt-1">
-              {lastBuild.path}
+        {/* Render one panel per built version. Both can coexist after the
+            user builds each version in sequence. */}
+        {([3, 2] as const).map((v) => {
+          const entry = lastBuildByVersion[v];
+          if (!entry) return null;
+          return (
+            <div
+              key={v}
+              className="rounded border border-green-700 bg-green-950/40 p-3 text-xs text-green-200"
+              data-testid={`export-lastbuild-epub${v}`}
+            >
+              <div>
+                \u2713 EPUB {v} \u00b7 {(entry.bytes / 1024).toFixed(0)} KB
+              </div>
+              <div className="font-mono text-green-300 break-all mt-1">
+                {entry.path}
+              </div>
+              {entry.warnings.length > 0 && (
+                <details className="mt-2">
+                  <summary>{entry.warnings.length} warning(s)</summary>
+                  <ul className="mt-1 text-green-300">
+                    {entry.warnings.map((w, i) => (
+                      <li key={i}>\u00b7 {w}</li>
+                    ))}
+                  </ul>
+                </details>
+              )}
             </div>
-            {lastBuild.warnings.length > 0 && (
-              <details className="mt-2">
-                <summary>{lastBuild.warnings.length} warning(s)</summary>
-                <ul className="mt-1 text-green-300">
-                  {lastBuild.warnings.map((w, i) => (
-                    <li key={i}>\u00b7 {w}</li>
-                  ))}
-                </ul>
-              </details>
-            )}
-          </div>
-        )}
+          );
+        })}
       </div>
     </div>
   );
@@ -3283,7 +3608,7 @@ npm run typecheck && npm run lint && npm test
 npm run dev
 ```
 
-Navigate to `/s/<slug>/export`. Edit a field → blur → check `data/stories/<slug>/story.json` updates. Upload a JPEG cover → check `data/stories/<slug>/cover.jpg`. Click Build EPUB → check `data/stories/<slug>/exports/<slug>.epub`. Open the `.epub` in Calibre / Apple Books / Kindle Previewer — verify cover shows, chapters titled correctly, scene breaks render as centered `* * *`, curly quotes and em-dashes display.
+Navigate to `/s/<slug>/export`. Edit a field → blur → check `data/stories/<slug>/story.json` updates. Upload a JPEG cover → check `data/stories/<slug>/cover.jpg`. With the version toggle on **EPUB 3**, click Build EPUB → check `data/stories/<slug>/exports/<slug>-epub3.epub`. Open the `.epub` in Calibre / Apple Books / Kindle Previewer — verify cover shows, chapters titled correctly, scene breaks render as centered `* * *`, curly quotes and em-dashes display. Switch the toggle to **EPUB 2** and click Build EPUB again — check `<slug>-epub2.epub` now exists alongside the epub3 file (both present in `exports/`), and the right-panel shows both "Built" panels stacked. Open the EPUB2 file in Calibre to confirm it opens and renders identically.
 
 - [ ] **Step 5: Commit**
 
@@ -3367,7 +3692,7 @@ He replied, 'later.'
 
 Let me know what you think!`;
 
-test("import paste \u2192 preview \u2192 save \u2192 export EPUB on disk", async ({ page }) => {
+test("import paste \u2192 preview \u2192 save \u2192 export EPUB3 + EPUB2 on disk", async ({ page }) => {
   const DATA_DIR = process.env.SCRIPTR_DATA_DIR!;
   expect(DATA_DIR).toBeTruthy();
 
@@ -3404,20 +3729,28 @@ test("import paste \u2192 preview \u2192 save \u2192 export EPUB on disk", async
   await descField.fill("A tiny end-to-end test book.");
   await descField.blur();
 
+  // Build EPUB3 (default) — toggle starts on "EPUB 3".
   await page.getByTestId("export-build").click();
+  await expect(page.getByTestId("export-lastbuild-epub3")).toBeVisible({
+    timeout: 15_000,
+  });
 
-  // Success UI
-  await expect(page.getByText(/Built \d+ KB/)).toBeVisible({ timeout: 15_000 });
+  // Switch toggle, build EPUB2.
+  await page.getByTestId("export-version-epub2").click();
+  await page.getByTestId("export-build").click();
+  await expect(page.getByTestId("export-lastbuild-epub2")).toBeVisible({
+    timeout: 15_000,
+  });
 
-  // File on disk
-  const epubPath = join(
-    DATA_DIR,
-    "stories",
-    story.slug,
-    "exports",
-    `${story.slug}.epub`
-  );
-  expect(existsSync(epubPath)).toBe(true);
+  // Both panels present simultaneously — proves coexistence in the UI.
+  await expect(page.getByTestId("export-lastbuild-epub3")).toBeVisible();
+
+  // Both files on disk.
+  const exportsDir = join(DATA_DIR, "stories", story.slug, "exports");
+  const v3Path = join(exportsDir, `${story.slug}-epub3.epub`);
+  const v2Path = join(exportsDir, `${story.slug}-epub2.epub`);
+  expect(existsSync(v3Path)).toBe(true);
+  expect(existsSync(v2Path)).toBe(true);
 });
 ```
 
@@ -3435,7 +3768,7 @@ If a selector is brittle, add / fix `data-testid` attributes on the component �
 
 ```bash
 git add tests/e2e/publishing-kit.spec.ts
-git commit -m "test(e2e): import paste \u2192 save \u2192 export EPUB end-to-end"
+git commit -m "test(e2e): import paste \u2192 save \u2192 export EPUB3 + EPUB2 end-to-end"
 ```
 
 ---
@@ -3513,8 +3846,10 @@ Open `http://127.0.0.1:3000`. Walk the complete user journey:
 4. Navigate to Export (new link).
 5. Fill missing metadata (description at minimum).
 6. Upload a cover JPEG/PNG — confirm `data/stories/<slug>/cover.jpg` exists.
-7. Click Build EPUB. Open the resulting `.epub` in Calibre / Apple Books / Kindle Previewer. Verify: cover shows; chapter titles correct; scene breaks render as centered `* * *`; em-dashes + curly quotes display.
-8. Re-build without changes — confirm second build succeeds (file mtime changes).
+7. Version toggle is on "EPUB 3" by default. Click Build EPUB. Open the resulting `<slug>-epub3.epub` in Calibre / Apple Books / Kindle Previewer. Verify: cover shows; chapter titles correct; scene breaks render as centered `* * *`; em-dashes + curly quotes display.
+8. Switch the version toggle to "EPUB 2". Click Build EPUB. Confirm `<slug>-epub2.epub` now exists alongside the epub3 file in `data/stories/<slug>/exports/` (both present — neither was clobbered). Open the EPUB2 in Calibre — verify it opens and the content matches EPUB3.
+9. Re-build EPUB3 without other changes — confirm the EPUB3 file's mtime updates, the EPUB2 file's mtime does NOT (per-version idempotency).
+10. Sanity check Smashwords compatibility: the EPUB2 file's OPF declares `version="2.0"`. Inspect by renaming `<slug>-epub2.epub` → `.zip` → extract `OEBPS/content.opf` → verify `<package … version="2.0" …>`. (Automated equivalent is already covered by the unit tests, but manual confirmation closes the loop.)
 
 - [ ] **Step 3: If everything passes, tag**
 
@@ -3538,9 +3873,9 @@ After executing all 7 chunks:
 
 - **New modules:** `lib/publish/cleanup.ts`, `lib/publish/epub.ts`, `lib/publish/epub-storage.ts`, `lib/publish/safe-html.tsx` — all pure or thinly-I/O-wrapped.
 - **New routes:** 3 local-only POST / PUT handlers under `app/api/stories/[slug]/`.
-- **New UI:** one dialog component, one export page + server component, two nav tweaks.
-- **New tests:** ~5 unit files, 3 route files, 1 e2e file — each following the project's established conventions.
+- **New UI:** one dialog component, one export page + server component (with an EPUB 2 / EPUB 3 version toggle), two nav tweaks.
+- **New tests:** ~5 unit files, 3 route files, 1 e2e file — each following the project's established conventions, each exercising both EPUB versions where the version matters.
 - **Zero new external egress.** Privacy smoke test passes untouched.
-- **Public artifacts:** `data/stories/<slug>/cover.jpg`, `data/stories/<slug>/exports/<slug>.epub`, both gitignored under `data/`.
+- **Public artifacts:** `data/stories/<slug>/cover.jpg`, plus up to two EPUB files per story — `data/stories/<slug>/exports/<slug>-epub3.epub` (KDP / Kindle) and `data/stories/<slug>/exports/<slug>-epub2.epub` (Smashwords). Both coexist; a rebuild of one version leaves the other untouched. All under `data/`, which is gitignored.
 
-The user can now paste from Grok's web UI, clean up the chapter, and produce an EPUB ready for upload to Amazon KDP or Smashwords — entirely on their local machine.
+The user can now paste from Grok's web UI, clean up the chapter, and produce two sibling EPUB files — one ready for Amazon KDP / Kindle, one ready for Smashwords — entirely on their local machine.

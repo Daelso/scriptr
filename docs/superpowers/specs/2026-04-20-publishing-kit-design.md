@@ -15,14 +15,14 @@ The feature has two user-facing flows bound by a single EPUB renderer:
 
 The import preview and the export build share the same renderer (`lib/publish/epub.ts`), so what the user sees during cleanup is exactly what ends up inside the book.
 
-This supersedes the Publishing Kit section of `2026-04-19-scriptr-design.md` (§290–354) as the v1 ship. DOCX and PDF from the original spec are deferred to a v2 — Smashwords accepts direct EPUB upload, so EPUB alone covers both target storefronts.
+This supersedes the Publishing Kit section of `2026-04-19-scriptr-design.md` (§290–354) as the v1 ship. DOCX and PDF from the original spec are deferred to a v2 — Smashwords accepts EPUB2 and KDP accepts EPUB3, so EPUB alone covers both target storefronts via a version toggle at export time.
 
 ## Goals
 
 1. Let the user paste a single chapter from Grok web UI and have it join a scriptr story as a first-class `Chapter`, with no manual cleanup on their part.
 2. Apply conservative, well-known KDP / Smashwords style-guide transformations automatically, each individually toggleable, with warnings surfaced for anything stripped or changed.
 3. Render the cleaned chapter in-browser with typography that matches the eventual EPUB output — no surprises between preview and export.
-4. Produce a valid EPUB3 file containing cover, title page, auto-generated TOC, and one XHTML per chapter, with `epubcheck-wasm` warnings surfaced but non-blocking.
+4. Produce a valid EPUB file — EPUB3 by default, or EPUB2 when the user is targeting Smashwords, selected via a toggle on the Export page — containing cover, title page, auto-generated TOC, and one XHTML per chapter, with `epubcheck-wasm` warnings surfaced but non-blocking.
 5. Keep the privacy pillar intact: import, cover upload, and export all run entirely on the local machine. No new external network surface.
 6. Ship without breaking existing stories, chapters, or config files (every new field optional, additive).
 
@@ -154,6 +154,7 @@ export type EpubInput = {
   story: Story;
   chapters: Chapter[];   // already ordered per story.chapterOrder
   coverPath?: string;    // absolute path to cover image on disk
+  version?: 2 | 3;       // EPUB package version, defaults to 3
 };
 
 export type PreviewOpts = { chapterIndex?: number };
@@ -178,18 +179,20 @@ Algorithm, applied in order to each section's `content`:
 
 Snapshot tests pin the exact byte output for a small set of representative inputs (plain paragraph, paragraph with italic, paragraph with bold, nested italic-in-bold, HTML entity escaping, multi-section chapter).
 
-### EPUB3 package structure
+### EPUB package structure (version-aware)
+
+Archive layout is nearly identical across versions. What changes between EPUB2 and EPUB3 is the OPF `package` `version` attribute (`2.0` vs `3.0`), the TOC files shipped (`toc.ncx` only for EPUB2; both `toc.ncx` and `nav.xhtml` for EPUB3), and whether chapter XHTML is XHTML 1.1 (EPUB2) or XHTML5 (EPUB3). The shared section-to-HTML transformer output works for both; the renderer branches on `input.version` to wire up the correct manifest, spine, and TOC bits.
 
 - `mimetype`, `META-INF/container.xml`, `OEBPS/content.opf`
 - `cover.xhtml` + `cover.jpg`. If no cover uploaded, the renderer generates a 1600×2560 title-card SVG (solid background, centered title + author) and rasterizes it to JPEG via `sharp` (a transitive dep of Next.js 15 — verified present in `node_modules/next/package.json`) before packaging. Every EPUB ships with a real JPEG cover — Kindle ingestion pipelines can be finicky about SVG covers, so we avoid them entirely.
 - Title page — title, subtitle, author, copyright line, ISBN if present
-- Auto-generated NCX + nav TOC from the chapter list
+- Auto-generated TOC from the chapter list — `toc.ncx` (primary TOC for EPUB2, carried in EPUB3 for broad reader compatibility) plus `nav.xhtml` (EPUB3 primary TOC, omitted from EPUB2 builds)
 - One XHTML per chapter, produced by the transformer
 - Single `styles.css`: serif body, 1.5 line-height, justified paragraphs, 1.5em first-line indent, centered `.scene-break`, `page-break-before: always` on `h1.chapter-title`
 
 ### Library confirmation
 
-Both `epub-gen-memory` and `epubcheck-wasm` are available on npm under permissive licenses and work on Node 20+. The implementation plan's first task verifies install + basic "build empty EPUB" happy-path before any UI work begins. If either library is unexpectedly unavailable or broken, the plan substitutes a near-equivalent (`jszip`-based hand-rolled EPUB build; skip validation) and flags the trade-off.
+Both `epub-gen-memory` and `epubcheck-wasm` are available on npm under permissive licenses and work on Node 20+. The implementation plan's first task verifies install + basic "build empty EPUB" happy-path **for both EPUB2 and EPUB3 output** before any UI work begins — specifically, whether `epub-gen-memory` exposes an EPUB2 mode on its options surface. If it does not, the plan falls back to a `jszip`-based hand-rolled EPUB2 writer (EPUB3 via `epub-gen-memory`) or goes fully hand-rolled for both, whichever is less code. If `epubcheck-wasm` is unexpectedly unavailable or broken, validation is skipped and the trade-off flagged; `epubcheck` itself validates EPUB2 and EPUB3, so the wasm wrapper should not need a version switch beyond pointing it at the right bytes.
 
 ### Preview coupling
 
@@ -220,7 +223,7 @@ Route: `/s/[slug]/export` — thin server component (`app/s/[slug]/export/page.t
 Two-column layout:
 
 - **Left — metadata form.** Inputs for every field on `Story`: title, subtitle, author pen name, description (textarea), copyright year, language, ISBN, BISAC category (text input for now; dropdown v2), keywords (comma-separated, capped at 7). All fields autosave to `story.json` on blur via existing `PUT /api/stories/[slug]`.
-- **Right — cover upload + build.** Drag-drop area (with file-picker fallback) posts to `PUT /api/stories/[slug]/cover`. Below it, a Build EPUB button, a summary line ("N chapters · M words"), and — after a build — a last-build panel with byte size, download link, reveal-in-folder, warnings (if any). Build button disabled if title / author / description empty or chapter list empty.
+- **Right — cover upload + build.** Drag-drop area (with file-picker fallback) posts to `PUT /api/stories/[slug]/cover`. Below it, an **EPUB version toggle** — segmented control with two options, "EPUB 3 · Kindle / KDP" and "EPUB 2 · Smashwords", default EPUB 3, transient per-session (no new field on `Story`). Below that, a Build EPUB button, a summary line ("N chapters · M words"), and — after a build — a last-build panel showing whichever of `<slug>-epub3.epub` and `<slug>-epub2.epub` exist on disk, each with byte size, download link, reveal-in-folder, and its own warnings list. Build button disabled if title / author / description empty or chapter list empty.
 
 ## API routes
 
@@ -252,9 +255,9 @@ Behavior: server-side validation — MIME must be `image/jpeg` or `image/png`, b
 
 ### `POST /api/stories/[slug]/export/epub`
 
-Body: none (reads everything from disk).
+Body: `{ version?: 2 | 3 }` — defaults to `3`. The client sends whichever the Export page toggle is set to.
 
-Behavior: loads story + all chapters + cover (if present), calls `buildEpubBytes`, runs `epubcheck-wasm` on the bytes in memory, then writes the output to `data/stories/<slug>/exports/<slug>.epub` via write-to-temp-then-rename (same-directory `.epub.tmp` → rename). This makes re-builds atomic: a failed or crashed build leaves the previous `.epub` in place. Returns `{ ok: true, data: { path, bytes, warnings } }`. Validation warnings do not prevent the write.
+Behavior: loads story + all chapters + cover (if present), calls `buildEpubBytes` with the requested `version`, runs `epubcheck-wasm` on the bytes in memory, then writes the output to `data/stories/<slug>/exports/<slug>-epub{2|3}.epub` via write-to-temp-then-rename (sibling `.epub.tmp` → rename, per-version). Including the version in the filename lets EPUB2 and EPUB3 artifacts coexist, so a user dual-publishing to KDP and Smashwords does not have to rebuild the other version every time they touch the book. Re-builds are atomic per version: a failed or crashed build leaves the previous same-version `.epub` in place and does not touch the other version's file. Returns `{ ok: true, data: { path, bytes, version, warnings } }`. Validation warnings do not prevent the write.
 
 ## Privacy
 
@@ -306,13 +309,13 @@ The cleanup pipeline (`cleanPaste`), the renderer (`buildEpubBytes`/`renderChapt
 ### Unit — `lib/publish/epub.ts`
 
 - `renderChapterPreviewHtml`: HTML entities escaped before markdown transform; `*italic*` → `<em>`; `**bold**` → `<strong>`; scene breaks render as `.scene-break` div; chapter title wraps in `<h1 class="chapter-title">`.
-- `buildEpubBytes`: produces a valid ZIP (checks magic bytes); archive contains `mimetype` + `META-INF/container.xml` + `OEBPS/content.opf`; chapter count matches input; missing `coverPath` falls back cleanly.
+- `buildEpubBytes`: produces a valid ZIP (checks magic bytes); archive contains `mimetype` + `META-INF/container.xml` + `OEBPS/content.opf`; chapter count matches input; missing `coverPath` falls back cleanly. Runs twice — once with `version: 3` (asserts OPF `version="3.0"` and presence of `nav.xhtml`), once with `version: 2` (asserts OPF `version="2.0"` and presence of `toc.ncx` as primary TOC with no `nav.xhtml`).
 
 ### Route tests
 
 - `POST /api/stories/[slug]/chapters/import` — persists `Chapter` with `source: "imported"`; appends to `chapterOrder`; raw paste fragment absent from all filesystem writes; `generateRecap: true` triggers the recap route exactly once.
 - `PUT /api/stories/[slug]/cover` — writes file; rejects non-JPEG/PNG; rejects > 10 MB; undersized image produces warning but succeeds.
-- `POST /api/stories/[slug]/export/epub` — writes `exports/<slug>.epub`; returns `{ bytes, warnings }`; idempotent on re-build.
+- `POST /api/stories/[slug]/export/epub` — with `version: 3`, writes `exports/<slug>-epub3.epub` and returns `{ path, bytes, version: 3, warnings }`; with `version: 2`, writes `exports/<slug>-epub2.epub` and returns `{ path, bytes, version: 2, warnings }`; an empty / missing version in the body behaves as `version: 3`; back-to-back builds with different versions leave both files in place; re-builds of the same version are idempotent (overwrite).
 
 ### E2E — extend `tests/e2e/golden-path.spec.ts` (or add sibling spec)
 
@@ -350,7 +353,8 @@ No change required. The three new routes are fully local and do not need to be a
 | Does this replace the Publishing Kit in the original design spec, or ship alongside it? | Supersedes the v1. DOCX + PDF deferred; the original spec section §290–354 is now historical. |
 | Paste unit: one chapter, many chapters, whole book? | One chapter per paste. Multi-chapter and whole-book deferred. |
 | Should the formatter follow a best-practice preset or expose every knob? | Opinionated defaults (the 10-step pipeline), each toggleable in the import dialog. |
-| Preview targets: Kindle/EPUB, Smashwords DOCX, paperback PDF? | EPUB only. Smashwords accepts direct EPUB upload. |
+| Preview targets: Kindle/EPUB, Smashwords DOCX, paperback PDF? | EPUB only, in two flavors. EPUB3 for KDP / Kindle; EPUB2 for Smashwords, which does not accept EPUB3. User picks via a toggle on the Export page; both artifacts can coexist under `exports/` with version-in-filename. |
+| Support EPUB2, EPUB3, or both? | Both. Toggle on the Export page selects which to build; filename includes version (`<slug>-epub2.epub`, `<slug>-epub3.epub`) so both coexist. Decided 2026-04-21 after correcting the original spec's assumption that Smashwords accepted any direct EPUB. |
 | Does imported-chapter prose go through scriptr's style rules? | No. Style rules apply to generation, not to prose already written. |
 | Does import trigger auto-recap? | Opt-in; checkbox in the import dialog, default off. Honors privacy-first. |
 | Where does the paste text get stored? | Nowhere. Server-side parse + discard. Only the cleaned chapter persists. |
