@@ -9,7 +9,7 @@ import { lastPayloadFile } from "@/lib/storage/paths";
 import { getGrokClient, MissingKeyError } from "@/lib/grok";
 import { callGrokWithRetry, GrokError } from "@/lib/grok-retry";
 import type { RetryOptions } from "@/lib/grok-retry";
-import { buildChapterPrompt, buildSectionRegenPrompt, buildContinuePrompt } from "@/lib/prompts";
+import { buildSectionRegenPrompt, buildContinuePrompt } from "@/lib/prompts";
 import { resolveStyleRules } from "@/lib/style";
 import {
   assembleChapterPrompt,
