@@ -62,7 +62,6 @@ describe("CopyPromptDialog", () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
     if (originalClipboard === undefined) {
-      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
       delete (globalThis.navigator as unknown as Record<string, unknown>).clipboard;
     } else {
       Object.defineProperty(globalThis.navigator, "clipboard", {
