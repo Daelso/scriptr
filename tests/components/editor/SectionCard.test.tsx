@@ -6,12 +6,77 @@
  *
  * Manual React-19 render harness (no @testing-library/react by project rule).
  */
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
+
+// Mock useAutoSave + @tiptap/react so the sticky-focus describe block can
+// render SectionCard with isEditing=true (which mounts SectionEditor, which
+// calls useEditor + useAutoSave). These mocks mirror the shapes used in
+// tests/components/editor/SectionEditor.test.tsx. The existing kebab/note/
+// shimmer tests don't mount SectionEditor so they're unaffected.
+const flushSpy = vi.fn(async () => {});
+vi.mock("@/hooks/useAutoSave", () => ({
+  useAutoSave: () => ({ status: "idle" as const, flush: flushSpy }),
+}));
+
+const setTextSelectionSpy = vi.fn();
+const chainFocusSpy = vi.fn();
+const commandsFocusSpy = vi.fn();
+const posAtCoordsStub = vi.fn<
+  (_: { left: number; top: number }) => { pos: number; inside: number } | null
+>(() => ({ pos: 42, inside: -1 }));
+
+type FakeEditor = {
+  view: { posAtCoords: typeof posAtCoordsStub };
+  commands: { focus: typeof commandsFocusSpy };
+  chain: () => Record<string, (...args: unknown[]) => unknown>;
+  __opts: Record<string, unknown>;
+};
+
+let fakeEditor: FakeEditor | null = null;
+
+vi.mock("@tiptap/react", () => {
+  const useEditor = (opts: Record<string, unknown>) => {
+    if (!fakeEditor) {
+      const chain: Record<string, (...args: unknown[]) => unknown> = {};
+      chain.setTextSelection = (...args: unknown[]) => {
+        setTextSelectionSpy(...args);
+        return chain;
+      };
+      chain.focus = (...args: unknown[]) => {
+        chainFocusSpy(...args);
+        return chain;
+      };
+      chain.run = () => true;
+      fakeEditor = {
+        view: { posAtCoords: posAtCoordsStub },
+        commands: { focus: commandsFocusSpy },
+        chain: () => chain,
+        __opts: opts,
+      };
+    } else {
+      fakeEditor.__opts = opts;
+    }
+    return fakeEditor;
+  };
+  const EditorContent = () => <div data-testid="proseMirror" />;
+  return { useEditor, EditorContent };
+});
+
 import { SectionCard } from "@/components/editor/SectionCard";
 import type { Section } from "@/lib/types";
+
+beforeEach(() => {
+  flushSpy.mockClear();
+  setTextSelectionSpy.mockClear();
+  chainFocusSpy.mockClear();
+  commandsFocusSpy.mockClear();
+  posAtCoordsStub.mockClear();
+  posAtCoordsStub.mockReturnValue({ pos: 42, inside: -1 });
+  fakeEditor = null;
+});
 
 type Mounted = {
   container: HTMLDivElement;
@@ -369,6 +434,102 @@ describe("SectionCard", () => {
     ) as HTMLButtonElement;
     expect(applyBtn.disabled).toBe(true);
 
+    unmount();
+  });
+});
+
+describe("SectionCard sticky-focus wiring", () => {
+  it("renders read-only <p> (no SectionEditor) when isEditing=false", () => {
+    const { container, unmount } = mount(
+      <SectionCard
+        section={baseSection}
+        isEditing={false}
+        caret={null}
+        onRequestEdit={vi.fn()}
+        onExit={vi.fn()}
+        onSaveBody={vi.fn()}
+      />,
+    );
+    expect(container.querySelector('[data-testid="proseMirror"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Edit section"]')).not.toBeNull();
+    unmount();
+  });
+
+  it("onMouseDown captures clientX/clientY and calls onRequestEdit", () => {
+    const onRequestEdit = vi.fn();
+    const { container, unmount } = mount(
+      <SectionCard
+        section={baseSection}
+        isEditing={false}
+        caret={null}
+        onRequestEdit={onRequestEdit}
+        onExit={vi.fn()}
+        onSaveBody={vi.fn()}
+      />,
+    );
+    const p = container.querySelector('[aria-label="Edit section"]') as HTMLElement;
+    expect(p).not.toBeNull();
+    act(() => {
+      p.dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true, clientX: 123, clientY: 456 }),
+      );
+    });
+    expect(onRequestEdit).toHaveBeenCalledWith("sec-1", { x: 123, y: 456 });
+    unmount();
+  });
+
+  it("keyboard Enter activates with null caret", () => {
+    const onRequestEdit = vi.fn();
+    const { container, unmount } = mount(
+      <SectionCard
+        section={baseSection}
+        isEditing={false}
+        caret={null}
+        onRequestEdit={onRequestEdit}
+        onExit={vi.fn()}
+        onSaveBody={vi.fn()}
+      />,
+    );
+    const p = container.querySelector('[aria-label="Edit section"]') as HTMLElement;
+    act(() => {
+      p.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(onRequestEdit).toHaveBeenCalledWith("sec-1", null);
+    unmount();
+  });
+
+  it("renders SectionEditor (not read-only <p>) when isEditing=true", () => {
+    const { container, unmount } = mount(
+      <SectionCard
+        section={baseSection}
+        isEditing={true}
+        caret={{ x: 10, y: 20 }}
+        onRequestEdit={vi.fn()}
+        onExit={vi.fn()}
+        onSaveBody={vi.fn()}
+      />,
+    );
+    expect(container.querySelector('[data-testid="proseMirror"]')).not.toBeNull();
+    unmount();
+  });
+
+  it("click alone (without mousedown) does not fire onRequestEdit", () => {
+    const onRequestEdit = vi.fn();
+    const { container, unmount } = mount(
+      <SectionCard
+        section={baseSection}
+        isEditing={false}
+        caret={null}
+        onRequestEdit={onRequestEdit}
+        onExit={vi.fn()}
+        onSaveBody={vi.fn()}
+      />,
+    );
+    const p = container.querySelector('[aria-label="Edit section"]') as HTMLElement;
+    act(() => {
+      p.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onRequestEdit).not.toHaveBeenCalled();
     unmount();
   });
 });
