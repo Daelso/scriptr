@@ -57,11 +57,11 @@ export function CopyPromptDialog({
   chapterId,
 }: CopyPromptDialogProps) {
   const [state, setState] = useState<FetchState>({ status: "loading" });
+  const [retryNonce, setRetryNonce] = useState(0);
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    setState({ status: "loading" });
     (async () => {
       const next = await fetchPrompt(slug, chapterId);
       if (!cancelled) setState(next);
@@ -69,7 +69,7 @@ export function CopyPromptDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, slug, chapterId]);
+  }, [open, slug, chapterId, retryNonce]);
 
   const pasteable =
     state.status === "success"
@@ -86,9 +86,9 @@ export function CopyPromptDialog({
     }
   }
 
-  async function handleRetry() {
+  function handleRetry() {
     setState({ status: "loading" });
-    setState(await fetchPrompt(slug, chapterId));
+    setRetryNonce((n) => n + 1);
   }
 
   return (
