@@ -21,7 +21,7 @@ export async function readOpfVersion(bytes: Uint8Array): Promise<string> {
   if (!opfFile) throw new Error(`OPF file not found at path: ${opfPath}`);
   const opfXml = await opfFile.async("string");
 
-  const versionMatch = opfXml.match(/<package[^>]*\sversion="([^"]+)"/);
+  const versionMatch = opfXml.match(/<package\b[^>]*?\bversion="([^"]+)"/);
   if (!versionMatch) throw new Error("Could not find version attribute on <package> in OPF");
   return versionMatch[1];
 }
