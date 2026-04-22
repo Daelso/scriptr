@@ -11,6 +11,12 @@ import { callGrokWithRetry, GrokError } from "@/lib/grok-retry";
 import type { RetryOptions } from "@/lib/grok-retry";
 import { buildChapterPrompt, buildSectionRegenPrompt, buildContinuePrompt } from "@/lib/prompts";
 import { resolveStyleRules } from "@/lib/style";
+import {
+  assembleChapterPrompt,
+  StoryNotFoundError,
+  BibleNotFoundError,
+  ChapterNotFoundError,
+} from "@/lib/prompt-assembly";
 import { generateRecap } from "@/lib/recap";
 import { chunkBySectionBreak } from "@/lib/stream";
 import { registerJob, clearJob } from "@/lib/generation-job";
@@ -239,42 +245,26 @@ async function handleFull(body: GenerateRequest): Promise<Response> {
   const dataDir = effectiveDataDir();
   const config = await loadConfig(dataDir);
 
-  const story = await getStory(dataDir, body.storySlug);
-  if (!story) return json400("story not found");
+  let prompt: { system: string; user: string };
+  let model: string;
+  try {
+    const assembled = await assembleChapterPrompt(dataDir, body.storySlug, body.chapterId);
+    prompt = { system: assembled.system, user: assembled.user };
+    model = assembled.meta.model;
+  } catch (e) {
+    if (e instanceof StoryNotFoundError) return json400("story not found");
+    if (e instanceof BibleNotFoundError) return json400("bible not found");
+    if (e instanceof ChapterNotFoundError) return json400("chapter not found");
+    throw e;
+  }
 
-  const bible = await getBible(dataDir, body.storySlug);
-  if (!bible) return json400("bible not found");
-
-  const chapter = await getChapter(dataDir, body.storySlug, body.chapterId);
-  if (!chapter) return json400("chapter not found");
-
-  // priorRecaps: chapters that come BEFORE this one (1-based chapterIndex)
-  const allChapters = await listChapters(dataDir, body.storySlug);
-  const chapterIndex = allChapters.findIndex((c) => c.id === chapter.id);
-  const priorRecaps =
-    chapterIndex > 0
-      ? allChapters
-          .slice(0, chapterIndex)
-          .map((c, i) => ({ chapterIndex: i + 1, recap: c.recap }))
-      : [];
-
-  // Include last chapter full text per config
-  const lastChapterFullText =
-    config.includeLastChapterFullText && chapterIndex > 0
-      ? allChapters[chapterIndex - 1].sections.map((s) => s.content).join("\n---\n")
-      : undefined;
-
-  const prompt = buildChapterPrompt({
-    story,
-    bible,
-    priorRecaps,
-    chapter,
-    includeLastChapterFullText: config.includeLastChapterFullText,
-    lastChapterFullText,
-    style: resolveStyleRules(config, bible),
-  });
-
-  const model = story.modelOverride ?? config.defaultModel;
+  // Re-fetch story and chapter for downstream use.
+  // - `chapter.sections` is the initial sections snapshot for the stream.
+  // - `story` is passed directly to runChapterStream for recap generation
+  //   and other per-story behavior.
+  // The helper already validated their existence, so the non-null assertions are safe.
+  const story = (await getStory(dataDir, body.storySlug))!;
+  const chapter = (await getChapter(dataDir, body.storySlug, body.chapterId))!;
 
   // Write .last-payload.json — exactly four fields, no headers, no key
   await writeFile(
