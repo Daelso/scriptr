@@ -75,25 +75,17 @@ export function SectionList({
   const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
   const [pendingCaret, setPendingCaret] = useState<{ x: number; y: number } | null>(null);
 
-  // Any generation in flight (chapter stream or single-section regen) must
-  // kick the currently-editing card out of edit mode so the SectionEditor
-  // unmounts and its autosave cleanup flushes BEFORE the stream's persistence
-  // writes land. We derive `effectiveEditingSectionId` instead of using an
-  // effect: storing a dedicated state slot would require a setState-in-effect
-  // (flagged by react-hooks/set-state-in-effect) and the prior-state
-  // comparison pattern would require setState-in-render (flagged by
-  // react-hooks/set-state-in-render). Derivation during render sidesteps both
-  // and still produces the correct unmount: SectionCard receives
-  // isEditing=false while streaming, so the editor unmounts and flushes.
-  //
-  // We intentionally KEEP `editingSectionId` state untouched while streaming
-  // so the user's intent survives a transient regen — but with caveats. Since
-  // `pendingCaret` was captured at click time, by the time streaming ends the
-  // coords would point to stale screen space. So when `disableActions` is
-  // true we also mask pendingCaret to null; if the user's prior card comes
-  // back into edit mode post-stream, SectionEditor falls back to focus('end').
-  const effectiveEditingSectionId = disableActions ? null : editingSectionId;
-  const effectivePendingCaret = disableActions ? null : pendingCaret;
+  // During render, if a generation starts while we have an active edit, clear
+  // edit state immediately. React 19's setState-in-render is the documented
+  // pattern for adjusting state in response to prop changes (here: disableActions
+  // flipping true). An effect-based clear would schedule the update for after
+  // commit, risking a one-frame gap where the stream's persistence writes race
+  // the autosave flush. A render-time clear plus the ensuing SectionEditor
+  // unmount fires useAutoSave's unmount cleanup synchronously.
+  if (disableActions && editingSectionId !== null) {
+    setEditingSectionId(null);
+    setPendingCaret(null);
+  }
 
   // Empty state: no sections on disk AND nothing being streamed for this chapter.
   if (sections.length === 0 && !isLiveHere) {
@@ -112,8 +104,8 @@ export function SectionList({
           section={section}
           isRegenerating={regeneratingSectionId === section.id}
           disableActions={disableActions}
-          isEditing={effectiveEditingSectionId === section.id}
-          caret={effectiveEditingSectionId === section.id ? effectivePendingCaret : null}
+          isEditing={editingSectionId === section.id}
+          caret={editingSectionId === section.id ? pendingCaret : null}
           onRequestEdit={(id, caret) => {
             setPendingCaret(caret);
             setEditingSectionId(id);
