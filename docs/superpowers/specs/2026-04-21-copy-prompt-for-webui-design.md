@@ -116,6 +116,10 @@ Behavior:
 
 The generate route's `handleFull` is refactored to call this helper. `handleSection` and `handleContinue` are **not** touched — they build different prompts with different inputs, and this spec is full-chapter only.
 
+**`handleFull` refactor shape.** `handleFull` currently does three sequential pre-checks (`if (!story) return json400("story not found")`, same for bible and chapter) before inlining the priorRecaps assembly. After the refactor, those pre-checks are **removed** in favor of a single `try { const prompt = await assembleChapterPrompt(...) } catch (e) { … }` block that maps the helper's typed errors back to `json400(...)` with the *same error strings and the same HTTP 400 status* that the pre-checks currently emit. This avoids double disk reads (the helper and the route would otherwise each load story/bible/chapter) and keeps the response body byte-identical — preserving the `.last-payload.json` guardrail's usefulness. Note: the new GET prompt route uses `fail(..., 404)` for these, which is the right choice for a read-only endpoint; the generate route's historical 400 is preserved here intentionally, not as an inconsistency.
+
+**No API key dependency.** `assembleChapterPrompt` does not read, validate, or require `XAI_API_KEY`. The feature must work on a machine with zero Grok credentials configured — that's the whole point.
+
 **Why a new module instead of adding to `lib/prompts.ts`:** `lib/prompts.ts` is pure (no Node-only deps) and imported anywhere; adding storage reads to it would break that. Keeping the pure layer pure.
 
 ## The API route: `GET /api/stories/[slug]/chapters/[id]/prompt`
@@ -194,7 +198,7 @@ A new `Copy prompt` button in the chapter editor's existing action row, rendered
      `Chapter 3 · 2 prior recaps · last-chapter full text: off · model: grok-4-fast-reasoning`
      Lets the user catch misconfigurations (empty recap, wrong model) before pasting.
   2. **Preview pane.** `ScrollArea`, monospace font, renders `${system}\n\n${user}` as plain text. No markdown rendering — the user must see exactly what they'll paste. Text is selectable.
-  3. **Footer.** `Copy` (primary) + `Close` (ghost). Below the preview, a small line `~${text.length} chars · ~${Math.ceil(text.length/4)} tokens` to flag over-long prompts.
+  3. **Footer.** `Copy` (primary) + `Close` (ghost). Below the preview, a small line `~${text.length} chars · ~${Math.ceil(text.length/4)} tokens (rough)` to flag over-long prompts. The "rough" label is deliberate — this is not a tokenizer, just chars/4, and the UI must not imply otherwise.
 
 ### Copy behavior
 
@@ -257,7 +261,7 @@ One new entry that invokes the new `GET` handler with valid fixtures. Existing `
 
 - Seed: story + bible + 2 chapters via scriptr's API (existing e2e helpers).
 - Open chapter 2 editor, click **Copy prompt**, assert dialog opens and preview contains `# Story bible`, `# Prior chapter recaps`, `# Current chapter: `.
-- Click **Copy**, assert toast appears.
+- Click **Copy**, assert a toast appears. The assertion should accept **either** the success toast ("Prompt copied") or the fallback toast ("Select and copy manually…") — Chromium's clipboard behavior under Playwright is permission-dependent, and this feature treats both paths as acceptable outcomes.
 - Do **not** assert clipboard contents in e2e — Playwright's clipboard API requires flaky permission grants, and the component test already covers the clipboard write path.
 
 ## Rollout
