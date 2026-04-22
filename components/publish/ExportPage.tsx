@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, type KeyboardEvent } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,26 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
   const [lastBuildByVersion, setLastBuildByVersion] = useState<Partial<Record<2 | 3, LastBuild>>>({});
   const [selectedVersion, setSelectedVersion] = useState<2 | 3>(3);
   const fileRef = useRef<HTMLInputElement>(null);
+  const v3Ref = useRef<HTMLButtonElement>(null);
+  const v2Ref = useRef<HTMLButtonElement>(null);
+
+  const onToggleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const k = e.key;
+    if (
+      k === "ArrowLeft" ||
+      k === "ArrowRight" ||
+      k === "ArrowUp" ||
+      k === "ArrowDown" ||
+      k === "Home" ||
+      k === "End"
+    ) {
+      e.preventDefault();
+      const next: 2 | 3 =
+        k === "Home" ? 3 : k === "End" ? 2 : selectedVersion === 3 ? 2 : 3;
+      setSelectedVersion(next);
+      (next === 3 ? v3Ref : v2Ref).current?.focus();
+    }
+  };
 
   const patch = async (fields: Partial<Story>) => {
     setSaving(true);
@@ -219,10 +239,13 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
             aria-label="EPUB version"
             data-testid="export-version-toggle"
             className="flex rounded-md border border-border overflow-hidden mb-3 text-xs"
+            onKeyDown={onToggleKeyDown}
           >
             <button
+              ref={v3Ref}
               role="radio"
               aria-checked={selectedVersion === 3}
+              tabIndex={selectedVersion === 3 ? 0 : -1}
               data-testid="export-version-epub3"
               onClick={() => setSelectedVersion(3)}
               className={`flex-1 px-3 py-1.5 text-center transition-colors ${
@@ -234,8 +257,10 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
               EPUB 3 · Kindle / KDP
             </button>
             <button
+              ref={v2Ref}
               role="radio"
               aria-checked={selectedVersion === 2}
+              tabIndex={selectedVersion === 2 ? 0 : -1}
               data-testid="export-version-epub2"
               onClick={() => setSelectedVersion(2)}
               className={`flex-1 px-3 py-1.5 text-center transition-colors border-l border-border ${
