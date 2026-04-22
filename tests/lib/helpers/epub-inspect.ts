@@ -25,3 +25,15 @@ export async function readOpfVersion(bytes: Uint8Array): Promise<string> {
   if (!versionMatch) throw new Error("Could not find version attribute on <package> in OPF");
   return versionMatch[1];
 }
+
+/**
+ * Extracts the cover image bytes from the archive. Looks under OEBPS/ for any
+ * file whose name starts with "cover." (jpg, jpeg, png, etc.). Returns the
+ * bytes, or null if no cover file exists inside the archive.
+ */
+export async function readCoverBytes(bytes: Uint8Array): Promise<Uint8Array | null> {
+  const zip = await JSZip.loadAsync(bytes);
+  const entry = Object.keys(zip.files).find((name) => /^OEBPS\/cover\.[a-z]+$/i.test(name));
+  if (!entry) return null;
+  return zip.file(entry)!.async("uint8array");
+}

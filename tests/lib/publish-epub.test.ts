@@ -206,6 +206,87 @@ describe("buildEpubBytes version selection", () => {
   });
 });
 
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import sharp from "sharp";
+import { readCoverBytes } from "./helpers/epub-inspect";
+
+// Regression guard for a bug where buildEpubBytes wrote a 0-byte cover image
+// into the archive. `epub-gen-memory` treats a bare path as an HTTP URL and
+// (with ignoreFailedDownloads: true) silently substitutes an empty buffer if
+// the fetch fails. Fix: convert disk paths to file:// URLs. This test opens
+// the built archive and asserts the cover entry contains real JPEG bytes.
+describe("buildEpubBytes cover embedding", () => {
+  function story(): Story {
+    return {
+      slug: "cover-test",
+      title: "Cover Test",
+      authorPenName: "C. Tester",
+      description: "Testing cover embedding.",
+      copyrightYear: 2026,
+      language: "en",
+      bisacCategory: "FIC027000",
+      keywords: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      chapterOrder: ["c1"],
+    };
+  }
+
+  function chapters(): Chapter[] {
+    return [
+      {
+        id: "c1",
+        title: "Opening",
+        summary: "",
+        beats: [],
+        prompt: "",
+        recap: "",
+        sections: [{ id: "s1", content: "Content." }],
+        wordCount: 1,
+      },
+    ];
+  }
+
+  async function writeFixtureJpeg(dir: string): Promise<{ path: string; bytes: Buffer }> {
+    const jpeg = await sharp({
+      create: { width: 2, height: 3, channels: 3, background: { r: 180, g: 20, b: 20 } },
+    })
+      .jpeg({ quality: 90 })
+      .toBuffer();
+    const path = join(dir, "cover.jpg");
+    await writeFile(path, jpeg);
+    return { path, bytes: jpeg };
+  }
+
+  for (const version of [3, 2] as const) {
+    it(`embeds the cover JPEG bytes into EPUB${version} (not an empty buffer)`, async () => {
+      const tmp = await mkdtemp(join(tmpdir(), "scriptr-cover-test-"));
+      try {
+        const { path, bytes: source } = await writeFixtureJpeg(tmp);
+        const epub = await buildEpubBytes({
+          story: story(),
+          chapters: chapters(),
+          coverPath: path,
+          version,
+        });
+        const embedded = await readCoverBytes(epub);
+        expect(embedded, `EPUB${version} archive contains a cover entry`).not.toBeNull();
+        // JPEG magic bytes: 0xFF 0xD8 0xFF
+        expect(embedded![0], `EPUB${version} cover byte 0`).toBe(0xff);
+        expect(embedded![1], `EPUB${version} cover byte 1`).toBe(0xd8);
+        expect(embedded![2], `EPUB${version} cover byte 2`).toBe(0xff);
+        // Size roughly matches the source JPEG (epub-gen-memory passes bytes through).
+        expect(embedded!.byteLength).toBeGreaterThan(source.byteLength - 20);
+        expect(embedded!.byteLength).toBeLessThan(source.byteLength + 20);
+      } finally {
+        await rm(tmp, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
 import { validateEpub } from "@/lib/publish/epub";
 
 describe("validateEpub", () => {
