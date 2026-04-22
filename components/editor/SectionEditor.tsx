@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 
@@ -10,6 +10,13 @@ interface SectionEditorProps {
   sectionId: string;
   /** Initial plain-text body (paragraph breaks are "\n\n"). */
   initialContent: string;
+  /**
+   * Viewport coordinates of the user's click on the read-only <p>, captured
+   * once on mount via a ref; re-renders ignore prop identity changes. Null or
+   * undefined when the editor was opened via keyboard or has no caller yet,
+   * in which case the cursor lands at end-of-content.
+   */
+  caret?: { x: number; y: number } | null;
   /**
    * Persist a new plain-text body. Caller handles PATCH + SWR revalidation +
    * error toast. Throwing is how the autosave hook surfaces an "error" status.
@@ -71,6 +78,7 @@ function textToHtml(text: string): string {
 export function SectionEditor({
   sectionId,
   initialContent,
+  caret,
   onSave,
   onExit,
 }: SectionEditorProps) {
@@ -79,6 +87,10 @@ export function SectionEditor({
   // "uncontrolled" contract: prop changes mid-edit would clobber the user's
   // in-progress text.
   const initialHtml = useMemo(() => textToHtml(initialContent), [initialContent]);
+
+  // Caret captured once on mount. Prop identity changes mid-edit are ignored;
+  // the cursor position is resolved exactly once after the editor initializes.
+  const caretOnMountRef = useRef<{ x: number; y: number } | null>(caret ?? null);
 
   // Current text buffer that drives useAutoSave. Updated on each editor
   // transaction via `onUpdate`. We keep this as a ref-like piece of state so
@@ -100,7 +112,7 @@ export function SectionEditor({
     [onSave, sectionId],
   );
 
-  useAutoSave(buffer, save, { debounceMs: 500, enabled: true });
+  const { flush } = useAutoSave(buffer, save, { debounceMs: 500, enabled: true });
 
   const handleExit = useCallback(() => {
     if (exitedRef.current) return;
@@ -109,8 +121,6 @@ export function SectionEditor({
   }, [onExit]);
 
   const editor = useEditor({
-    // Autofocus on mount so keyboard users can start typing immediately.
-    autofocus: "end",
     // SSR safety: useEditor reads from the DOM during render, which fails in
     // the Node render pass of an App Router page. This file is a client
     // component ("use client"), but `immediatelyRender: false` is the
@@ -152,6 +162,15 @@ export function SectionEditor({
         }
         return false;
       },
+      handleDOMEvents: {
+        blur: () => {
+          // Sticky-focus: clicking off does NOT exit edit mode. We only flush
+          // any pending debounced save so work is persisted even if the user
+          // closes the tab before returning to the editor.
+          void flush();
+          return false;
+        },
+      },
     },
     onUpdate: ({ editor: e }) => {
       // Push the latest plain-text representation into the autosave buffer.
@@ -159,10 +178,26 @@ export function SectionEditor({
       // paragraph breaks, matching our storage format.
       setBuffer(e.getText({ blockSeparator: "\n\n" }));
     },
-    onBlur: () => {
-      handleExit();
-    },
   });
+
+  // Place the cursor on mount. If a caret was captured from a click, resolve
+  // it via posAtCoords; otherwise (or if coords don't map to a document
+  // position), fall back to end-of-content so keyboard users can start typing.
+  useEffect(() => {
+    if (!editor) return;
+    const c = caretOnMountRef.current;
+    if (c) {
+      const resolved = editor.view.posAtCoords({ left: c.x, top: c.y });
+      if (resolved) {
+        // Use chain() for atomic "select then focus" — one transaction, one
+        // paint. commands.setTextSelection's typed return is boolean in
+        // Tiptap v3, so we can't method-chain off it directly.
+        editor.chain().setTextSelection(resolved.pos).focus().run();
+        return;
+      }
+    }
+    editor.commands.focus("end");
+  }, [editor]);
 
   // `useEditor` handles its own teardown on unmount; no explicit destroy here.
   return <EditorContent editor={editor} />;
