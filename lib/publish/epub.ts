@@ -10,6 +10,7 @@
  * `lib/publish/epub-preview.ts` directly. This file re-exports the same
  * symbols for convenience of server callers and the existing unit tests.
  */
+import { pathToFileURL } from "node:url";
 import type { Chapter, Story } from "@/lib/types";
 import type { EpubVersion } from "@/lib/storage/paths";
 
@@ -76,7 +77,14 @@ export async function buildEpubBytes(input: EpubInput): Promise<Uint8Array> {
       author: story.authorPenName,
       description: story.description,
       lang: story.language || "en",
-      cover: coverPath,
+      // epub-gen-memory treats a plain string `cover` as a URL: strings
+      // starting with `file://` are read from disk via fs.readFile; anything
+      // else is fetched over HTTP. A bare absolute path fails the HTTP fetch
+      // and (with ignoreFailedDownloads: true) silently writes a 0-byte
+      // cover.jpeg into the archive — which Smashwords and other strict
+      // EPUBCheck validators reject as a corrupted image. Convert to a
+      // proper file:// URL so the library reads the bytes off disk.
+      cover: coverPath ? pathToFileURL(coverPath).href : undefined,
       ignoreFailedDownloads: true,
       css: EPUB_STYLESHEET,
     },
