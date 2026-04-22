@@ -59,11 +59,12 @@ Files touched:
 | MOD | `components/editor/SectionList.tsx` | +30 / -5 |
 | MOD | `components/editor/SectionCard.tsx` | +10 / -15 |
 | MOD | `components/editor/SectionEditor.tsx` | +20 / -10 |
-| MOD | `hooks/useAutoSave.ts` (expose flush) | +5 |
 | NEW | `tests/components/editor/SectionList.sticky-focus.test.tsx` | ~120 |
 | MOD | `tests/components/editor/SectionCard.test.tsx` | +40 |
 | MOD | `tests/components/editor/SectionEditor.test.tsx` | +60 |
 | NEW | `e2e/sticky-focus.spec.ts` | ~40 |
+
+`hooks/useAutoSave.ts` is **not** modified. The `flush()` API this spec relies on is already exposed — [hooks/useAutoSave.ts:133-141](../../../hooks/useAutoSave.ts#L133-L141) implements it with the semantics we need (cancels the pending debounce, no-op on first render or when disabled, awaits the wrapped save).
 
 Zero new runtime dependencies. Zero new CSP origins. Zero new egress surface. Zero new storage writes. Client-side interaction only.
 
@@ -91,7 +92,9 @@ const [pendingCaret, setPendingCaret] = useState<{ x: number; y: number } | null
 //   }}
 ```
 
-`SectionCard` no longer owns `editRequested`. It becomes a thin pass-through: computes `isEditing` from the prop + its existing disable gates (`!disableActions && !isRegenerating`), and calls `onRequestEdit` on click/mousedown.
+`SectionCard` no longer owns `editRequested`. It becomes a thin pass-through: computes `isEditing` from the prop + its existing disable gates (`!disableActions && !isRegenerating`), and calls `onRequestEdit` on mousedown (or keyboard activation).
+
+**Mousedown replaces click on the read-only `<p>`.** The existing `onClick` + `onKeyDown` handlers at [SectionCard.tsx:174-175](../../../components/editor/SectionCard.tsx#L174-L175) are replaced with `onMouseDown` (for mouse entry, carrying coords) + `onKeyDown` (unchanged, for Enter/Space keyboard entry with no coords). Leaving `onClick` in place would double-fire `onRequestEdit` after `onMouseDown` has already set state, and the second fire would carry stale `null` coords — so `onClick` is removed deliberately, not left dangling.
 
 When the user clicks section B while section A is editing:
 1. `onMouseDown` on B's `<p>` captures its click coords and fires `onRequestEdit("B", coords)`.
@@ -135,7 +138,25 @@ useEffect(() => {
 }, [editor, caret]);
 ```
 
-The effect only runs on mount (deps are stable — `editor` is created once per mount, `caret` is the prop passed at mount and not mutated by the parent afterward since `SectionList` clears `pendingCaret` on state change). We deliberately do not re-resolve `caret` mid-edit; subsequent clicks inside the mounted editor are Tiptap-native.
+**Mount-only semantics for `caret`.** `SectionList` does not clear `pendingCaret` until `onExit` fires, so the `caret` prop could in principle change identity mid-edit if the parent re-rendered while the same section remained editing (e.g., a sibling card updates). To guarantee the caret is consumed exactly once, the effect reads from a `useRef` captured on mount:
+
+```ts
+const caretOnMountRef = useRef(caret);
+useEffect(() => {
+  if (!editor) return;
+  const c = caretOnMountRef.current;
+  if (c) {
+    const pos = editor.view.posAtCoords({ left: c.x, top: c.y });
+    if (pos) {
+      editor.commands.setTextSelection(pos.pos).focus();
+      return;
+    }
+  }
+  editor.commands.focus("end");
+}, [editor]);
+```
+
+Subsequent clicks inside the mounted editor are Tiptap-native — we never re-resolve coords mid-edit.
 
 If `posAtCoords` returns `null` (click landed on padding outside any text node, or the container scrolled between mousedown and mount), the effect falls back to end-of-content — the same behavior as today.
 
@@ -146,19 +167,24 @@ Today `SectionEditor` exits on blur ([components/editor/SectionEditor.tsx:162-16
 - **Remove the `onBlur: handleExit` hook entirely.** Blur just means the browser's text cursor is somewhere else on the page; the Tiptap instance stays mounted and retains its internal selection and doc state.
 - **Keep Esc → `handleExit`.** Explicit dismissal via keyboard.
 - **Keep the existing `useAutoSave` debounce + unmount-flush contract.** Typing while mounted triggers a debounced save every 500ms; when the editor eventually does unmount (via any exit path), the hook fires any outstanding save.
-- **Add an explicit blur-flush.** When the editor blurs, call `useAutoSave`'s flush function (new, small addition — see below) so that if the user blurs specifically to close the tab or kill the dev server, the pending buffer is persisted without waiting for the debounce.
+- **Add an explicit blur-flush.** When the editor blurs, call `useAutoSave`'s existing `flush()` (already exported — see [hooks/useAutoSave.ts:133-141](../../../hooks/useAutoSave.ts#L133-L141)) so that if the user blurs specifically to close the tab or kill the dev server, the pending buffer is persisted without waiting for the debounce.
 
-`useAutoSave` currently exposes no imperative flush. We add one:
+`SectionEditor` destructures `flush` from `useAutoSave` and calls it from a blur hook on the Tiptap editor. The preferred binding is `editorProps.handleDOMEvents.blur` — that's the documented ProseMirror/Tiptap API, survives view teardown cleanly, and doesn't require manually managing a DOM event listener on the contenteditable node:
 
 ```ts
-// hooks/useAutoSave.ts — new return shape
-export function useAutoSave<T>(value: T, save: ..., opts: ...): {
-  status: "idle" | "saving" | "saved" | "error";
-  flush: () => Promise<void>;  // NEW — save now if there's a pending buffer
-};
+editorProps: {
+  attributes: { /* unchanged */ },
+  handleKeyDown: /* unchanged — Esc → handleExit */,
+  handleDOMEvents: {
+    blur: () => {
+      // Fire-and-forget; the handler is synchronous and `flush` returns a
+      // promise that `useAutoSave` serializes internally.
+      void flush();
+      return false; // don't swallow the event
+    },
+  },
+},
 ```
-
-Existing callers destructure what they need; adding a new field is non-breaking. `SectionEditor` calls `flush()` from an `onBlur` handler on the Tiptap editor (via `editorProps.handleDOMEvents.blur` or an event listener on the view's DOM node — whichever is cleaner; implementation detail for the plan).
 
 Autosave behavior on Esc: handled by the existing unmount flush. `handleExit` → parent clears `editingSectionId` → editor unmounts → `useAutoSave`'s unmount effect runs → pending save flushes. No change needed.
 
@@ -175,7 +201,7 @@ Edit mode ends when any of the following happens. Each sets `editingSectionId = 
 | Chapter change | `EditorPane` remounts with the new chapter; `SectionList` mounts fresh with `editingSectionId = null` |
 | Story/page unmount | Component tree teardown |
 
-**Stream/regen coupling.** `EditorPane` already has visibility into `isStreaming` and `disableActions` via the generation store. We thread a ref or callback from `SectionList` up to `EditorPane` so that when a stream starts, `EditorPane` can call `clearEditing()`. Alternatively — and simpler — `SectionList` subscribes to `disableActions` as a prop (already passed down for the kebab menu) and runs an effect:
+**Stream/regen coupling.** `SectionList` already receives `disableActions` as a prop (passed down today for the kebab menu gate — flipped true by `startGeneration` or `startSectionRegen`, which both set `isStreaming = true` globally). We add one effect in `SectionList`:
 
 ```ts
 useEffect(() => {
@@ -186,7 +212,7 @@ useEffect(() => {
 }, [disableActions, editingSectionId]);
 ```
 
-This replaces the current per-card derivation `isEditing = editRequested && !disableActions && !isRegenerating`. The per-card `isRegenerating` check still runs locally, since a single-section regen only disables one card's edit state rather than the whole list — but since only one section is editable at a time, if the regenerating section is the editing one, the effect above (or the per-card `isEditing && !isRegenerating` guard) clears it.
+This replaces the current per-card derivation `isEditing = editRequested && !disableActions && !isRegenerating`. A note on `isRegenerating`: any regen (chapter or single-section) flips `isStreaming = true` globally, so `disableActions` already clears `editingSectionId` for every card via the effect above. The per-card `isRegenerating` prop remains relevant only as a finer-grained gate that controls the skeleton shimmer render inside the regenerating card — not as an edit-state exit mechanism, which is fully handled by `disableActions`.
 
 ## Edge cases
 
@@ -201,7 +227,7 @@ This replaces the current per-card derivation `isEditing = editRequested && !dis
 
 ## Testing
 
-Four layers.
+Five layers.
 
 ### 1. `SectionList` sticky-focus behavior — `tests/components/editor/SectionList.sticky-focus.test.tsx` (new, jsdom)
 
@@ -226,11 +252,9 @@ Four layers.
 - Esc still calls `onExit`.
 - Blur calls `useAutoSave.flush()` once (mocked hook).
 
-### 4. `useAutoSave` flush API — `tests/hooks/useAutoSave.test.ts` (mod)
+### 4. `useAutoSave` flush — existing coverage
 
-- Flush runs the save function with the current value if the buffer differs from the last-saved value.
-- Flush is a no-op if buffer matches last-saved.
-- Flush serializes behind any in-flight save.
+`flush()` already ships with [hooks/useAutoSave.ts](../../../hooks/useAutoSave.ts). The plan should verify the existing test file at `tests/hooks/useAutoSave.test.ts` covers: flush executes the save with the current buffer, flush is a no-op on first render or when disabled, and flush cancels the pending debounce. If any of those cases is missing, add it; do not duplicate coverage that already exists.
 
 ### 5. E2E — `e2e/sticky-focus.spec.ts` (new, Playwright)
 
