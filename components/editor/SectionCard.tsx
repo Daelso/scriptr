@@ -36,6 +36,15 @@ interface SectionCardProps {
    * upstream.
    */
   onSaveBody?: (sectionId: string, newContent: string) => Promise<void>;
+  // ─── NEW: sticky-focus plumbing from SectionList ──────────────────────────
+  // All four are optional. `isEditing` defaulting to false means the card is
+  // read-only by default; `onRequestEdit`/`onExit` being undefined means
+  // clicks are no-ops (the card can't "enter edit mode" without a parent to
+  // tell it to). Keeps this commit type-safe before Task 3 wires the plumbing.
+  isEditing?: boolean;
+  caret?: { x: number; y: number } | null;
+  onRequestEdit?: (sectionId: string, caret: { x: number; y: number } | null) => void;
+  onExit?: () => void;
 }
 
 /**
@@ -52,17 +61,24 @@ export function SectionCard({
   onRegenerateWithNote,
   onDelete,
   onSaveBody,
+  isEditing,
+  caret,
+  onRequestEdit,
+  onExit,
 }: SectionCardProps) {
   const [showNoteInput, setShowNoteInput] = useState(false);
   const [note, setNote] = useState("");
-  const [editRequested, setEditRequested] = useState(false);
   const noteRef = useRef<HTMLTextAreaElement>(null);
 
-  // Derive the effective edit state. If a stream starts (chapter or section)
-  // while the user is mid-edit, this flips to false and unmounts the
-  // SectionEditor — whose useAutoSave fires a pending-save on unmount, so any
-  // in-flight text is preserved before the read-only view swaps back in.
-  const isEditing = editRequested && !disableActions && !isRegenerating;
+  // Click-to-edit the body. Gated on onSaveBody being provided (read-only
+  // render if not), the section not actively regenerating, and no stream in
+  // flight. The cursor style flips to text when editing is possible so users
+  // get a hint that the prose is interactive.
+  const canEdit = Boolean(onSaveBody) && !isRegenerating && !disableActions;
+  // Effective edit state. SectionList owns isEditing; we defensively AND with
+  // canEdit so a parent that forgets to flip isEditing off during a regen/
+  // stream can't force the editor to stay mounted while disableActions=true.
+  const editing = Boolean(isEditing) && canEdit;
 
   // Auto-focus the textarea when it opens.
   useEffect(() => {
@@ -111,29 +127,6 @@ export function SectionCard({
     }
   };
 
-  // Click-to-edit the body. Gated on onSaveBody being provided (read-only
-  // render if not), the section not actively regenerating, and no stream in
-  // flight. The cursor style flips to text when editing is possible so users
-  // get a hint that the prose is interactive.
-  const canEdit = Boolean(onSaveBody) && !isRegenerating && !disableActions;
-
-  const handleBodyClick = () => {
-    if (!canEdit) return;
-    setEditRequested(true);
-  };
-
-  const handleBodyKeyDown = (e: KeyboardEvent<HTMLParagraphElement>) => {
-    if (!canEdit) return;
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      setEditRequested(true);
-    }
-  };
-
-  const handleEditorExit = () => {
-    setEditRequested(false);
-  };
-
   return (
     <article className="py-4 border-b border-border last:border-b-0">
       <div className="flex items-start justify-between gap-4">
@@ -158,12 +151,13 @@ export function SectionCard({
               <div className="h-4 w-[85%] rounded bg-muted animate-pulse" />
               <div className="h-4 w-[70%] rounded bg-muted animate-pulse" />
             </div>
-          ) : isEditing && onSaveBody ? (
+          ) : editing && onSaveBody ? (
             <SectionEditor
               sectionId={section.id}
               initialContent={section.content}
+              caret={caret ?? null}
               onSave={onSaveBody}
-              onExit={handleEditorExit}
+              onExit={onExit ?? (() => {})}
             />
           ) : (
             <p
@@ -171,8 +165,21 @@ export function SectionCard({
                 "text-base leading-relaxed text-foreground whitespace-pre-wrap",
                 canEdit && "cursor-text",
               )}
-              onClick={handleBodyClick}
-              onKeyDown={handleBodyKeyDown}
+              onMouseDown={(e) => {
+                if (!canEdit || !onRequestEdit) return;
+                // Capture coords *before* the browser resolves focus — we hand
+                // them to SectionEditor so its effect can posAtCoords() to the
+                // exact click position. click() would arrive after focus
+                // resolution (~0ms later) and clientX/Y may already be stale.
+                onRequestEdit(section.id, { x: e.clientX, y: e.clientY });
+              }}
+              onKeyDown={(e) => {
+                if (!canEdit || !onRequestEdit) return;
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onRequestEdit(section.id, null);
+                }
+              }}
               role={canEdit ? "button" : undefined}
               tabIndex={canEdit ? 0 : undefined}
               aria-label={canEdit ? "Edit section" : undefined}

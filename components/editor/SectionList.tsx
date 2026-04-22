@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 import { SectionCard } from "@/components/editor/SectionCard";
 import { useGenerationStore } from "@/components/editor/generation-store";
 import type { Section } from "@/lib/types";
@@ -66,6 +68,25 @@ export function SectionList({
   // can't stack two runs.
   const disableActions = isStreaming;
 
+  // Sticky-focus ownership: a single editing section id plus the last-captured
+  // click coords. Only one section is in edit mode at a time — swapping
+  // unmounts the previous SectionEditor, whose autosave flush fires from the
+  // hook's unmount cleanup.
+  const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
+  const [pendingCaret, setPendingCaret] = useState<{ x: number; y: number } | null>(null);
+
+  // During render, if a generation starts while we have an active edit, clear
+  // edit state immediately. React 19's setState-in-render is the documented
+  // pattern for adjusting state in response to prop changes (here: disableActions
+  // flipping true). An effect-based clear would schedule the update for after
+  // commit, risking a one-frame gap where the stream's persistence writes race
+  // the autosave flush. A render-time clear plus the ensuing SectionEditor
+  // unmount fires useAutoSave's unmount cleanup synchronously.
+  if (disableActions && editingSectionId !== null) {
+    setEditingSectionId(null);
+    setPendingCaret(null);
+  }
+
   // Empty state: no sections on disk AND nothing being streamed for this chapter.
   if (sections.length === 0 && !isLiveHere) {
     return (
@@ -83,6 +104,16 @@ export function SectionList({
           section={section}
           isRegenerating={regeneratingSectionId === section.id}
           disableActions={disableActions}
+          isEditing={editingSectionId === section.id}
+          caret={editingSectionId === section.id ? pendingCaret : null}
+          onRequestEdit={(id, caret) => {
+            setPendingCaret(caret);
+            setEditingSectionId(id);
+          }}
+          onExit={() => {
+            setEditingSectionId(null);
+            setPendingCaret(null);
+          }}
           onRegenerate={onSectionRegenerate}
           onRegenerateWithNote={onSectionRegenerateWithNote}
           onDelete={onSectionDelete}
