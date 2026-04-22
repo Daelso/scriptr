@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, type KeyboardEvent } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -14,14 +14,35 @@ type Props = {
   wordCount: number;
 };
 
-type LastBuild = { path: string; bytes: number; warnings: string[] };
+type LastBuild = { path: string; bytes: number; warnings: string[]; version: 2 | 3 };
 
 export function ExportPage({ story, chapterCount, wordCount }: Props) {
   const [draft, setDraft] = useState<Story>(story);
   const [saving, setSaving] = useState(false);
   const [building, setBuilding] = useState(false);
-  const [lastBuild, setLastBuild] = useState<LastBuild | null>(null);
+  const [lastBuildByVersion, setLastBuildByVersion] = useState<Partial<Record<2 | 3, LastBuild>>>({});
+  const [selectedVersion, setSelectedVersion] = useState<2 | 3>(3);
   const fileRef = useRef<HTMLInputElement>(null);
+  const v3Ref = useRef<HTMLButtonElement>(null);
+  const v2Ref = useRef<HTMLButtonElement>(null);
+
+  const onToggleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const k = e.key;
+    if (
+      k === "ArrowLeft" ||
+      k === "ArrowRight" ||
+      k === "ArrowUp" ||
+      k === "ArrowDown" ||
+      k === "Home" ||
+      k === "End"
+    ) {
+      e.preventDefault();
+      const next: 2 | 3 =
+        k === "Home" ? 3 : k === "End" ? 2 : selectedVersion === 3 ? 2 : 3;
+      setSelectedVersion(next);
+      (next === 3 ? v3Ref : v2Ref).current?.focus();
+    }
+  };
 
   const patch = async (fields: Partial<Story>) => {
     setSaving(true);
@@ -71,13 +92,16 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
     try {
       const res = await fetch(`/api/stories/${story.slug}/export/epub`, {
         method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ version: selectedVersion }),
       });
       const body = await res.json();
       if (!body.ok) {
         toast.error(body.error ?? "Build failed");
         return;
       }
-      setLastBuild(body.data);
+      const built: LastBuild = body.data;
+      setLastBuildByVersion((prev) => ({ ...prev, [built.version]: built }));
       toast.success("EPUB built.");
     } finally {
       setBuilding(false);
@@ -210,34 +234,80 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
             {chapterCount} chapter{chapterCount === 1 ? "" : "s"} ·{" "}
             {wordCount.toLocaleString()} words
           </div>
+          <div
+            role="radiogroup"
+            aria-label="EPUB version"
+            data-testid="export-version-toggle"
+            className="flex rounded-md border border-border overflow-hidden mb-3 text-xs"
+            onKeyDown={onToggleKeyDown}
+          >
+            <button
+              ref={v3Ref}
+              role="radio"
+              aria-checked={selectedVersion === 3}
+              tabIndex={selectedVersion === 3 ? 0 : -1}
+              data-testid="export-version-epub3"
+              onClick={() => setSelectedVersion(3)}
+              className={`flex-1 px-3 py-1.5 text-center transition-colors ${
+                selectedVersion === 3
+                  ? "bg-primary text-primary-foreground font-semibold"
+                  : "bg-background text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              EPUB 3 · Kindle / KDP
+            </button>
+            <button
+              ref={v2Ref}
+              role="radio"
+              aria-checked={selectedVersion === 2}
+              tabIndex={selectedVersion === 2 ? 0 : -1}
+              data-testid="export-version-epub2"
+              onClick={() => setSelectedVersion(2)}
+              className={`flex-1 px-3 py-1.5 text-center transition-colors border-l border-border ${
+                selectedVersion === 2
+                  ? "bg-primary text-primary-foreground font-semibold"
+                  : "bg-background text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              EPUB 2 · Smashwords
+            </button>
+          </div>
           <Button
             onClick={handleBuild}
             disabled={!canBuild}
             className="w-full"
             data-testid="export-build"
           >
-            {building ? "Building…" : "Build EPUB"}
+            {building ? "Building…" : `Build EPUB ${selectedVersion}`}
           </Button>
         </div>
 
-        {lastBuild && (
-          <div className="rounded border border-green-700 bg-green-950/40 p-3 text-xs text-green-200">
-            <div>✓ Built {(lastBuild.bytes / 1024).toFixed(0)} KB</div>
-            <div className="font-mono text-green-300 break-all mt-1">
-              {lastBuild.path}
+        {([3, 2] as const).map((v) => {
+          const build = lastBuildByVersion[v];
+          if (!build) return null;
+          return (
+            <div
+              key={v}
+              data-testid={`export-lastbuild-epub${v}`}
+              className="rounded border border-green-700 bg-green-950/40 p-3 text-xs text-green-200"
+            >
+              <div>✓ EPUB {v} · {(build.bytes / 1024).toFixed(0)} KB</div>
+              <div className="font-mono text-green-300 break-all mt-1">
+                {build.path}
+              </div>
+              {build.warnings.length > 0 && (
+                <details className="mt-2">
+                  <summary>{build.warnings.length} warning(s)</summary>
+                  <ul className="mt-1 text-green-300">
+                    {build.warnings.map((w, i) => (
+                      <li key={i}>· {w}</li>
+                    ))}
+                  </ul>
+                </details>
+              )}
             </div>
-            {lastBuild.warnings.length > 0 && (
-              <details className="mt-2">
-                <summary>{lastBuild.warnings.length} warning(s)</summary>
-                <ul className="mt-1 text-green-300">
-                  {lastBuild.warnings.map((w, i) => (
-                    <li key={i}>· {w}</li>
-                  ))}
-                </ul>
-              </details>
-            )}
-          </div>
-        )}
+          );
+        })}
       </div>
     </div>
   );

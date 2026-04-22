@@ -1,6 +1,8 @@
 import { join } from "node:path";
 import { toSlug } from "@/lib/slug";
 
+export type EpubVersion = 2 | 3;
+
 export function storyDir(dataDir: string, storySlug: string) {
   return join(dataDir, "stories", storySlug);
 }
@@ -20,8 +22,8 @@ export function chapterFile(dataDir: string, storySlug: string, index: number, _
 export function exportsDir(dataDir: string, storySlug: string) {
   return join(storyDir(dataDir, storySlug), "exports");
 }
-export function epubPath(dataDir: string, storySlug: string) {
-  return join(exportsDir(dataDir, storySlug), `${storySlug}.epub`);
+export function epubPath(dataDir: string, storySlug: string, version: EpubVersion) {
+  return join(exportsDir(dataDir, storySlug), `${storySlug}-epub${version}.epub`);
 }
 export function coverPath(dataDir: string, storySlug: string) {
   return join(storyDir(dataDir, storySlug), "cover.jpg");

@@ -11,6 +11,7 @@
  * symbols for convenience of server callers and the existing unit tests.
  */
 import type { Chapter, Story } from "@/lib/types";
+import type { EpubVersion } from "@/lib/storage/paths";
 
 export {
   EPUB_STYLESHEET,
@@ -24,6 +25,8 @@ export type EpubInput = {
   story: Story;
   chapters: Chapter[];
   coverPath?: string;
+  /** EPUB package version. Defaults to 3. EPUB3 = Kindle/KDP. EPUB2 = Smashwords (which rejects EPUB3). */
+  version?: EpubVersion;
 };
 
 type EpubGenFn = (
@@ -36,7 +39,9 @@ type EpubGenFn = (
     ignoreFailedDownloads?: boolean;
     css?: string;
   },
-  content: Array<{ title: string; content: string }>
+  content: Array<{ title: string; content: string }>,
+  version?: 2 | 3,
+  verbose?: boolean,
 ) => Promise<Buffer>;
 
 // Load `epub-gen-memory` lazily inside the function rather than at module
@@ -50,7 +55,7 @@ function getGenerator(): EpubGenFn {
 }
 
 export async function buildEpubBytes(input: EpubInput): Promise<Uint8Array> {
-  const { story, chapters, coverPath } = input;
+  const { story, chapters, coverPath, version = 3 } = input;
 
   const content = chapters.map((chapter, idx) => {
     const inner = renderChapterPreviewHtml(chapter, { chapterNumber: idx + 1 });
@@ -75,7 +80,8 @@ export async function buildEpubBytes(input: EpubInput): Promise<Uint8Array> {
       ignoreFailedDownloads: true,
       css: EPUB_STYLESHEET,
     },
-    content
+    content,
+    version
   );
 
   return new Uint8Array(buffer);
