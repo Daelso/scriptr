@@ -23,8 +23,11 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       }
       version = body.version as EpubVersion;
     }
-  } catch {
-    // Empty or non-JSON body — default to version 3.
+  } catch (err) {
+    // Empty or non-JSON body — default to version 3. Only tolerate parse-shape
+    // errors (SyntaxError from malformed JSON, TypeError from a torn body stream).
+    // Unexpected errors must propagate — silent swallowing would hide real bugs.
+    if (!(err instanceof SyntaxError) && !(err instanceof TypeError)) throw err;
   }
 
   const story = await getStory(dataDir, slug);
