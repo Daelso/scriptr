@@ -1,14 +1,15 @@
 import { mkdir, writeFile, rename, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import sharp from "sharp";
-import { coverPath, epubPath, exportsDir } from "@/lib/storage/paths";
+import { coverPath, epubPath, exportsDir, type EpubVersion } from "@/lib/storage/paths";
 
 export async function writeEpub(
   dataDir: string,
   slug: string,
+  version: EpubVersion,
   bytes: Uint8Array
 ): Promise<string> {
-  const finalPath = epubPath(dataDir, slug);
+  const finalPath = epubPath(dataDir, slug, version);
   const tempPath = `${finalPath}.tmp`;
   await mkdir(exportsDir(dataDir, slug), { recursive: true });
   await writeFile(tempPath, bytes);

@@ -153,6 +153,59 @@ describe("buildEpubBytes", () => {
   });
 });
 
+import { readOpfVersion } from "./helpers/epub-inspect";
+
+describe("buildEpubBytes version selection", () => {
+  function story(): Story {
+    return {
+      slug: "version-test",
+      title: "Version Test",
+      authorPenName: "V. Tester",
+      description: "Testing versions.",
+      copyrightYear: 2026,
+      language: "en",
+      bisacCategory: "FIC027000",
+      keywords: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      chapterOrder: ["c1"],
+    };
+  }
+
+  function chapters(): Chapter[] {
+    return [
+      {
+        id: "c1",
+        title: "Chapter One",
+        summary: "",
+        beats: [],
+        prompt: "",
+        recap: "",
+        sections: [{ id: "s1", content: "Content." }],
+        wordCount: 1,
+      },
+    ];
+  }
+
+  it("buildEpubBytes with version 3 produces OPF with version=\"3.0\"", async () => {
+    const bytes = await buildEpubBytes({ story: story(), chapters: chapters(), version: 3 });
+    const opfVersion = await readOpfVersion(bytes);
+    expect(opfVersion).toBe("3.0");
+  });
+
+  it("buildEpubBytes with version 2 produces OPF with version=\"2.0\"", async () => {
+    const bytes = await buildEpubBytes({ story: story(), chapters: chapters(), version: 2 });
+    const opfVersion = await readOpfVersion(bytes);
+    expect(opfVersion).toBe("2.0");
+  });
+
+  it("buildEpubBytes defaults to version 3 when version is omitted", async () => {
+    const bytes = await buildEpubBytes({ story: story(), chapters: chapters() });
+    const opfVersion = await readOpfVersion(bytes);
+    expect(opfVersion).toBe("3.0");
+  });
+});
+
 import { validateEpub } from "@/lib/publish/epub";
 
 describe("validateEpub", () => {
