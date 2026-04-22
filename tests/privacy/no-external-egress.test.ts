@@ -48,6 +48,7 @@
  *   POST /api/stories/[slug]/chapters/reorder
  *   GET  /api/stories/[slug]/chapters/[id]
  *   PATCH /api/stories/[slug]/chapters/[id]
+ *   GET  /api/stories/[slug]/chapters/[id]/prompt
  *   DELETE /api/stories/[slug]/chapters/[id]
  *   DELETE /api/stories/[slug]
  */
@@ -327,6 +328,19 @@ describe("no external egress from API routes", () => {
       );
       const ctx = { params: Promise.resolve({ slug, id: ch1.id }) };
       const res = await PATCH(req, ctx);
+      expect(res.status).toBe(200);
+    }
+
+    // ── GET /api/stories/[slug]/chapters/[id]/prompt ──────────────────────
+    {
+      const { GET } = await import(
+        "@/app/api/stories/[slug]/chapters/[id]/prompt/route"
+      );
+      const req = makeReq(
+        `http://localhost/api/stories/${slug}/chapters/${ch1.id}/prompt`,
+      );
+      const ctx = { params: Promise.resolve({ slug, id: ch1.id }) };
+      const res = await GET(req, ctx);
       expect(res.status).toBe(200);
     }
 
