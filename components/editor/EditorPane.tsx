@@ -15,6 +15,8 @@ import { Button } from "@/components/ui/button";
 import { ChapterHeader } from "@/components/editor/ChapterHeader";
 import { SectionList } from "@/components/editor/SectionList";
 import { GenerateChapterButton } from "@/components/editor/GenerateChapterButton";
+import { CopyPromptButton } from "@/components/editor/CopyPromptButton";
+import { CopyPromptDialog } from "@/components/editor/CopyPromptDialog";
 import { StreamOverlay } from "@/components/editor/StreamOverlay";
 import { useGenerationStore } from "@/components/editor/generation-store";
 import { useStreamGenerate } from "@/hooks/useStreamGenerate";
@@ -64,6 +66,8 @@ export function EditorPane({ slug, chapterId }: EditorPaneProps) {
 
   // Section-delete confirm dialog. Keeps the destructive action gated behind
   // a shadcn Dialog to mirror ChapterList's pattern.
+  const [copyPromptOpen, setCopyPromptOpen] = useState(false);
+
   const [pendingDeleteSectionId, setPendingDeleteSectionId] = useState<
     string | null
   >(null);
@@ -356,10 +360,15 @@ export function EditorPane({ slug, chapterId }: EditorPaneProps) {
           chapterId={chapterId}
           sections={data.sections}
           generateSlot={
-            <GenerateChapterButton
-              onGenerate={handleGenerate}
-              disabled={generateDisabled}
-            />
+            <div className="flex flex-col items-center gap-2">
+              <GenerateChapterButton
+                onGenerate={handleGenerate}
+                disabled={generateDisabled}
+              />
+              {chapterId ? (
+                <CopyPromptButton onClick={() => setCopyPromptOpen(true)} />
+              ) : null}
+            </div>
           }
           onSectionRegenerate={handleSectionRegenerate}
           onSectionRegenerateWithNote={handleSectionRegenerateWithNote}
@@ -369,6 +378,15 @@ export function EditorPane({ slug, chapterId }: EditorPaneProps) {
       </div>
       {overlayActive ? (
         <StreamOverlay onStop={handleStop} onSteer={handleSteer} />
+      ) : null}
+
+      {chapterId ? (
+        <CopyPromptDialog
+          open={copyPromptOpen}
+          onOpenChange={setCopyPromptOpen}
+          slug={slug}
+          chapterId={chapterId}
+        />
       ) : null}
 
       <Dialog
