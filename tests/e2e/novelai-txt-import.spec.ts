@@ -46,8 +46,23 @@ test.describe("NovelAI .txt import", () => {
 
     // Short dialogue the binary .story decoder would have dropped (too short
     // for its 60-char MIN_PROSE_LEN filter) must survive the .txt path.
-    await expect(page.getByText(/"Dare," I said/).first()).toBeVisible({
-      timeout: 10_000,
-    });
+    // `cleanPaste`'s `normalizeQuotes` turns straight quotes into curly ones,
+    // so we match either form.
+    await expect(
+      page.getByText(/["“]Dare,["”] I said/).first()
+    ).toBeVisible({ timeout: 10_000 });
+
+    // The "huge messy paragraphs" fix: NovelAI exports paragraphs with single
+    // `\n` separators. Scriptr renders each section as one `<p>` with
+    // `white-space: pre-wrap`, so paragraph spacing comes from `\n\n` in the
+    // text content (not from multiple `<p>` elements). Verify the rendered
+    // section text has at least 2 paragraph breaks (blank lines) — a run-on
+    // paragraph would have 0.
+    const firstSectionText = await page
+      .locator("main p.whitespace-pre-wrap")
+      .first()
+      .innerText();
+    const paragraphBreaks = firstSectionText.split(/\n\s*\n/).length - 1;
+    expect(paragraphBreaks).toBeGreaterThanOrEqual(2);
   });
 });

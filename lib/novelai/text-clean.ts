@@ -22,7 +22,14 @@ const PAGE_MARKER_INLINE = /\[\d+\/\d+\]/g;
  *   - All subsequent `[N/M]` marker lines.
  *   - `{ ... }` author's-notes blocks (may span multiple lines).
  *   - Leading/trailing whitespace.
- *   - Runs of 3+ blank lines collapsed to 2.
+ *
+ * Paragraph-break normalization:
+ *   NovelAI .txt exports separate paragraphs with a single `\n`. The Scriptr
+ *   editor renders prose as HTML <p> elements and needs `\n\n` (a blank line)
+ *   between paragraphs. We normalize by splitting on every newline, dropping
+ *   empty lines, and rejoining with `\n\n` — so every authored line becomes
+ *   its own paragraph in the editor. This is what fixes the "huge messy
+ *   paragraph" rendering.
  *
  * Preserved verbatim:
  *   - `////` chapter-split markers.
@@ -37,7 +44,7 @@ export function cleanNovelAIText(
   let text = stripPremiseBlock(raw);
   text = stripAuthorsNotes(text);
   text = stripPageMarkers(text);
-  text = collapseBlankLines(text);
+  text = normalizeParagraphBreaks(text);
   text = text.trim();
 
   return {
@@ -114,13 +121,25 @@ function stripPageMarkers(text: string): string {
 }
 
 /**
- * Collapse runs of 3+ blank lines to exactly 2 blank lines (i.e. three
- * consecutive `\n` characters).
+ * Turn every authored line into its own paragraph.
+ *
+ * NovelAI `.txt` exports use a single `\n` between paragraphs. The Scriptr
+ * editor (and the downstream `cleanPaste` pipeline) expects `\n\n` (a blank
+ * line) between paragraphs. Without this, the whole chapter renders as one
+ * enormous run-on paragraph.
+ *
+ * Strategy: split on every newline, drop empty lines, rejoin with `\n\n`.
+ * This is idempotent for text that already uses `\n\n` separators, and turns
+ * single-`\n`-separated NovelAI text into well-formed paragraphs. Rule lines
+ * like `***` / `---` sit on their own line and come through unchanged.
  */
-function collapseBlankLines(text: string): string {
-  // Normalize line endings first so the regex is simple.
+function normalizeParagraphBreaks(text: string): string {
   const normalized = text.replace(/\r\n/g, "\n");
-  return normalized.replace(/\n{4,}/g, "\n\n\n");
+  return normalized
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length > 0)
+    .join("\n\n");
 }
 
 /**
