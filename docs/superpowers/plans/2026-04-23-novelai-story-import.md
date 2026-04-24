@@ -2130,6 +2130,46 @@ describe("POST /api/import/novelai/commit — new-story mode", () => {
     expect(chapters[0].source).toBe("imported");
   });
 
+  it("rolls back the story dir on mid-write failure", async () => {
+    // Force a chapter write to fail by passing an impossibly large chapter body
+    // — or simpler: stub createImportedChapter via module mock. Using a mock
+    // is the cleaner path; we reset the module registry after.
+    const { POST } = await import("@/app/api/import/novelai/commit/route");
+    const chaptersMod = await import("@/lib/storage/chapters");
+    const original = chaptersMod.createImportedChapter;
+    // Replace with a throwing version.
+    (chaptersMod as unknown as { createImportedChapter: unknown }).createImportedChapter =
+      async () => {
+        throw new Error("disk full (simulated)");
+      };
+
+    try {
+      const res = await POST(
+        makeJsonReq("http://localhost/api/import/novelai/commit", {
+          target: "new-story",
+          story: { title: "Will Roll Back", description: "", keywords: [] },
+          bible: {
+            characters: [],
+            setting: "",
+            pov: "third-limited",
+            tone: "",
+            styleNotes: "",
+            nsfwPreferences: "",
+          },
+          chapters: [{ title: "one", body: "body" }],
+        })
+      );
+      expect(res.status).toBe(500);
+
+      // The partially-created story dir must have been removed.
+      const { existsSync } = await import("node:fs");
+      expect(existsSync(join(tmp, "stories", "will-roll-back"))).toBe(false);
+    } finally {
+      (chaptersMod as unknown as { createImportedChapter: unknown }).createImportedChapter =
+        original;
+    }
+  });
+
   it("auto-suffixes the slug on collision", async () => {
     const { POST } = await import("@/app/api/import/novelai/commit/route");
     const first = await POST(
@@ -2437,7 +2477,7 @@ Read [tests/privacy/no-external-egress.test.ts](../../../tests/privacy/no-extern
 
 - [ ] **Step 2: Write the failing additions**
 
-In the main `it("exercising every non-generate route records zero fetches", ...)` block, just before the final `expect(recorded).toEqual([]);`, add two new route exercises. Locate a convenient spot (e.g., after the DELETE /api/stories/[slug] block) and insert:
+In the main `it("exercising every non-generate route records zero fetches", ...)` block, **insert the three new exercises immediately BEFORE the `DELETE /api/stories/[slug]` block at approximately line 347**. Ordering matters: the `existing-story` commit needs the seeded `slug` to still exist — if we put these after the DELETE, the 404 guard fires and the test fails. Insert:
 
 ```ts
     // ── POST /api/import/novelai/parse ─────────────────────────────────────
@@ -2868,7 +2908,9 @@ describe("NewStoryFromNovelAIDialog", () => {
     await waitFor(() => {
       expect(screen.getByDisplayValue("Garden at Dusk")).toBeTruthy();
     });
-    expect(screen.getByText(/Mira/)).toBeTruthy();
+    // `Mira` lives inside <strong>…</strong> — match per-element against the <strong>.
+    expect(screen.getByText("Mira", { selector: "strong" })).toBeTruthy();
+    // The setting <pre> contains the raw Markdown-ish string including "## Walled Garden".
     expect(screen.getByText(/## Walled Garden/)).toBeTruthy();
     expect(screen.getAllByDisplayValue(/body (one|two)/)).toHaveLength(2);
   });
@@ -3261,7 +3303,13 @@ cd /home/chase/projects/scriptr && git add components/library/LibraryList.tsx &&
 
 ---
 
-### Task 3.4: AddChaptersFromNovelAIDialog
+### Task 3.4: AddChaptersFromNovelAIDialog (with EPUB preview + recap option)
+
+Per spec section "UI — AddChaptersFromNovelAIDialog", this dialog has three parts beyond the chapter list:
+
+1. A **discarded-data banner** (description/lorebook/tags ignored in this mode).
+2. A **right-column EPUB preview** that renders each chapter as it would appear in an exported EPUB — reuses `renderChapterPreviewHtml` + `EPUB_STYLESHEET` from [lib/publish/epub-preview.ts](../../../lib/publish/epub-preview.ts).
+3. An **"Generate recap via Grok" checkbox** mirroring the paste importer — fires `/api/generate/recap` per chapter sequentially, after commit. Off by default.
 
 **Files:**
 - Create: `/home/chase/projects/scriptr/components/import/AddChaptersFromNovelAIDialog.tsx`
@@ -3325,7 +3373,7 @@ describe("AddChaptersFromNovelAIDialog", () => {
     global.fetch = originalFetch;
   });
 
-  it("shows the discarded-data banner in the preview", async () => {
+  it("shows the discarded-data banner and recap checkbox in the preview", async () => {
     global.fetch = vi.fn().mockResolvedValue(
       new Response(JSON.stringify(fakeParseResp()), { status: 200 })
     ) as unknown as typeof fetch;
@@ -3347,6 +3395,58 @@ describe("AddChaptersFromNovelAIDialog", () => {
     await waitFor(() => {
       expect(screen.getByText(/ignored in this mode/i)).toBeTruthy();
     });
+    // Recap checkbox present and off by default
+    const recap = screen.getByLabelText(/generate recap via grok/i) as HTMLInputElement;
+    expect(recap.checked).toBe(false);
+  });
+
+  it("fires recap requests sequentially when the checkbox is on", async () => {
+    const recapCalls: unknown[] = [];
+    const fetchMock = vi.fn().mockImplementation(async (url: unknown, init?: { body?: string }) => {
+      const u = String(url);
+      if (u.endsWith("/parse")) {
+        return new Response(JSON.stringify(fakeParseResp()), { status: 200 });
+      }
+      if (u.endsWith("/commit")) {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            data: { slug: "host-story", chapterIds: ["id-a", "id-b"] },
+          }),
+          { status: 200 }
+        );
+      }
+      if (u.endsWith("/api/generate/recap")) {
+        recapCalls.push(JSON.parse(init?.body ?? "{}"));
+        return new Response(JSON.stringify({ ok: true, data: {} }), { status: 200 });
+      }
+      return new Response("", { status: 404 });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    render(
+      <AddChaptersFromNovelAIDialog
+        slug="host-story"
+        open
+        onOpenChange={() => {}}
+        onImported={() => {}}
+      />
+    );
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: { files: [new File([new Uint8Array([1])], "x.story")] },
+    });
+    await waitFor(() => screen.getByText(/ignored in this mode/i));
+
+    fireEvent.click(screen.getByLabelText(/generate recap via grok/i));
+    fireEvent.click(screen.getByRole("button", { name: /add 2 chapter/i }));
+
+    // Recap calls happen after commit in an IIFE; wait for both.
+    await waitFor(() => {
+      expect(recapCalls).toHaveLength(2);
+    });
+    expect(recapCalls[0]).toMatchObject({ storySlug: "host-story", chapterId: "id-a" });
+    expect(recapCalls[1]).toMatchObject({ storySlug: "host-story", chapterId: "id-b" });
   });
 
   it("commits with target='existing-story' and no bible/story fields", async () => {
@@ -3413,10 +3513,13 @@ Write to `/home/chase/projects/scriptr/components/import/AddChaptersFromNovelAID
 ```tsx
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ChapterEditList } from "@/components/import/ChapterEditList";
+import { renderChapterPreviewHtml, EPUB_STYLESHEET } from "@/lib/publish/epub-preview";
+import { SafeHtml } from "@/lib/publish/safe-html";
+import type { Chapter } from "@/lib/types";
 import type { ParsedStory, ProposedChapter, SplitResult } from "@/lib/novelai/types";
 
 type Props = {
@@ -3442,6 +3545,11 @@ type Stage =
   | { kind: "error"; message: string }
   | { kind: "preview"; split: SplitResult };
 
+// Count words for the preview-chapter stub we build on the fly.
+function countWords(s: string): number {
+  return s.trim() ? s.trim().split(/\s+/).length : 0;
+}
+
 export function AddChaptersFromNovelAIDialog({
   slug,
   open,
@@ -3450,11 +3558,13 @@ export function AddChaptersFromNovelAIDialog({
 }: Props) {
   const [stage, setStage] = useState<Stage>({ kind: "idle" });
   const [chapters, setChapters] = useState<ProposedChapter[]>([]);
+  const [generateRecap, setGenerateRecap] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const reset = useCallback(() => {
     setStage({ kind: "idle" });
     setChapters([]);
+    setGenerateRecap(false);
   }, []);
 
   const onFile = useCallback(async (f: File) => {
@@ -3481,9 +3591,30 @@ export function AddChaptersFromNovelAIDialog({
     }
   }, []);
 
+  // Render each proposed chapter as an EPUB-styled HTML string for the preview column.
+  const previewHtml = useMemo(() => {
+    return chapters.map((ch, i) => {
+      const title = ch.title.trim() || "Untitled";
+      const stub: Chapter = {
+        id: `preview-${i}`,
+        title,
+        summary: "",
+        beats: [],
+        prompt: "",
+        recap: "",
+        sections: [{ id: `s-${i}`, content: ch.body }],
+        wordCount: countWords(ch.body),
+      };
+      return renderChapterPreviewHtml(stub, { chapterNumber: i + 1 });
+    });
+  }, [chapters]);
+
   const onCommit = useCallback(async () => {
     if (stage.kind !== "preview") return;
     setSaving(true);
+    // Snapshot titles so the post-commit recap loop can reference them
+    // independent of React state changes while the IIFE runs.
+    const committed = chapters.map((c) => ({ title: c.title.trim() || "Untitled", body: c.body }));
     try {
       const res = await fetch("/api/import/novelai/commit", {
         method: "POST",
@@ -3491,7 +3622,7 @@ export function AddChaptersFromNovelAIDialog({
         body: JSON.stringify({
           target: "existing-story",
           slug,
-          chapters,
+          chapters: committed,
         }),
       });
       const body = await res.json();
@@ -3499,20 +3630,47 @@ export function AddChaptersFromNovelAIDialog({
         toast.error(body.error ?? `Import failed (${res.status})`);
         return;
       }
-      toast.success(`Added ${chapters.length} chapter${chapters.length === 1 ? "" : "s"}.`);
-      onImported(body.data.chapterIds);
+      const chapterIds: string[] = body.data.chapterIds;
+      toast.success(`Added ${committed.length} chapter${committed.length === 1 ? "" : "s"}.`);
+      onImported(chapterIds);
       onOpenChange(false);
       reset();
+
+      if (generateRecap) {
+        // Post-commit sequential recap — same pattern as ImportChapterDialog.
+        // The IIFE runs independently of the dialog close; requests survive
+        // component unmount because they're owned by the browser.
+        void (async () => {
+          for (let i = 0; i < chapterIds.length; i++) {
+            const id = chapterIds[i];
+            const title = committed[i]?.title ?? "Untitled";
+            try {
+              const recapRes = await fetch("/api/generate/recap", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ storySlug: slug, chapterId: id }),
+              });
+              if (!recapRes.ok) {
+                toast.error(`Recap failed for "${title}".`);
+              } else if (chapterIds.length > 1) {
+                toast.success(`Recap ready for "${title}".`);
+              }
+            } catch {
+              toast.error(`Recap failed for "${title}".`);
+            }
+          }
+        })();
+      }
     } finally {
       setSaving(false);
     }
-  }, [stage, slug, chapters, onImported, onOpenChange, reset]);
+  }, [stage, slug, chapters, generateRecap, onImported, onOpenChange, reset]);
 
   if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-stretch justify-center">
-      <div className="bg-background border border-border rounded w-full max-w-[1100px] m-4 flex flex-col">
+      <div className="bg-background border border-border rounded w-full max-w-[1400px] m-4 flex flex-col">
         <div className="border-b border-border px-4 py-2 text-sm font-semibold">
           Import chapters from .story
         </div>
@@ -3550,16 +3708,45 @@ export function AddChaptersFromNovelAIDialog({
         )}
 
         {stage.kind === "preview" && (
-          <div className="p-4 flex-1 flex flex-col gap-3 overflow-auto">
-            <div className="border border-border rounded bg-muted/30 p-2 text-xs text-muted-foreground">
-              Description, lorebook, and tags from this .story file are ignored in this mode.
-              Use <em>Import from NovelAI</em> on the home page to import everything.
+          <div className="grid grid-cols-[1fr_1fr] flex-1 min-h-0">
+            <div className="p-4 border-r border-border flex flex-col gap-3 overflow-auto">
+              <div className="border border-border rounded bg-muted/30 p-2 text-xs text-muted-foreground">
+                Description, lorebook, and tags from this .story file are ignored in this mode.
+                Use <em>Import from NovelAI</em> on the home page to import everything.
+              </div>
+              <ChapterEditList
+                chapters={chapters}
+                splitSource={stage.split.splitSource}
+                onChange={setChapters}
+              />
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={generateRecap}
+                  onChange={(e) => setGenerateRecap(e.target.checked)}
+                />
+                Generate recap via Grok (sends prose to xAI)
+              </label>
             </div>
-            <ChapterEditList
-              chapters={chapters}
-              splitSource={stage.split.splitSource}
-              onChange={setChapters}
-            />
+
+            <div className="p-4 flex flex-col gap-2 overflow-auto">
+              <div className="text-xs uppercase text-muted-foreground">EPUB preview</div>
+              <style>{EPUB_STYLESHEET}</style>
+              <div className="flex-1 overflow-auto border border-border rounded p-4 bg-background">
+                {previewHtml.map((html, i) => (
+                  <div key={i}>
+                    {i > 0 && (
+                      <div className="flex items-center gap-2 my-6 text-xs uppercase text-muted-foreground">
+                        <div className="flex-1 border-t border-border" />
+                        <span>Chapter {i + 1}</span>
+                        <div className="flex-1 border-t border-border" />
+                      </div>
+                    )}
+                    <SafeHtml html={html} />
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         )}
 
@@ -3684,6 +3871,7 @@ Write to `/home/chase/projects/scriptr/tests/e2e/novelai-import.spec.ts`:
 ```ts
 import { test, expect } from "@playwright/test";
 import { join } from "node:path";
+import { rm } from "node:fs/promises";
 
 const FIXTURE = join(
   __dirname,
@@ -3695,25 +3883,38 @@ const FIXTURE = join(
   "sample.story"
 );
 
-test("imports a .story file wholesale into a new story", async ({ page }) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: /import from novelai/i }).first().click();
+test.describe("NovelAI .story import", () => {
+  // Match golden-path.spec.ts: wipe the e2e data dir before the run so slug
+  // derivation is deterministic across reruns (otherwise the second run
+  // creates "garden-at-dusk-2").
+  test.beforeAll(async () => {
+    await rm("/tmp/scriptr-e2e", { recursive: true, force: true });
+  });
 
-  // Set the file on the hidden file input.
-  const fileInput = page.locator('input[type="file"]');
-  await fileInput.setInputFiles(FIXTURE);
+  test("imports a .story file wholesale into a new story", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: /import from novelai/i }).first().click();
 
-  // Preview renders; title prefilled from the fixture.
-  await expect(page.getByDisplayValue("Garden at Dusk")).toBeVisible();
+    // Drive the hidden file input directly.
+    const fileInput = page.locator('input[type="file"]');
+    await fileInput.setInputFiles(FIXTURE);
 
-  // At least 2 chapters from the //// split.
-  const chapterRows = page.locator("text=/01\\s|02\\s|0[1-9]/i");
-  await expect(chapterRows.first()).toBeVisible();
+    // Preview renders; title prefilled from the fixture.
+    await expect(page.getByDisplayValue("Garden at Dusk")).toBeVisible();
 
-  await page.getByRole("button", { name: /create story/i }).click();
+    // Chapter-list split-source badge proves the //// marker was honored.
+    await expect(page.getByText(/split by \/\/\/\/ markers/i)).toBeVisible();
 
-  // Navigated to the story editor page.
-  await expect(page).toHaveURL(/\/s\/garden-at-dusk/);
+    await page.getByRole("button", { name: /create story/i }).click();
+
+    // Redirect to the story editor. Anchor the URL with $ so a collision
+    // suffix doesn't match.
+    await expect(page).toHaveURL(/\/s\/garden-at-dusk$/);
+
+    // Editor shows at least one chapter with a recognizable title from the fixture.
+    // Chapter 2's body starts with "Chapter 2: Morning" (fixture content).
+    await expect(page.getByText(/Chapter 2: Morning/i).first()).toBeVisible();
+  });
 });
 ```
 
