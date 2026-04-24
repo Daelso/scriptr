@@ -152,17 +152,17 @@ export function AddChaptersFromNovelAIDialog({
     <div className="fixed inset-0 z-50 bg-black/50 flex items-stretch justify-center">
       <div className="bg-background border border-border rounded w-full max-w-[1400px] m-4 flex flex-col">
         <div className="border-b border-border px-4 py-2 text-sm font-semibold">
-          Import chapters from .story
+          Import chapters from NovelAI
         </div>
 
         {stage.kind === "idle" && (
           <div className="p-8 flex-1 flex flex-col items-center justify-center gap-3">
             <p className="text-sm text-muted-foreground">
-              Choose a NovelAI <code>.story</code> file to append as chapters.
+              Choose a NovelAI export (<code>.txt</code> or <code>.story</code>) to append as chapters.
             </p>
             <input
               type="file"
-              accept=".story,application/json"
+              accept=".txt,.story,application/json,text/plain"
               onChange={(e) => {
                 const f = e.target.files?.[0];
                 if (f) void onFile(f);
@@ -191,7 +191,7 @@ export function AddChaptersFromNovelAIDialog({
           <div className="grid grid-cols-[1fr_1fr] flex-1 min-h-0">
             <div className="p-4 border-r border-border flex flex-col gap-3 overflow-auto">
               <div className="border border-border rounded bg-muted/30 p-2 text-xs text-muted-foreground">
-                Description, lorebook, and tags from this .story file are ignored in this mode.
+                Description, lorebook, and tags from this file are ignored in this mode.
                 Use <em>Import from NovelAI</em> on the home page to import everything.
               </div>
               <ChapterEditList
