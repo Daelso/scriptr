@@ -1,6 +1,8 @@
+import { Decoder } from "@msgpack/msgpack";
 import type { ParsedStory, LorebookEntry } from "@/lib/novelai/types";
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+const MIN_PROSE_LEN = 60;
 
 export class NovelAIDecodeError extends Error {
   userMessage: string;
@@ -60,7 +62,15 @@ export async function decodeNovelAIStory(buf: Buffer): Promise<ParsedStory> {
   const contextBlocks = extractContextBlocks(env.content?.context);
   const lorebookEntries = extractLorebookEntries(env.content?.lorebook);
 
-  // TODO (next task): decode content.document (msgpack), extract prose.
+  const filterSet = buildFilterSet(description, textPreview, contextBlocks, lorebookEntries);
+  const docField = env.content?.document;
+  const prose = extractProse(docField, filterSet);
+  if (!prose && typeof docField === "string" && docField.length > 0) {
+    throw new NovelAIDecodeError(
+      "No AI-generated prose found — did you import before running any AI turns?"
+    );
+  }
+
   return {
     title,
     description,
@@ -68,8 +78,114 @@ export async function decodeNovelAIStory(buf: Buffer): Promise<ParsedStory> {
     textPreview,
     contextBlocks,
     lorebookEntries,
-    prose: "",
+    prose,
   };
+}
+
+function buildFilterSet(
+  description: string,
+  textPreview: string,
+  contextBlocks: string[],
+  lorebookEntries: LorebookEntry[]
+): Set<string> {
+  const set = new Set<string>();
+  const add = (s: string | undefined) => {
+    if (!s) return;
+    const t = s.trim();
+    if (t) set.add(t);
+  };
+  add(description);
+  add(textPreview);
+  for (const c of contextBlocks) add(c);
+  for (const e of lorebookEntries) add(e.text);
+  return set;
+}
+
+// Permissive map-key converter for real NovelAI files: their CRDT maps can
+// have non-string/number keys (arrays, ext types). The default converter
+// throws on those, so we stringify anything unusual. Only the VALUES matter
+// for prose extraction — keys are walked-through but we never interpret them.
+function permissiveMapKey(k: unknown): string | number {
+  if (typeof k === "string") return k;
+  if (typeof k === "number") return k;
+  try {
+    return JSON.stringify(k);
+  } catch {
+    return String(k);
+  }
+}
+
+function extractProse(doc: unknown, filter: Set<string>): string {
+  if (typeof doc !== "string" || doc.length === 0) return "";
+
+  let bytes: Uint8Array;
+  try {
+    bytes = Uint8Array.from(Buffer.from(doc, "base64"));
+  } catch {
+    throw new NovelAIDecodeError(
+      "Could not read the document inside this .story file."
+    );
+  }
+  if (bytes.byteLength === 0) {
+    throw new NovelAIDecodeError(
+      "Could not read the document inside this .story file."
+    );
+  }
+
+  let objects: unknown[];
+  try {
+    const decoder = new Decoder({ mapKeyConverter: permissiveMapKey });
+    objects = [...decoder.decodeMulti(bytes)];
+  } catch {
+    throw new NovelAIDecodeError(
+      "Could not read the document inside this .story file."
+    );
+  }
+
+  // Walk every top-level object depth-first, collecting every string of
+  // length >= MIN_PROSE_LEN (whether it appears as a value or as a dict
+  // key). Dedup while preserving order of first encounter.
+  const seen = new Set<string>();
+  const segments: string[] = [];
+
+  const visit = (node: unknown): void => {
+    if (typeof node === "string") {
+      const trimmed = node.trim();
+      if (
+        trimmed.length >= MIN_PROSE_LEN &&
+        !seen.has(trimmed) &&
+        !filter.has(trimmed)
+      ) {
+        seen.add(trimmed);
+        segments.push(trimmed);
+      }
+      return;
+    }
+    if (Array.isArray(node)) {
+      for (const v of node) visit(v);
+      return;
+    }
+    // v3.1.3 of @msgpack/msgpack never returns Map, but keep this branch as
+    // defensive future-proofing in case that changes or a custom codec is added.
+    if (node instanceof Map) {
+      for (const [k, v] of node) {
+        visit(k);
+        visit(v);
+      }
+      return;
+    }
+    if (node && typeof node === "object") {
+      for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+        visit(k);
+        visit(v);
+      }
+    }
+    // primitives (number, boolean, null, undefined, ext-tagged opaque objects) — skip
+  };
+
+  for (const obj of objects) visit(obj);
+
+  return segments.join("\n\n");
 }
 
 function extractContextBlocks(raw: unknown): string[] {

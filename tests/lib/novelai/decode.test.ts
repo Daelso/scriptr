@@ -91,3 +91,63 @@ describe("decodeNovelAIStory — context and lorebook", () => {
     expect(parsed.lorebookEntries).toEqual([]);
   });
 });
+
+describe("decodeNovelAIStory — prose extraction", () => {
+  it("extracts long prose segments from the fixture", async () => {
+    const buf = await readFile(FIXTURE_PATH);
+    const parsed = await decodeNovelAIStory(buf);
+    expect(parsed.prose).toContain("The garden at dusk");
+    expect(parsed.prose).toContain("Chapter 2: Morning");
+  });
+
+  it("filters out strings that duplicate metadata.description", async () => {
+    const buf = await readFile(FIXTURE_PATH);
+    const parsed = await decodeNovelAIStory(buf);
+    // The fixture stuffs "A short two-chapter synthetic fixture for tests."
+    // into the CRDT as a long dict key. Decoder must drop it because it
+    // exactly matches metadata.description.
+    expect(parsed.prose).not.toContain(
+      "A short two-chapter synthetic fixture for tests."
+    );
+  });
+
+  it("preserves paragraph breaks within prose segments", async () => {
+    const buf = await readFile(FIXTURE_PATH);
+    const parsed = await decodeNovelAIStory(buf);
+    // Chapter 1 in the fixture has an internal paragraph break ("\n\n").
+    expect(parsed.prose).toMatch(/silver[^]*\n\n[^]*She set her mug/);
+  });
+
+  it("throws a user-friendly error when base64/msgpack decode fails", async () => {
+    const corrupt = Buffer.from(
+      JSON.stringify({
+        storyContainerVersion: 1,
+        metadata: { title: "X" },
+        content: { document: "not-actually-valid-base64-msgpack-bytes" },
+      })
+    );
+    await expect(decodeNovelAIStory(corrupt)).rejects.toMatchObject({
+      userMessage: "Could not read the document inside this .story file.",
+    });
+  });
+
+  it("throws 'no AI prose' when the document has no long strings", async () => {
+    const { encode } = await import("@msgpack/msgpack");
+    // A valid msgpack document with no strings ≥ MIN_PROSE_LEN.
+    const m = new Map();
+    m.set(1, "short"); // below threshold
+    m.set(2, 42);
+    const doc = Buffer.from(encode(m)).toString("base64");
+    const env = Buffer.from(
+      JSON.stringify({
+        storyContainerVersion: 1,
+        metadata: { title: "X" },
+        content: { document: doc },
+      })
+    );
+    await expect(decodeNovelAIStory(env)).rejects.toMatchObject({
+      userMessage:
+        "No AI-generated prose found — did you import before running any AI turns?",
+    });
+  });
+});
