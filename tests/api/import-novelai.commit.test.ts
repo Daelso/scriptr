@@ -179,4 +179,39 @@ describe("POST /api/import/novelai/commit — existing-story mode", () => {
     const body = await res.json();
     expect(body.error).toBe("Story not found.");
   });
+
+  it("runs cleanPaste: scene breaks within a body split into multiple sections", async () => {
+    const { createStory } = await import("@/lib/storage/stories");
+    const story = await createStory(tmp, { title: "Scenes" });
+
+    const body = [
+      "Opening paragraph of scene one.",
+      "",
+      "Second paragraph of scene one.",
+      "",
+      "***",
+      "",
+      "Opening paragraph of scene two.",
+      "",
+      "Second paragraph of scene two.",
+    ].join("\n");
+
+    const { POST } = await import("@/app/api/import/novelai/commit/route");
+    const res = await POST(
+      makeJsonReq("http://localhost/api/import/novelai/commit", {
+        target: "existing-story",
+        slug: story.slug,
+        chapters: [{ title: "Two Scenes", body }],
+      })
+    );
+    expect(res.status).toBe(200);
+
+    const all = await listChapters(tmp, story.slug);
+    const ch = all[all.length - 1];
+    expect(ch.sections.length).toBe(2);
+    expect(ch.sections[0].content).toContain("scene one");
+    expect(ch.sections[0].content).not.toContain("scene two");
+    expect(ch.sections[1].content).toContain("scene two");
+    expect(ch.sections[1].content).not.toContain("scene one");
+  });
 });

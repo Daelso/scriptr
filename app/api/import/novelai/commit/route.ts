@@ -4,8 +4,30 @@ import { effectiveDataDir } from "@/lib/config";
 import { createStory, updateStory, deleteStory, getStory } from "@/lib/storage/stories";
 import { createImportedChapter } from "@/lib/storage/chapters";
 import { saveBible, validateBible } from "@/lib/storage/bible";
+import { cleanPaste, type CleanupOptions } from "@/lib/publish/cleanup";
 import type { Bible } from "@/lib/types";
 import type { ProposedChapter } from "@/lib/novelai/types";
+
+// Same defaults the paste importer (ImportChapterDialog) uses. `stripChatCruft`
+// is safe for NovelAI text because its heuristic only fires on obvious
+// "Sure, here's..." chat preambles that don't appear in narrative prose.
+const CLEANUP_OPTIONS: CleanupOptions = {
+  normalizeLineEndings: true,
+  stripChatCruft: true,
+  trimTrailingWhitespace: true,
+  collapseInternalSpaces: true,
+  normalizeQuotes: true,
+  normalizeSceneBreaks: true,
+  normalizeDashes: true,
+  preserveMarkdownEmphasis: true,
+  collapseBlankLines: true,
+  splitIntoSections: true,
+};
+
+function chapterBodyToSections(body: string): string[] {
+  const { sections } = cleanPaste(body, CLEANUP_OPTIONS);
+  return sections.length > 0 ? sections : [body.trim()];
+}
 
 type CommitRequest =
   | {
@@ -61,7 +83,7 @@ async function handleNewStory(
       const title = (ch.title || "Untitled").trim() || "Untitled";
       const created = await createImportedChapter(dataDir, story.slug, {
         title,
-        sectionContents: [ch.body],
+        sectionContents: chapterBodyToSections(ch.body),
       });
       chapterIds.push(created.id);
     }
@@ -97,7 +119,7 @@ async function handleExistingStory(
       const title = (ch.title || "Untitled").trim() || "Untitled";
       const created = await createImportedChapter(dataDir, body.slug, {
         title,
-        sectionContents: [ch.body],
+        sectionContents: chapterBodyToSections(ch.body),
       });
       chapterIds.push(created.id);
     }

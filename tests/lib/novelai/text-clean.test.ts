@@ -132,7 +132,40 @@ describe("cleanNovelAIText", () => {
     expect(out.prose).toContain("Chapter 2: Morning");
   });
 
-  it("collapses runs of 3+ blank lines to 2", () => {
+  it("normalizes paragraphs so each authored line becomes its own paragraph (blank-line separated)", () => {
+    // NovelAI emits paragraphs with single `\n` separators. Scriptr's editor
+    // needs `\n\n` (a blank line) to render them as distinct paragraphs —
+    // otherwise they render as one giant run-on paragraph.
+    const raw = [
+      "[1/1]",
+      "First paragraph of prose.",
+      "Second paragraph after a single newline.",
+      "Third paragraph also single-newline separated.",
+    ].join("\n");
+
+    const out = cleanNovelAIText(raw);
+
+    expect(out.prose).toBe(
+      "First paragraph of prose.\n\nSecond paragraph after a single newline.\n\nThird paragraph also single-newline separated."
+    );
+  });
+
+  it("is idempotent when paragraphs are already `\\n\\n`-separated", () => {
+    const raw = [
+      "[1/1]",
+      "Para one.",
+      "",
+      "Para two.",
+      "",
+      "Para three.",
+    ].join("\n");
+
+    const out = cleanNovelAIText(raw);
+
+    expect(out.prose).toBe("Para one.\n\nPara two.\n\nPara three.");
+  });
+
+  it("collapses runs of 3+ blank lines and never produces 4+ consecutive newlines", () => {
     const raw = [
       "[1/1]",
       "Line one.",
@@ -149,8 +182,7 @@ describe("cleanNovelAIText", () => {
 
     const out = cleanNovelAIText(raw);
 
-    // No triple-blank-line gap should remain.
-    expect(out.prose).not.toMatch(/\n\n\n\n/);
+    expect(out.prose).not.toMatch(/\n\n\n/);
     expect(out.prose).toContain("Line one.");
     expect(out.prose).toContain("Line two.");
     expect(out.prose).toContain("Line three.");
