@@ -23,6 +23,7 @@ import {
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { NewStoryDialog } from "@/components/library/NewStoryDialog";
+import { NewStoryFromNovelAIDialog } from "@/components/import/NewStoryFromNovelAIDialog";
 import type { Story } from "@/lib/types";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -146,6 +147,7 @@ export function LibraryList() {
   const { data, isLoading, mutate } = useSWR<Story[]>("/api/stories", fetcher);
 
   const [newStoryOpen, setNewStoryOpen] = useState(false);
+  const [novelaiOpen, setNovelaiOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Story | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -182,6 +184,9 @@ export function LibraryList() {
             <p className="text-sm font-medium">No stories yet. Create one to get going.</p>
           </div>
           <Button onClick={() => setNewStoryOpen(true)}>New story</Button>
+          <Button variant="outline" onClick={() => setNovelaiOpen(true)}>
+            Import from NovelAI
+          </Button>
         </div>
       ) : (
         /* ── Populated state ───────────────────────────────────────────── */
@@ -192,6 +197,9 @@ export function LibraryList() {
             </h2>
             <Button size="sm" onClick={() => setNewStoryOpen(true)}>
               New story
+            </Button>
+            <Button variant="outline" onClick={() => setNovelaiOpen(true)}>
+              Import from NovelAI
             </Button>
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -211,6 +219,9 @@ export function LibraryList() {
         open={newStoryOpen}
         onOpenChange={setNewStoryOpen}
       />
+
+      {/* ── Import from NovelAI dialog ────────────────────────────────── */}
+      <NewStoryFromNovelAIDialog open={novelaiOpen} onOpenChange={setNovelaiOpen} />
 
       {/* ── Delete confirm dialog ─────────────────────────────────────── */}
       <DeleteConfirmDialog
