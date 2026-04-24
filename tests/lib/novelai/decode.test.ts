@@ -50,3 +50,44 @@ describe("decodeNovelAIStory — outer envelope", () => {
     expect(parsed.tags).toEqual(["fixture", "test"]);
   });
 });
+
+describe("decodeNovelAIStory — context and lorebook", () => {
+  it("extracts context blocks from the fixture", async () => {
+    const buf = await readFile(FIXTURE_PATH);
+    const parsed = await decodeNovelAIStory(buf);
+    expect(parsed.contextBlocks).toHaveLength(2);
+    expect(parsed.contextBlocks[0]).toContain("Mira: mid-30s");
+    expect(parsed.contextBlocks[1]).toContain("spare, image-forward");
+  });
+
+  it("extracts lorebook entries from the fixture", async () => {
+    const buf = await readFile(FIXTURE_PATH);
+    const parsed = await decodeNovelAIStory(buf);
+    expect(parsed.lorebookEntries).toHaveLength(2);
+    expect(parsed.lorebookEntries[0]).toMatchObject({
+      displayName: "Mira",
+      category: "character",
+    });
+    expect(parsed.lorebookEntries[0].text).toContain("gardener");
+    expect(parsed.lorebookEntries[0].keys).toEqual(["Mira"]);
+
+    expect(parsed.lorebookEntries[1]).toMatchObject({
+      displayName: "The Walled Garden",
+      category: "location",
+    });
+    expect(parsed.lorebookEntries[1].keys).toEqual(["garden", "walled garden"]);
+  });
+
+  it("handles missing context/lorebook gracefully", async () => {
+    const minimal = Buffer.from(
+      JSON.stringify({
+        storyContainerVersion: 1,
+        metadata: { title: "X" },
+        content: {},
+      })
+    );
+    const parsed = await decodeNovelAIStory(minimal);
+    expect(parsed.contextBlocks).toEqual([]);
+    expect(parsed.lorebookEntries).toEqual([]);
+  });
+});
