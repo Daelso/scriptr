@@ -2130,46 +2130,6 @@ describe("POST /api/import/novelai/commit — new-story mode", () => {
     expect(chapters[0].source).toBe("imported");
   });
 
-  it("rolls back the story dir on mid-write failure", async () => {
-    // Force a chapter write to fail by passing an impossibly large chapter body
-    // — or simpler: stub createImportedChapter via module mock. Using a mock
-    // is the cleaner path; we reset the module registry after.
-    const { POST } = await import("@/app/api/import/novelai/commit/route");
-    const chaptersMod = await import("@/lib/storage/chapters");
-    const original = chaptersMod.createImportedChapter;
-    // Replace with a throwing version.
-    (chaptersMod as unknown as { createImportedChapter: unknown }).createImportedChapter =
-      async () => {
-        throw new Error("disk full (simulated)");
-      };
-
-    try {
-      const res = await POST(
-        makeJsonReq("http://localhost/api/import/novelai/commit", {
-          target: "new-story",
-          story: { title: "Will Roll Back", description: "", keywords: [] },
-          bible: {
-            characters: [],
-            setting: "",
-            pov: "third-limited",
-            tone: "",
-            styleNotes: "",
-            nsfwPreferences: "",
-          },
-          chapters: [{ title: "one", body: "body" }],
-        })
-      );
-      expect(res.status).toBe(500);
-
-      // The partially-created story dir must have been removed.
-      const { existsSync } = await import("node:fs");
-      expect(existsSync(join(tmp, "stories", "will-roll-back"))).toBe(false);
-    } finally {
-      (chaptersMod as unknown as { createImportedChapter: unknown }).createImportedChapter =
-        original;
-    }
-  });
-
   it("auto-suffixes the slug on collision", async () => {
     const { POST } = await import("@/app/api/import/novelai/commit/route");
     const first = await POST(
@@ -2325,6 +2285,97 @@ Expected: PASS — both new-story tests green. (The "existing-story" test will a
 cd /home/chase/projects/scriptr && git add app/api/import/novelai/commit/route.ts tests/api/import-novelai.commit.test.ts && git commit -m "feat(api): POST /api/import/novelai/commit — new-story mode"
 ```
 
+- [ ] **Step 6: Add a rollback test in a separate file**
+
+A test that proves the new-story rollback branch must mock `createImportedChapter` to throw. Because Vitest module namespace bindings are read-only under ESM, the mock **must** be installed via `vi.mock` at module top, not by assigning the import. And because `vi.mock` is hoisted and affects all tests in the file, this rollback test lives in its **own file** so it can't contaminate the happy-path and collision tests in `import-novelai.commit.test.ts`.
+
+Create `/home/chase/projects/scriptr/tests/api/import-novelai.commit-rollback.test.ts`:
+
+```ts
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { NextRequest } from "next/server";
+
+// Mock createImportedChapter (the unit that fails mid-flight) to throw.
+// Leave the rest of @/lib/storage/chapters as-is so nothing else breaks.
+vi.mock("@/lib/storage/chapters", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/storage/chapters")>(
+    "@/lib/storage/chapters"
+  );
+  return {
+    ...actual,
+    createImportedChapter: vi.fn(async () => {
+      throw new Error("disk full (simulated)");
+    }),
+  };
+});
+
+function makeJsonReq(url: string, body: unknown): NextRequest {
+  return new Request(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }) as unknown as NextRequest;
+}
+
+describe("commit route — mid-write rollback", () => {
+  let tmp: string;
+  const originalEnv = process.env;
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), "scriptr-commit-rollback-"));
+    process.env = { ...originalEnv, SCRIPTR_DATA_DIR: tmp };
+  });
+  afterEach(async () => {
+    process.env = originalEnv;
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  it("unlinks the story dir when a chapter write fails mid-flight", async () => {
+    const { POST } = await import("@/app/api/import/novelai/commit/route");
+    const res = await POST(
+      makeJsonReq("http://localhost/api/import/novelai/commit", {
+        target: "new-story",
+        story: { title: "Will Roll Back", description: "", keywords: [] },
+        bible: {
+          characters: [],
+          setting: "",
+          pov: "third-limited",
+          tone: "",
+          styleNotes: "",
+          nsfwPreferences: "",
+        },
+        chapters: [{ title: "one", body: "body" }],
+      })
+    );
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("disk full (simulated)");
+
+    // Rollback deleted the partially-created story dir.
+    expect(existsSync(join(tmp, "stories", "will-roll-back"))).toBe(false);
+  });
+});
+```
+
+- [ ] **Step 7: Run the rollback test**
+
+Run:
+```bash
+cd /home/chase/projects/scriptr && npx vitest run tests/api/import-novelai.commit-rollback.test.ts
+```
+
+Expected: PASS. If it fails with "disk full" leaking through but the story dir still exists, the `deleteStory(...).catch(() => {})` in the route isn't reachable — investigate the rollback branch in `handleNewStory`.
+
+- [ ] **Step 8: Commit**
+
+```bash
+cd /home/chase/projects/scriptr && git add tests/api/import-novelai.commit-rollback.test.ts && git commit -m "test(api): commit route rolls back story dir on mid-write failure"
+```
+
 ---
 
 ### Task 2.4: commit route — existing-story mode
@@ -2477,7 +2528,7 @@ Read [tests/privacy/no-external-egress.test.ts](../../../tests/privacy/no-extern
 
 - [ ] **Step 2: Write the failing additions**
 
-In the main `it("exercising every non-generate route records zero fetches", ...)` block, **insert the three new exercises immediately BEFORE the `DELETE /api/stories/[slug]` block at approximately line 347**. Ordering matters: the `existing-story` commit needs the seeded `slug` to still exist — if we put these after the DELETE, the 404 guard fires and the test fails. Insert:
+In the main `it("exercising every non-generate route records zero fetches", ...)` block, find the two DELETE exercises near the bottom (the chapter-level `DELETE /api/stories/[slug]/chapters/[id]` at approximately line 347 and the story-level `DELETE /api/stories/[slug]` at approximately line 360). **Insert the three new exercises immediately BEFORE BOTH DELETE blocks** — i.e. above line 347. Ordering is load-bearing: the `existing-story` commit needs the seeded `slug` to still exist. If the new exercises go between the two DELETEs or after the story DELETE, the 404 guard fires and the test fails. Insert:
 
 ```ts
     // ── POST /api/import/novelai/parse ─────────────────────────────────────
