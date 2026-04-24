@@ -1,129 +1,163 @@
 import { describe, it, expect } from "vitest";
-import { splitProse } from "@/lib/novelai/split";
+import { splitProseIntoStories } from "@/lib/novelai/split";
 
-describe("splitProse — //// marker", () => {
-  it("returns one chapter when no markers are present", () => {
-    const r = splitProse("Just one block of prose.\n\nTwo paragraphs.");
-    expect(r.splitSource).toBe("none");
-    expect(r.chapters).toHaveLength(1);
-    expect(r.chapters[0].body).toContain("Just one block");
-    expect(r.chapters[0].body).toContain("Two paragraphs");
+describe("splitProseIntoStories — story-level //// markers", () => {
+  it("returns one story when no //// markers are present", () => {
+    const r = splitProseIntoStories("Just one block of prose.\n\nTwo paragraphs.");
+    expect(r).toHaveLength(1);
+    expect(r[0].splitSource).toBe("none");
+    expect(r[0].chapters).toHaveLength(1);
+    expect(r[0].chapters[0].body).toContain("Just one block");
+    expect(r[0].chapters[0].body).toContain("Two paragraphs");
   });
 
-  it("splits on a //// line", () => {
-    const prose = "first chapter body\n\n////\n\nsecond chapter body";
-    const r = splitProse(prose);
-    expect(r.splitSource).toBe("marker");
-    expect(r.chapters).toHaveLength(2);
-    expect(r.chapters[0].body).toBe("first chapter body");
-    expect(r.chapters[1].body).toBe("second chapter body");
+  it("splits on a //// line into two stories", () => {
+    const prose = "first story body\n\n////\n\nsecond story body";
+    const r = splitProseIntoStories(prose);
+    expect(r).toHaveLength(2);
+    expect(r[0].chapters[0].body).toBe("first story body");
+    expect(r[1].chapters[0].body).toBe("second story body");
   });
 
   it("consumes the marker line (does not keep it in output)", () => {
-    const r = splitProse("a\n\n////\n\nb");
-    expect(r.chapters[0].body).not.toContain("////");
-    expect(r.chapters[1].body).not.toContain("////");
+    const r = splitProseIntoStories("a\n\n////\n\nb");
+    expect(r[0].chapters[0].body).not.toContain("////");
+    expect(r[1].chapters[0].body).not.toContain("////");
   });
 
-  it("splits on multiple //// markers", () => {
-    const r = splitProse("one\n\n////\n\ntwo\n\n////\n\nthree");
-    expect(r.chapters).toHaveLength(3);
-    expect(r.chapters.map((c) => c.body)).toEqual(["one", "two", "three"]);
+  it("splits into three stories on multiple //// markers", () => {
+    const r = splitProseIntoStories("one\n\n////\n\ntwo\n\n////\n\nthree");
+    expect(r).toHaveLength(3);
+    expect(r.map((s) => s.chapters[0].body)).toEqual(["one", "two", "three"]);
   });
 
-  it("accepts 5+ slashes too (// /////)", () => {
-    const r = splitProse("a\n\n//////\n\nb");
-    expect(r.chapters).toHaveLength(2);
+  it("accepts 5+ slashes too (//////)", () => {
+    const r = splitProseIntoStories("a\n\n//////\n\nb");
+    expect(r).toHaveLength(2);
   });
 
-  it("drops empty chapters from leading/trailing markers", () => {
-    const r = splitProse("////\n\na\n\n////\n\nb\n\n////");
-    expect(r.chapters.map((c) => c.body)).toEqual(["a", "b"]);
+  it("drops empty story chunks from leading/trailing markers", () => {
+    const r = splitProseIntoStories("////\n\na\n\n////\n\nb\n\n////");
+    expect(r).toHaveLength(2);
+    expect(r.map((s) => s.chapters[0].body)).toEqual(["a", "b"]);
   });
 
-  it("falls back to single chapter if all chunks end up empty", () => {
-    const r = splitProse("////\n\n////\n\n////");
-    expect(r.chapters).toHaveLength(1);
-    expect(r.chapters[0].body).toBe("");
+  it("returns a single empty story if all chunks end up empty", () => {
+    const r = splitProseIntoStories("////\n\n////\n\n////");
+    expect(r).toHaveLength(1);
+    expect(r[0].chapters).toEqual([{ title: "", body: "" }]);
+  });
+
+  it("returns a single empty story for empty input", () => {
+    const r = splitProseIntoStories("");
+    expect(r).toHaveLength(1);
+    expect(r[0].chapters).toEqual([{ title: "", body: "" }]);
   });
 });
 
-describe("splitProse — chapter headings", () => {
+describe("splitProseIntoStories — chapter headings within a story", () => {
   it("splits on 'Chapter N' headings", () => {
-    const r = splitProse("Chapter 1\n\nfirst\n\nChapter 2\n\nsecond");
-    expect(r.splitSource).toBe("heading");
-    expect(r.chapters).toHaveLength(2);
-    expect(r.chapters[0].title).toBe("");
-    expect(r.chapters[0].body).toBe("first");
-    expect(r.chapters[1].title).toBe("");
-    expect(r.chapters[1].body).toBe("second");
+    const r = splitProseIntoStories(
+      "Chapter 1\n\nfirst\n\nChapter 2\n\nsecond"
+    );
+    expect(r).toHaveLength(1);
+    expect(r[0].splitSource).toBe("heading");
+    expect(r[0].chapters).toHaveLength(2);
+    expect(r[0].chapters[0].title).toBe("");
+    expect(r[0].chapters[0].body).toBe("first");
+    expect(r[0].chapters[1].title).toBe("");
+    expect(r[0].chapters[1].body).toBe("second");
   });
 
   it("captures the title after 'Chapter N:'", () => {
-    const prose = "Chapter 1: The Beginning\n\nopening text\n\nChapter 2: Middle\n\nmore text";
-    const r = splitProse(prose);
-    expect(r.chapters[0].title).toBe("The Beginning");
-    expect(r.chapters[1].title).toBe("Middle");
+    const prose =
+      "Chapter 1: The Beginning\n\nopening text\n\nChapter 2: Middle\n\nmore text";
+    const r = splitProseIntoStories(prose);
+    expect(r[0].chapters[0].title).toBe("The Beginning");
+    expect(r[0].chapters[1].title).toBe("Middle");
   });
 
   it("recognizes roman numerals", () => {
-    const r = splitProse("Chapter I\n\nfirst\n\nChapter II\n\nsecond");
-    expect(r.chapters).toHaveLength(2);
+    const r = splitProseIntoStories(
+      "Chapter I\n\nfirst\n\nChapter II\n\nsecond"
+    );
+    expect(r[0].chapters).toHaveLength(2);
   });
 
   it("is case-insensitive on 'Chapter'", () => {
-    const r = splitProse("CHAPTER 1\n\nfoo\n\nchapter 2\n\nbar");
-    expect(r.chapters).toHaveLength(2);
+    const r = splitProseIntoStories(
+      "CHAPTER 1\n\nfoo\n\nchapter 2\n\nbar"
+    );
+    expect(r[0].chapters).toHaveLength(2);
   });
 
-  it("marker beats heading when both are present (marker has priority)", () => {
-    const prose = "Chapter 1\n\nfirst\n\n////\n\nChapter 2\n\nsecond";
-    const r = splitProse(prose);
-    expect(r.splitSource).toBe("marker");
-    expect(r.chapters).toHaveLength(2);
-    // Chapter 1/2 lines stay in the bodies because marker-splitting runs first
-    // and does not consume heading lines.
-    expect(r.chapters[0].body).toContain("Chapter 1");
-    expect(r.chapters[1].body).toContain("Chapter 2");
-  });
-
-  it("infers title from first sentence when no heading captured", () => {
-    // No chapter heading, single chapter — no inference happens in this
-    // implementation; title stays empty. Title inference only applies when
-    // the split source provides a hint.
-    const r = splitProse("Plain body with no heading at all.");
-    expect(r.chapters[0].title).toBe("");
+  it("splits on a single 'Chapter N: Title' heading (1+ threshold)", () => {
+    const r = splitProseIntoStories("Chapter 1: Alpha\n\nbody of one");
+    expect(r[0].splitSource).toBe("heading");
+    expect(r[0].chapters).toHaveLength(1);
+    expect(r[0].chapters[0].title).toBe("Alpha");
+    expect(r[0].chapters[0].body).toBe("body of one");
   });
 });
 
-describe("splitProse — horizontal-rule fallback", () => {
-  it("ignores 1-2 horizontal rules (likely scene breaks, not chapter breaks)", () => {
+describe("splitProseIntoStories — horizontal rules within a story", () => {
+  it("splits on a single *** line as a chapter break (no 3+ threshold)", () => {
+    const prose = "a\n\n***\n\nb";
+    const r = splitProseIntoStories(prose);
+    expect(r).toHaveLength(1);
+    expect(r[0].splitSource).toBe("scenebreak-fallback");
+    expect(r[0].chapters).toHaveLength(2);
+    expect(r[0].chapters.map((c) => c.body)).toEqual(["a", "b"]);
+  });
+
+  it("splits on a single --- line as a chapter break", () => {
+    const prose = "a\n\n---\n\nb";
+    const r = splitProseIntoStories(prose);
+    expect(r[0].splitSource).toBe("scenebreak-fallback");
+    expect(r[0].chapters).toHaveLength(2);
+  });
+
+  it("splits on a single ___ line as a chapter break", () => {
+    const prose = "a\n\n___\n\nb";
+    const r = splitProseIntoStories(prose);
+    expect(r[0].splitSource).toBe("scenebreak-fallback");
+    expect(r[0].chapters).toHaveLength(2);
+  });
+
+  it("splits on multiple rule lines too", () => {
+    const prose = "a\n\n***\n\nb\n\n---\n\nc\n\n___\n\nd";
+    const r = splitProseIntoStories(prose);
+    expect(r[0].chapters).toHaveLength(4);
+    expect(r[0].chapters.map((c) => c.body)).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("also accepts '* * *' spaced rules", () => {
     const prose = "a\n\n* * *\n\nb";
-    const r = splitProse(prose);
-    expect(r.splitSource).toBe("none");
-    expect(r.chapters).toHaveLength(1);
-    expect(r.chapters[0].body).toContain("* * *");
+    const r = splitProseIntoStories(prose);
+    expect(r[0].chapters).toHaveLength(2);
+  });
+});
+
+describe("splitProseIntoStories — priority ordering", () => {
+  it("stories split first on ////, then chapters within each story", () => {
+    const prose =
+      "story one intro\n\nChapter 1\n\nfirst\n\nChapter 2\n\nsecond\n\n////\n\nstory two intro\n\n***\n\nstory two part two";
+    const r = splitProseIntoStories(prose);
+    expect(r).toHaveLength(2);
+    // Story 1 uses chapter headings
+    expect(r[0].splitSource).toBe("heading");
+    expect(r[0].chapters).toHaveLength(3); // "story one intro" + 2 headings
+    // Story 2 uses rule fallback
+    expect(r[1].splitSource).toBe("scenebreak-fallback");
+    expect(r[1].chapters).toHaveLength(2);
   });
 
-  it("splits on 3+ horizontal rules as chapter breaks", () => {
-    const prose = "a\n\n***\n\nb\n\n***\n\nc\n\n***\n\nd";
-    const r = splitProse(prose);
-    expect(r.splitSource).toBe("scenebreak-fallback");
-    expect(r.chapters).toHaveLength(4);
-    expect(r.chapters.map((c) => c.body)).toEqual(["a", "b", "c", "d"]);
-  });
-
-  it("also accepts --- as rule lines", () => {
-    const prose = "a\n\n---\n\nb\n\n---\n\nc\n\n---\n\nd";
-    const r = splitProse(prose);
-    expect(r.splitSource).toBe("scenebreak-fallback");
-    expect(r.chapters).toHaveLength(4);
-  });
-
-  it("also accepts ___ as rule lines", () => {
-    const prose = "a\n\n___\n\nb\n\n___\n\nc\n\n___\n\nd";
-    const r = splitProse(prose);
-    expect(r.splitSource).toBe("scenebreak-fallback");
-    expect(r.chapters).toHaveLength(4);
+  it("Chapter heading beats a horizontal rule within a single story", () => {
+    const prose = "Chapter 1\n\nbody one\n\n***\n\nstill body one\n\nChapter 2\n\nbody two";
+    const r = splitProseIntoStories(prose);
+    expect(r[0].splitSource).toBe("heading");
+    expect(r[0].chapters).toHaveLength(2);
+    // The *** remains inside the first chapter body (as a scene break).
+    expect(r[0].chapters[0].body).toContain("***");
   });
 });

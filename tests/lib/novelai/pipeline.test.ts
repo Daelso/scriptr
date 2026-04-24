@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { decodeNovelAIStory } from "@/lib/novelai/decode";
-import { splitProse } from "@/lib/novelai/split";
+import { splitProseIntoStories } from "@/lib/novelai/split";
 import { mapToProposedWrite } from "@/lib/novelai/map";
 
 const FIXTURE = join(
@@ -26,14 +26,16 @@ describe("novelai pipeline smoke", () => {
       "A short two-chapter synthetic fixture for tests."
     );
 
-    const split = splitProse(parsed.prose);
-    expect(split.splitSource).toBe("marker"); // fixture contains ////
-    expect(split.chapters.length).toBeGreaterThanOrEqual(2);
-    // Neither chapter body should contain metadata-leaked content.
-    for (const ch of split.chapters) {
-      expect(ch.body).not.toContain(
-        "A short two-chapter synthetic fixture for tests."
-      );
+    // The `////` in the fixture is a story-split marker → two separate
+    // stories, each typically a single chapter.
+    const stories = splitProseIntoStories(parsed.prose);
+    expect(stories.length).toBeGreaterThanOrEqual(2);
+    for (const story of stories) {
+      for (const ch of story.chapters) {
+        expect(ch.body).not.toContain(
+          "A short two-chapter synthetic fixture for tests."
+        );
+      }
     }
 
     const write = mapToProposedWrite(parsed);
