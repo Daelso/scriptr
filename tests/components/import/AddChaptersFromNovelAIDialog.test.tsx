@@ -45,7 +45,16 @@ function setFileOnInput(input: HTMLInputElement, file: File) {
   });
 }
 
-function fakeParseResp() {
+const EMPTY_BIBLE = {
+  characters: [],
+  setting: "",
+  pov: "third-limited",
+  tone: "",
+  styleNotes: "",
+  nsfwPreferences: "",
+};
+
+function fakeSingleStoryResp() {
   return {
     ok: true,
     data: {
@@ -56,26 +65,76 @@ function fakeParseResp() {
         textPreview: "",
         contextBlocks: [],
         lorebookEntries: [],
-        prose: "a\n\n////\n\nb",
+        prose: "a\n\n***\n\nb",
       },
-      split: {
-        chapters: [
-          { title: "A", body: "a" },
-          { title: "B", body: "b" },
-        ],
-        splitSource: "marker",
-      },
-      proposed: {
-        story: { title: "Ignored Title", description: "", keywords: ["ignored"] },
-        bible: {
-          characters: [],
-          setting: "",
-          pov: "third-limited",
-          tone: "",
-          styleNotes: "",
-          nsfwPreferences: "",
+      stories: [
+        {
+          split: {
+            chapters: [
+              { title: "A", body: "a" },
+              { title: "B", body: "b" },
+            ],
+            splitSource: "scenebreak-fallback",
+          },
+          proposed: {
+            story: { title: "Ignored Title", description: "", keywords: ["ignored"] },
+            bible: EMPTY_BIBLE,
+          },
         },
+      ],
+    },
+  };
+}
+
+function fakeMultiStoryResp() {
+  return {
+    ok: true,
+    data: {
+      parsed: {
+        title: "Ignored Title",
+        description: "",
+        tags: ["ignored"],
+        textPreview: "",
+        contextBlocks: [],
+        lorebookEntries: [],
+        prose: "a\n\n////\n\nb\n\n////\n\nc",
       },
+      stories: [
+        {
+          split: {
+            chapters: [{ title: "A", body: "a" }],
+            splitSource: "none",
+          },
+          proposed: {
+            story: {
+              title: "Ignored - Part 1",
+              description: "",
+              keywords: ["ignored"],
+            },
+            bible: EMPTY_BIBLE,
+          },
+        },
+        {
+          split: {
+            chapters: [{ title: "B", body: "b" }],
+            splitSource: "none",
+          },
+          proposed: {
+            story: { title: "Ignored - Part 2", description: "", keywords: [] },
+            bible: EMPTY_BIBLE,
+          },
+        },
+        {
+          split: {
+            chapters: [{ title: "C", body: "c" }],
+            splitSource: "none",
+          },
+          proposed: {
+            story: { title: "Ignored - Part 3", description: "", keywords: [] },
+            bible: EMPTY_BIBLE,
+          },
+        },
+      ],
     },
   };
 }
@@ -91,7 +150,7 @@ describe("AddChaptersFromNovelAIDialog", () => {
 
   it("shows the discarded-data banner and recap checkbox in the preview", async () => {
     global.fetch = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify(fakeParseResp()), { status: 200 })
+      new Response(JSON.stringify(fakeSingleStoryResp()), { status: 200 })
     ) as unknown as typeof fetch;
 
     const onImported = vi.fn();
@@ -110,6 +169,8 @@ describe("AddChaptersFromNovelAIDialog", () => {
     await flush();
 
     expect(container.textContent ?? "").toMatch(/ignored in this mode/i);
+    // No multi-story banner when only one story was detected.
+    expect(container.querySelector('[data-testid="multi-story-banner"]')).toBeNull();
 
     // Find the recap checkbox. It has accessible text "Generate recap via Grok".
     const allLabels = Array.from(container.querySelectorAll("label"));
@@ -121,12 +182,43 @@ describe("AddChaptersFromNovelAIDialog", () => {
     unmount();
   });
 
+  it("shows the multi-story banner and flattens chapters when input has //// markers", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(fakeMultiStoryResp()), { status: 200 })
+    ) as unknown as typeof fetch;
+
+    const { container, unmount } = mount(
+      <AddChaptersFromNovelAIDialog
+        slug="host-story"
+        open
+        onOpenChange={() => {}}
+        onImported={() => {}}
+      />
+    );
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    setFileOnInput(fileInput, new File([new Uint8Array([1])], "x.story"));
+
+    await flush();
+    await flush();
+
+    const banner = container.querySelector('[data-testid="multi-story-banner"]');
+    expect(banner).toBeTruthy();
+    expect(banner!.textContent ?? "").toMatch(/3 story-break/);
+
+    // Chapters from all 3 stories are flattened into one list.
+    const buttons = Array.from(container.querySelectorAll("button"));
+    const addBtn = buttons.find((b) => /add 3 chapter/i.test(b.textContent ?? ""));
+    expect(addBtn).toBeTruthy();
+
+    unmount();
+  });
+
   it("fires recap requests sequentially when the checkbox is on", async () => {
     const recapCalls: unknown[] = [];
     const fetchMock = vi.fn().mockImplementation(async (url: unknown, init?: { body?: string }) => {
       const u = String(url);
       if (u.endsWith("/parse")) {
-        return new Response(JSON.stringify(fakeParseResp()), { status: 200 });
+        return new Response(JSON.stringify(fakeSingleStoryResp()), { status: 200 });
       }
       if (u.endsWith("/commit")) {
         return new Response(

@@ -7,7 +7,12 @@ import { ChapterEditList } from "@/components/import/ChapterEditList";
 import { renderChapterPreviewHtml, EPUB_STYLESHEET } from "@/lib/publish/epub-preview";
 import { SafeHtml } from "@/lib/publish/safe-html";
 import type { Chapter } from "@/lib/types";
-import type { ParsedStory, ProposedChapter, SplitResult } from "@/lib/novelai/types";
+import type {
+  ParsedStory,
+  ProposedChapter,
+  SplitSource,
+  StoryProposal,
+} from "@/lib/novelai/types";
 
 type Props = {
   slug: string;
@@ -20,20 +25,39 @@ type ParseOk = {
   ok: true;
   data: {
     parsed: ParsedStory;
-    split: SplitResult;
-    proposed: unknown; // not used in this mode
+    stories: StoryProposal[];
   };
 };
 type ParseErr = { ok: false; error: string };
+
+type PreviewData = {
+  chapters: ProposedChapter[];
+  splitSource: SplitSource;
+  storyCount: number;
+};
 
 type Stage =
   | { kind: "idle" }
   | { kind: "parsing" }
   | { kind: "error"; message: string }
-  | { kind: "preview"; split: SplitResult };
+  | { kind: "preview"; preview: PreviewData };
 
 function countWords(s: string): number {
   return s.trim() ? s.trim().split(/\s+/).length : 0;
+}
+
+/**
+ * Flatten a multi-story parse response into a single flat list of chapters
+ * for the append-to-existing-story flow. When multiple stories are present
+ * we pick a representative `splitSource` (the first non-"none", or just
+ * the first story's).
+ */
+function flattenStories(stories: StoryProposal[]): PreviewData {
+  const chapters = stories.flatMap((s) => s.split.chapters);
+  const firstNonNone = stories.find((s) => s.split.splitSource !== "none");
+  const splitSource: SplitSource =
+    firstNonNone?.split.splitSource ?? stories[0]?.split.splitSource ?? "none";
+  return { chapters, splitSource, storyCount: stories.length };
 }
 
 export function AddChaptersFromNovelAIDialog({
@@ -67,8 +91,9 @@ export function AddChaptersFromNovelAIDialog({
         setStage({ kind: "error", message: body.error });
         return;
       }
-      setStage({ kind: "preview", split: body.data.split });
-      setChapters(body.data.split.chapters);
+      const preview = flattenStories(body.data.stories);
+      setStage({ kind: "preview", preview });
+      setChapters(preview.chapters);
     } catch (err) {
       setStage({
         kind: "error",
@@ -190,13 +215,23 @@ export function AddChaptersFromNovelAIDialog({
         {stage.kind === "preview" && (
           <div className="grid grid-cols-[1fr_1fr] flex-1 min-h-0">
             <div className="p-4 border-r border-border flex flex-col gap-3 overflow-auto">
+              {stage.preview.storyCount > 1 && (
+                <div
+                  className="border border-amber-500/50 rounded bg-amber-500/10 p-2 text-xs"
+                  data-testid="multi-story-banner"
+                >
+                  This file contains {stage.preview.storyCount} story-break (
+                  <code>////</code>) markers. They&apos;ve been ignored — use{" "}
+                  <em>Import from NovelAI</em> on the home page to create separate stories.
+                </div>
+              )}
               <div className="border border-border rounded bg-muted/30 p-2 text-xs text-muted-foreground">
                 Description, lorebook, and tags from this file are ignored in this mode.
                 Use <em>Import from NovelAI</em> on the home page to import everything.
               </div>
               <ChapterEditList
                 chapters={chapters}
-                splitSource={stage.split.splitSource}
+                splitSource={stage.preview.splitSource}
                 onChange={setChapters}
               />
               <label className="flex items-center gap-2 text-xs text-muted-foreground">
