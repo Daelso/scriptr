@@ -119,6 +119,8 @@ Steps:
 
 Key-table resolution: the first array in the decoded stream is a key schema like `["sections", "order", "history", "dirtySections", "step"]`. Integer keys encountered later are indices into it; the decoder keeps a `Map<number,string>` and translates.
 
+**Assumptions to validate during implementation:** The `source=1` / `source=2` semantics (user prompt vs. AI output) are inferred from a single sample file. The implementation plan's first step is a spike against the committed fixture to confirm the schema; if a second `.story` sample is available, cross-check there too. Everything downstream of `decode.ts` (split, map, UI) only needs a string-in/string-out contract, so schema surprises are contained to one module.
+
 ### Parse-time errors (each returned as `{ok:false, error}`)
 
 | Condition | Message |
@@ -175,7 +177,7 @@ type CommitOk = { ok: true; data: { slug: string; chapterIds: string[] } };
 
 **New-story sequence:**
 
-1. Validate slug via [lib/storage/stories.ts](../../../lib/storage/stories.ts); on collision return `{ok:false, error, suggestion:"slug-2"}`. Client resubmits with chosen slug (no silent rename).
+1. Validate slug via [lib/storage/stories.ts](../../../lib/storage/stories.ts); on collision return `{ok:false, error, suggestion:"slug-2"}`. The existing `ApiResult<T>` error shape is widened with an optional `suggestion?: string` field so this stays a single envelope rather than a bespoke error type. Client resubmits with chosen slug (no silent rename).
 2. Create story dir via `storyDir(slug)` from [lib/storage/paths.ts](../../../lib/storage/paths.ts).
 3. Write `story.json` (same schema used by existing new-story flow).
 4. Write `bible.json` from the committed `ProposedBible`.
@@ -226,7 +228,7 @@ Both new routes are local-only (filesystem I/O; no outbound fetch). Added to the
 2. **Preview & edit** — two columns:
    - **Left (Chapter list):** same as new-story dialog.
    - **Right (EPUB preview):** reuse `renderChapterPreviewHtml` + `EPUB_STYLESHEET` from [lib/publish/epub-preview.ts](../../../lib/publish/epub-preview.ts).
-3. **Options row:** checkbox "Generate recap via Grok" (same behavior as paste dialog — fires `/api/generate/recap` per chapter sequentially after commit).
+3. **Options row:** checkbox "Generate recap via Grok" (same behavior as paste dialog: recap generation runs **post-commit, per-chapter, sequentially**, via `/api/generate/recap` — already on the privacy egress-allowlist as an outbound route).
 4. **Commit** — "Add N chapter(s)" POSTs `target: "existing-story"` with current slug. Success: toast, close dialog, SWR revalidates chapter list. Stay on the current page.
 
 **Discarded-data affordance:** banner at top of preview: *"Premise, lorebook, and tags from this .story file are ignored in this mode. Use 'New story from NovelAI' on the home page to import everything."*
@@ -270,7 +272,7 @@ Both new routes are local-only (filesystem I/O; no outbound fetch). Added to the
 
 **E2E — [tests/e2e/](../../../tests/e2e/):** one happy-path Playwright test. Upload fixture on stories page → redirect to new story with chapters present. Uses existing `SCRIPTR_DATA_DIR=/tmp/scriptr-e2e` isolation.
 
-**Fixture:** `lib/novelai/__fixtures__/sample.story` — trimmed version of a real NovelAI export (~5KB). Small prose, 2 lorebook entries, `////` marker included. Neutral placeholder prose so it's safe to commit to the repo.
+**Fixture:** `lib/novelai/__fixtures__/sample.story` — a **synthetic** (not real-session) NovelAI export (~5KB). Hand-crafted using the container/msgpack schema with small neutral placeholder prose, 2 lorebook entries, and a `////` marker. Must not contain any real NovelAI session content from the user (privacy/IP — the user is an active NovelAI author).
 
 **Definition of done:** `npm run lint`, `npm run typecheck`, `npm test`, `npm run e2e` all pass.
 
