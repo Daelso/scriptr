@@ -301,7 +301,7 @@ export function ChapterList({ slug, selectedChapterId, onSelect }: ChapterListPr
           className="w-full justify-start gap-1.5 text-xs text-muted-foreground hover:text-foreground"
         >
           <Upload className="size-3.5" />
-          Import chapters from .story
+          Import from NovelAI
         </Button>
       </div>
 
