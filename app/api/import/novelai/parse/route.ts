@@ -1,10 +1,15 @@
 import type { NextRequest } from "next/server";
 import { ok, fail } from "@/lib/api";
 import { decodeNovelAIStory, NovelAIDecodeError } from "@/lib/novelai/decode";
-import { splitProse } from "@/lib/novelai/split";
+import { splitProseIntoStories } from "@/lib/novelai/split";
 import { mapToProposedWrite } from "@/lib/novelai/map";
 import { cleanNovelAIText, titleFromFilename } from "@/lib/novelai/text-clean";
-import type { ParsedStory } from "@/lib/novelai/types";
+import type {
+  ParsedStory,
+  ProposedWrite,
+  StoryProposal,
+  StorySplit,
+} from "@/lib/novelai/types";
 
 /**
  * Sniff the first 1KB of a buffer to decide if it looks like UTF-8 text
@@ -34,6 +39,47 @@ function looksLikeText(buf: Buffer): boolean {
   }
   // Allow a tiny amount of noise, but anything more means binary.
   return nonPrintable <= 2;
+}
+
+/**
+ * Build a `ProposedWrite` for a single story chunk.
+ *
+ * - Story 1 of N (i === 0) reuses the mapped bible + metadata from the whole
+ *   file, including description, keywords, and any lorebook-derived bible.
+ * - Stories 2..N inherit nothing: empty description, no keywords, empty
+ *   bible. The user can fill those in the preview UI per story. Title is
+ *   suffixed "Part K" when there are multiple stories.
+ */
+function buildProposalForStory(
+  parsed: ParsedStory,
+  base: ProposedWrite,
+  index: number,
+  totalStories: number
+): ProposedWrite {
+  const baseTitle = parsed.title || base.story.title;
+  if (totalStories === 1) {
+    return base;
+  }
+  const partTitle = baseTitle
+    ? `${baseTitle} - Part ${index + 1}`
+    : `Part ${index + 1}`;
+  if (index === 0) {
+    return {
+      story: { ...base.story, title: partTitle },
+      bible: base.bible,
+    };
+  }
+  return {
+    story: { title: partTitle, description: "", keywords: [] },
+    bible: {
+      characters: [],
+      setting: "",
+      pov: "third-limited",
+      tone: "",
+      styleNotes: "",
+      nsfwPreferences: "",
+    },
+  };
 }
 
 export async function POST(req: NextRequest) {
@@ -79,8 +125,13 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const split = splitProse(parsed.prose);
-  const proposed = mapToProposedWrite(parsed);
+  const splits: StorySplit[] = splitProseIntoStories(parsed.prose);
+  const baseProposed = mapToProposedWrite(parsed);
 
-  return ok({ parsed, split, proposed });
+  const stories: StoryProposal[] = splits.map((split, i) => ({
+    split,
+    proposed: buildProposalForStory(parsed, baseProposed, i, splits.length),
+  }));
+
+  return ok({ parsed, stories });
 }

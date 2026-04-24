@@ -392,16 +392,24 @@ describe("no external egress from API routes", () => {
         method: "POST",
         body: JSON.stringify({
           target: "new-story",
-          story: { title: "Egress Test Import", description: "", keywords: [] },
-          bible: {
-            characters: [],
-            setting: "",
-            pov: "third-limited",
-            tone: "",
-            styleNotes: "",
-            nsfwPreferences: "",
-          },
-          chapters: [{ title: "Ch", body: "body" }],
+          stories: [
+            {
+              story: {
+                title: "Egress Test Import",
+                description: "",
+                keywords: [],
+              },
+              bible: {
+                characters: [],
+                setting: "",
+                pov: "third-limited",
+                tone: "",
+                styleNotes: "",
+                nsfwPreferences: "",
+              },
+              chapters: [{ title: "Ch", body: "body" }],
+            },
+          ],
         }),
         headers: { "content-type": "application/json" },
       });

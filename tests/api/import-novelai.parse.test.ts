@@ -91,7 +91,7 @@ describe("POST /api/import/novelai/parse — happy path", () => {
     await rm(tmp, { recursive: true, force: true });
   });
 
-  it("returns parsed/split/proposed for the fixture", async () => {
+  it("returns parsed/stories for the fixture (//// splits into multiple stories)", async () => {
     const file = await readFile(FIXTURE);
     const { POST } = await import("@/app/api/import/novelai/parse/route");
     const res = await POST(
@@ -101,11 +101,80 @@ describe("POST /api/import/novelai/parse — happy path", () => {
     const body = await res.json();
     expect(body.ok).toBe(true);
     expect(body.data.parsed.title).toBe("Garden at Dusk");
-    expect(body.data.split.splitSource).toBe("marker");
-    expect(body.data.split.chapters.length).toBeGreaterThanOrEqual(2);
-    expect(body.data.proposed.story.keywords).toEqual(["fixture", "test"]);
-    expect(body.data.proposed.bible.characters.map((c: { name: string }) => c.name))
-      .toContain("Mira");
+    expect(Array.isArray(body.data.stories)).toBe(true);
+    // The fixture's //// is now a story marker → 2 stories.
+    expect(body.data.stories.length).toBeGreaterThanOrEqual(2);
+    // Story 1 retains the mapped bible + description from the fixture.
+    const first = body.data.stories[0];
+    expect(first.proposed.story.keywords).toEqual(["fixture", "test"]);
+    expect(
+      first.proposed.bible.characters.map((c: { name: string }) => c.name)
+    ).toContain("Mira");
+    // Story 2 inherits nothing (empty bible, no keywords).
+    const second = body.data.stories[1];
+    expect(second.proposed.story.keywords).toEqual([]);
+    expect(second.proposed.bible.characters).toEqual([]);
+    // Multi-story titles are suffixed "Part N".
+    expect(first.proposed.story.title).toMatch(/Part 1/);
+    expect(second.proposed.story.title).toMatch(/Part 2/);
+  });
+
+  it("returns a single story (no Part suffix) when there are no //// markers", async () => {
+    const text = [
+      "Chapter 1",
+      "",
+      "Opening prose.",
+      "",
+      "Chapter 2",
+      "",
+      "More prose.",
+    ].join("\n");
+    const { POST } = await import("@/app/api/import/novelai/parse/route");
+    const res = await POST(
+      makeReq(
+        "http://localhost/api/import/novelai/parse",
+        Buffer.from(text, "utf-8"),
+        "Single (2026-04-24T14_16_27.902Z).txt",
+        "text/plain"
+      )
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.data.stories).toHaveLength(1);
+    expect(body.data.stories[0].split.splitSource).toBe("heading");
+    expect(body.data.stories[0].split.chapters).toHaveLength(2);
+    // Title is unadorned (no "Part 1" suffix) when there's only one story.
+    expect(body.data.stories[0].proposed.story.title).toBe("Single");
+  });
+
+  it("returns multiple stories when the input has //// markers", async () => {
+    const text = [
+      "First story body.",
+      "",
+      "////",
+      "",
+      "Second story body.",
+      "",
+      "////",
+      "",
+      "Third story body.",
+    ].join("\n");
+    const { POST } = await import("@/app/api/import/novelai/parse/route");
+    const res = await POST(
+      makeReq(
+        "http://localhost/api/import/novelai/parse",
+        Buffer.from(text, "utf-8"),
+        "Triple.txt",
+        "text/plain"
+      )
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.stories).toHaveLength(3);
+    expect(body.data.stories[0].proposed.story.title).toBe("Triple - Part 1");
+    expect(body.data.stories[1].proposed.story.title).toBe("Triple - Part 2");
+    expect(body.data.stories[2].proposed.story.title).toBe("Triple - Part 3");
   });
 
   it("accepts a .txt upload and cleans NovelAI artifacts", async () => {

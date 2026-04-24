@@ -14,7 +14,16 @@ function makeJsonReq(url: string, body: unknown): NextRequest {
   }) as unknown as NextRequest;
 }
 
-describe("POST /api/import/novelai/commit — new-story mode", () => {
+const EMPTY_BIBLE = {
+  characters: [],
+  setting: "",
+  pov: "third-limited" as const,
+  tone: "",
+  styleNotes: "",
+  nsfwPreferences: "",
+};
+
+describe("POST /api/import/novelai/commit — new-story mode (single)", () => {
   let tmp: string;
   const originalEnv = process.env;
   beforeEach(async () => {
@@ -31,29 +40,33 @@ describe("POST /api/import/novelai/commit — new-story mode", () => {
     const res = await POST(
       makeJsonReq("http://localhost/api/import/novelai/commit", {
         target: "new-story",
-        story: {
-          title: "Imported Book",
-          description: "a desc",
-          keywords: ["a", "b"],
-        },
-        bible: {
-          characters: [{ name: "Alice", description: "a woman" }],
-          setting: "## Town\na small town",
-          pov: "third-limited",
-          tone: "",
-          styleNotes: "some style",
-          nsfwPreferences: "",
-        },
-        chapters: [
-          { title: "One", body: "first chapter body" },
-          { title: "", body: "second chapter body" },
+        stories: [
+          {
+            story: {
+              title: "Imported Book",
+              description: "a desc",
+              keywords: ["a", "b"],
+            },
+            bible: {
+              characters: [{ name: "Alice", description: "a woman" }],
+              setting: "## Town\na small town",
+              pov: "third-limited",
+              tone: "",
+              styleNotes: "some style",
+              nsfwPreferences: "",
+            },
+            chapters: [
+              { title: "One", body: "first chapter body" },
+              { title: "", body: "second chapter body" },
+            ],
+          },
         ],
       })
     );
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
-    expect(body.data.slug).toBe("imported-book");
+    expect(body.data.slugs).toEqual(["imported-book"]);
     expect(body.data.chapterIds).toHaveLength(2);
 
     const story = await getStory(tmp, "imported-book");
@@ -79,9 +92,13 @@ describe("POST /api/import/novelai/commit — new-story mode", () => {
     const res = await POST(
       makeJsonReq("http://localhost/api/import/novelai/commit", {
         target: "new-story",
-        story: { title: "Bad Bible", description: "", keywords: [] },
-        bible: { characters: "not-an-array" }, // malformed
-        chapters: [{ title: "x", body: "y" }],
+        stories: [
+          {
+            story: { title: "Bad Bible", description: "", keywords: [] },
+            bible: { characters: "not-an-array" }, // malformed
+            chapters: [{ title: "x", body: "y" }],
+          },
+        ],
       })
     );
     expect(res.status).toBe(400);
@@ -89,41 +106,101 @@ describe("POST /api/import/novelai/commit — new-story mode", () => {
     expect(body.error).toMatch(/bible/i);
   });
 
+  it("returns 400 when the stories array is empty", async () => {
+    const { POST } = await import("@/app/api/import/novelai/commit/route");
+    const res = await POST(
+      makeJsonReq("http://localhost/api/import/novelai/commit", {
+        target: "new-story",
+        stories: [],
+      })
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/at least one story/i);
+  });
+
   it("auto-suffixes the slug on collision", async () => {
     const { POST } = await import("@/app/api/import/novelai/commit/route");
     const first = await POST(
       makeJsonReq("http://localhost/api/import/novelai/commit", {
         target: "new-story",
-        story: { title: "Same Title", description: "", keywords: [] },
-        bible: {
-          characters: [],
-          setting: "",
-          pov: "third-limited",
-          tone: "",
-          styleNotes: "",
-          nsfwPreferences: "",
-        },
-        chapters: [{ title: "One", body: "body" }],
+        stories: [
+          {
+            story: { title: "Same Title", description: "", keywords: [] },
+            bible: EMPTY_BIBLE,
+            chapters: [{ title: "One", body: "body" }],
+          },
+        ],
       })
     );
-    expect((await first.json()).data.slug).toBe("same-title");
+    expect((await first.json()).data.slugs).toEqual(["same-title"]);
 
     const second = await POST(
       makeJsonReq("http://localhost/api/import/novelai/commit", {
         target: "new-story",
-        story: { title: "Same Title", description: "", keywords: [] },
-        bible: {
-          characters: [],
-          setting: "",
-          pov: "third-limited",
-          tone: "",
-          styleNotes: "",
-          nsfwPreferences: "",
-        },
-        chapters: [{ title: "One", body: "body" }],
+        stories: [
+          {
+            story: { title: "Same Title", description: "", keywords: [] },
+            bible: EMPTY_BIBLE,
+            chapters: [{ title: "One", body: "body" }],
+          },
+        ],
       })
     );
-    expect((await second.json()).data.slug).toBe("same-title-2");
+    expect((await second.json()).data.slugs).toEqual(["same-title-2"]);
+  });
+});
+
+describe("POST /api/import/novelai/commit — new-story mode (multi)", () => {
+  let tmp: string;
+  const originalEnv = process.env;
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), "scriptr-commit-multi-"));
+    process.env = { ...originalEnv, SCRIPTR_DATA_DIR: tmp };
+  });
+  afterEach(async () => {
+    process.env = originalEnv;
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  it("creates N separate stories, each with its own bible and chapters", async () => {
+    const { POST } = await import("@/app/api/import/novelai/commit/route");
+    const res = await POST(
+      makeJsonReq("http://localhost/api/import/novelai/commit", {
+        target: "new-story",
+        stories: [
+          {
+            story: { title: "Saga - Part 1", description: "d1", keywords: ["a"] },
+            bible: EMPTY_BIBLE,
+            chapters: [{ title: "Opening", body: "s1 body" }],
+          },
+          {
+            story: { title: "Saga - Part 2", description: "", keywords: [] },
+            bible: EMPTY_BIBLE,
+            chapters: [
+              { title: "First", body: "s2 c1" },
+              { title: "Second", body: "s2 c2" },
+            ],
+          },
+        ],
+      })
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.slugs).toEqual(["saga-part-1", "saga-part-2"]);
+    // Flattened chapterIds across all stories (1 + 2 = 3).
+    expect(body.data.chapterIds).toHaveLength(3);
+
+    const s1 = await getStory(tmp, "saga-part-1");
+    expect(s1?.description).toBe("d1");
+    expect(s1?.keywords).toEqual(["a"]);
+
+    const s1Chapters = await listChapters(tmp, "saga-part-1");
+    expect(s1Chapters.map((c) => c.title)).toEqual(["Opening"]);
+    expect(s1Chapters[0].sections[0].content).toBe("s1 body");
+
+    const s2Chapters = await listChapters(tmp, "saga-part-2");
+    expect(s2Chapters.map((c) => c.title)).toEqual(["First", "Second"]);
   });
 });
 

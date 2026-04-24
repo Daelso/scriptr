@@ -1,7 +1,12 @@
 import type { NextRequest } from "next/server";
 import { ok, fail, readJson } from "@/lib/api";
 import { effectiveDataDir } from "@/lib/config";
-import { createStory, updateStory, deleteStory, getStory } from "@/lib/storage/stories";
+import {
+  createStory,
+  updateStory,
+  deleteStory,
+  getStory,
+} from "@/lib/storage/stories";
 import { createImportedChapter } from "@/lib/storage/chapters";
 import { saveBible, validateBible } from "@/lib/storage/bible";
 import { cleanPaste, type CleanupOptions } from "@/lib/publish/cleanup";
@@ -29,12 +34,16 @@ function chapterBodyToSections(body: string): string[] {
   return sections.length > 0 ? sections : [body.trim()];
 }
 
+type NewStoryEntry = {
+  story: { title: string; description: string; keywords: string[] };
+  bible: Bible;
+  chapters: ProposedChapter[];
+};
+
 type CommitRequest =
   | {
       target: "new-story";
-      story: { title: string; description: string; keywords: string[] };
-      bible: Bible;
-      chapters: ProposedChapter[];
+      stories: NewStoryEntry[];
     }
   | {
       target: "existing-story";
@@ -57,41 +66,73 @@ export async function POST(req: NextRequest) {
 async function handleNewStory(
   body: Extract<CommitRequest, { target: "new-story" }>
 ) {
-  if (!body.story?.title || typeof body.story.title !== "string") {
-    return fail("title required", 400);
+  if (!Array.isArray(body.stories) || body.stories.length === 0) {
+    return fail("at least one story required", 400);
   }
-  if (!Array.isArray(body.chapters) || body.chapters.length === 0) {
-    return fail("at least one chapter required", 400);
-  }
-  if (!validateBible(body.bible)) {
-    return fail("invalid bible shape", 400);
+
+  // Up-front validation so we can return 400 without having created anything.
+  for (let i = 0; i < body.stories.length; i++) {
+    const s = body.stories[i];
+    if (!s?.story?.title || typeof s.story.title !== "string") {
+      return fail(
+        body.stories.length === 1
+          ? "title required"
+          : `title required (story ${i + 1})`,
+        400
+      );
+    }
+    if (!Array.isArray(s.chapters) || s.chapters.length === 0) {
+      return fail(
+        body.stories.length === 1
+          ? "at least one chapter required"
+          : `at least one chapter required (story ${i + 1})`,
+        400
+      );
+    }
+    if (!validateBible(s.bible)) {
+      return fail(
+        body.stories.length === 1
+          ? "invalid bible shape"
+          : `invalid bible shape (story ${i + 1})`,
+        400
+      );
+    }
   }
 
   const dataDir = effectiveDataDir();
-  const story = await createStory(dataDir, { title: body.story.title });
+  const createdSlugs: string[] = [];
+  const allChapterIds: string[] = [];
 
   try {
-    await updateStory(dataDir, story.slug, {
-      description: body.story.description ?? "",
-      keywords: Array.isArray(body.story.keywords) ? body.story.keywords : [],
-    });
+    for (const entry of body.stories) {
+      const story = await createStory(dataDir, { title: entry.story.title });
+      createdSlugs.push(story.slug);
 
-    await saveBible(dataDir, story.slug, body.bible);
-
-    const chapterIds: string[] = [];
-    for (const ch of body.chapters) {
-      const title = (ch.title || "Untitled").trim() || "Untitled";
-      const created = await createImportedChapter(dataDir, story.slug, {
-        title,
-        sectionContents: chapterBodyToSections(ch.body),
+      await updateStory(dataDir, story.slug, {
+        description: entry.story.description ?? "",
+        keywords: Array.isArray(entry.story.keywords)
+          ? entry.story.keywords
+          : [],
       });
-      chapterIds.push(created.id);
+
+      await saveBible(dataDir, story.slug, entry.bible);
+
+      for (const ch of entry.chapters) {
+        const title = (ch.title || "Untitled").trim() || "Untitled";
+        const created = await createImportedChapter(dataDir, story.slug, {
+          title,
+          sectionContents: chapterBodyToSections(ch.body),
+        });
+        allChapterIds.push(created.id);
+      }
     }
 
-    return ok({ slug: story.slug, chapterIds });
+    return ok({ slugs: createdSlugs, chapterIds: allChapterIds });
   } catch (err) {
-    // Rollback: new-story mode owns the whole story dir; unlink it.
-    await deleteStory(dataDir, story.slug).catch(() => {});
+    // Rollback: delete every story we created so far in this request.
+    await Promise.allSettled(
+      createdSlugs.map((slug) => deleteStory(dataDir, slug))
+    );
     const msg = err instanceof Error ? err.message : String(err);
     return fail(`Failed to write story files: ${msg}`, 500);
   }
