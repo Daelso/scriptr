@@ -35,10 +35,24 @@ export type SplitSource =
   | "scenebreak-fallback" // horizontal rules used as chapter breaks
   | "none"; // single chapter, no split
 
-export type SplitResult = {
+/**
+ * A single story produced by splitting input prose. A multi-story file
+ * (separated by `////` story markers) yields multiple of these.
+ *
+ * Structurally identical to the legacy `SplitResult` type (kept below as a
+ * back-compat alias).
+ */
+export type StorySplit = {
   chapters: ProposedChapter[];
   splitSource: SplitSource;
 };
+
+/**
+ * Back-compat alias. `SplitResult` used to describe the (single) result of
+ * `splitProse(prose)`. It is now identical to `StorySplit` — kept for any
+ * imports that still reference the old name.
+ */
+export type SplitResult = StorySplit;
 
 /**
  * Output of map(): Scriptr-shaped story + bible data ready for the UI to
@@ -52,4 +66,13 @@ export type ProposedWrite = {
     keywords: string[];
   };
   bible: Bible;
+};
+
+/**
+ * A story chunk plus its mapped Story+Bible proposal. The parse route returns
+ * one of these per `////`-separated story chunk (length >= 1).
+ */
+export type StoryProposal = {
+  split: StorySplit;
+  proposed: ProposedWrite;
 };
