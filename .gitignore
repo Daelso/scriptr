@@ -55,6 +55,9 @@ cover*.jpg
 cover*.jpeg
 cover*.png
 exports/
+# Root-level user story exports (don't affect tracked fixtures deeper in the tree)
+/*.story
+/*.txt
 
 # Playwright
 /test-results/
