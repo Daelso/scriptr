@@ -1,10 +1,9 @@
 import type { NextRequest } from "next/server";
-import { writeFile } from "node:fs/promises";
 import { ok, fail, readJson } from "@/lib/api";
 import { effectiveDataDir } from "@/lib/config";
 import { createStory, updateStory, deleteStory, getStory } from "@/lib/storage/stories";
 import { createImportedChapter } from "@/lib/storage/chapters";
-import { bibleJson } from "@/lib/storage/paths";
+import { saveBible, validateBible } from "@/lib/storage/bible";
 import type { Bible } from "@/lib/types";
 import type { ProposedChapter } from "@/lib/novelai/types";
 
@@ -42,6 +41,9 @@ async function handleNewStory(
   if (!Array.isArray(body.chapters) || body.chapters.length === 0) {
     return fail("at least one chapter required", 400);
   }
+  if (!validateBible(body.bible)) {
+    return fail("invalid bible shape", 400);
+  }
 
   const dataDir = effectiveDataDir();
   const story = await createStory(dataDir, { title: body.story.title });
@@ -52,11 +54,7 @@ async function handleNewStory(
       keywords: Array.isArray(body.story.keywords) ? body.story.keywords : [],
     });
 
-    await writeFile(
-      bibleJson(dataDir, story.slug),
-      JSON.stringify(body.bible, null, 2),
-      "utf-8"
-    );
+    await saveBible(dataDir, story.slug, body.bible);
 
     const chapterIds: string[] = [];
     for (const ch of body.chapters) {
