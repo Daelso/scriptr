@@ -51,6 +51,7 @@
  *   GET  /api/stories/[slug]/chapters/[id]/prompt
  *   DELETE /api/stories/[slug]/chapters/[id]
  *   DELETE /api/stories/[slug]
+ *   POST /api/import/novelai/commit  (new-story mode)
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -363,6 +364,30 @@ describe("no external egress from API routes", () => {
       const req = makeReq(`http://localhost/api/stories/${slug}`);
       const ctx = { params: Promise.resolve({ slug }) };
       const res = await DELETE(req, ctx);
+      expect(res.status).toBe(200);
+    }
+
+    // ── POST /api/import/novelai/commit ───────────────────────────────────
+    {
+      const { POST } = await import("@/app/api/import/novelai/commit/route");
+      const req = makeReq("http://localhost/api/import/novelai/commit", {
+        method: "POST",
+        body: JSON.stringify({
+          target: "new-story",
+          story: { title: "Egress Test Import", description: "", keywords: [] },
+          bible: {
+            characters: [],
+            setting: "",
+            pov: "third-limited",
+            tone: "",
+            styleNotes: "",
+            nsfwPreferences: "",
+          },
+          chapters: [{ title: "Ch", body: "body" }],
+        }),
+        headers: { "content-type": "application/json" },
+      });
+      const res = await POST(req);
       expect(res.status).toBe(200);
     }
 
