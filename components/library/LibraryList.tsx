@@ -195,12 +195,14 @@ export function LibraryList() {
             <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
               Your stories
             </h2>
-            <Button size="sm" onClick={() => setNewStoryOpen(true)}>
-              New story
-            </Button>
-            <Button variant="outline" onClick={() => setNovelaiOpen(true)}>
-              Import from NovelAI
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button size="sm" onClick={() => setNewStoryOpen(true)}>
+                New story
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setNovelaiOpen(true)}>
+                Import from NovelAI
+              </Button>
+            </div>
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {data.map((story) => (
