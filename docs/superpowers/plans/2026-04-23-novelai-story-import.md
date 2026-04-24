@@ -79,7 +79,7 @@ export type ParsedStory = {
   textPreview: string;
   contextBlocks: string[];
   lorebookEntries: LorebookEntry[];
-  prose: string; // AI output (source=2) joined in document order, separated by "\n\n"
+  prose: string; // long-string prose joined in first-encounter order, separated by "\n\n"
 };
 
 export type LorebookEntry = {
@@ -1816,3 +1816,1954 @@ cd /home/chase/projects/scriptr && git add tests/lib/novelai/pipeline.test.ts &&
 - All tests pass (`npm test`), typecheck passes, lint passes.
 
 Chunks 2 and 3 build on this foundation. Chunk 2 wires the library into API routes; Chunk 3 builds the UI.
+
+---
+
+## Chunk 2: API routes + privacy test extension
+
+Two routes: `POST /api/import/novelai/parse` (parses bytes, returns preview) and `POST /api/import/novelai/commit` (writes to disk, either new story or append to existing). Both are exercised in [tests/privacy/no-external-egress.test.ts](../../../tests/privacy/no-external-egress.test.ts) to enforce the privacy invariant.
+
+### Task 2.1: parse route — scaffolding + version/size errors
+
+**Files:**
+- Create: `/home/chase/projects/scriptr/app/api/import/novelai/parse/route.ts`
+- Create: `/home/chase/projects/scriptr/tests/api/import-novelai.parse.test.ts`
+
+- [ ] **Step 1: Write the failing test**
+
+Write to `/home/chase/projects/scriptr/tests/api/import-novelai.parse.test.ts`:
+
+```ts
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { NextRequest } from "next/server";
+
+const FIXTURE = join(
+  __dirname,
+  "..",
+  "..",
+  "lib",
+  "novelai",
+  "__fixtures__",
+  "sample.story"
+);
+
+function makeReq(
+  url: string,
+  file: Buffer | null,
+  filename = "sample.story"
+): NextRequest {
+  const fd = new FormData();
+  if (file) {
+    fd.append(
+      "file",
+      new Blob([file], { type: "application/octet-stream" }),
+      filename
+    );
+  }
+  return new Request(url, { method: "POST", body: fd }) as unknown as NextRequest;
+}
+
+describe("POST /api/import/novelai/parse — errors", () => {
+  let tmp: string;
+  const originalEnv = process.env;
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), "scriptr-parse-"));
+    process.env = { ...originalEnv, SCRIPTR_DATA_DIR: tmp };
+  });
+  afterEach(async () => {
+    process.env = originalEnv;
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  it("returns 400 when no file is attached", async () => {
+    const { POST } = await import("@/app/api/import/novelai/parse/route");
+    const res = await POST(makeReq("http://localhost/api/import/novelai/parse", null));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("No file uploaded.");
+  });
+
+  it("returns 400 with user-facing error on non-JSON garbage", async () => {
+    const { POST } = await import("@/app/api/import/novelai/parse/route");
+    const req = makeReq(
+      "http://localhost/api/import/novelai/parse",
+      Buffer.from("this is not json at all")
+    );
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("File is not a valid NovelAI .story file.");
+  });
+
+  it("returns 400 for unsupported version", async () => {
+    const { POST } = await import("@/app/api/import/novelai/parse/route");
+    const req = makeReq(
+      "http://localhost/api/import/novelai/parse",
+      Buffer.from(
+        JSON.stringify({ storyContainerVersion: 99, metadata: {}, content: {} })
+      )
+    );
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("Unsupported NovelAI format version");
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run:
+```bash
+cd /home/chase/projects/scriptr && npx vitest run tests/api/import-novelai.parse.test.ts
+```
+
+Expected: FAIL — route module not found.
+
+- [ ] **Step 3: Implement the route**
+
+Create directories as needed, then write `/home/chase/projects/scriptr/app/api/import/novelai/parse/route.ts`:
+
+```ts
+import type { NextRequest } from "next/server";
+import { ok, fail } from "@/lib/api";
+import { decodeNovelAIStory, NovelAIDecodeError } from "@/lib/novelai/decode";
+import { splitProse } from "@/lib/novelai/split";
+import { mapToProposedWrite } from "@/lib/novelai/map";
+
+export async function POST(req: NextRequest) {
+  let form: FormData;
+  try {
+    form = await req.formData();
+  } catch {
+    return fail("No file uploaded.", 400);
+  }
+
+  const fileEntry = form.get("file");
+  if (!(fileEntry instanceof File) && !(fileEntry instanceof Blob)) {
+    return fail("No file uploaded.", 400);
+  }
+
+  const buf = Buffer.from(await fileEntry.arrayBuffer());
+  if (buf.byteLength === 0) {
+    return fail("No file uploaded.", 400);
+  }
+
+  let parsed;
+  try {
+    parsed = await decodeNovelAIStory(buf);
+  } catch (err) {
+    if (err instanceof NovelAIDecodeError) return fail(err.userMessage, 400);
+    return fail("Could not read the document inside this .story file.", 400);
+  }
+
+  const split = splitProse(parsed.prose);
+  const proposed = mapToProposedWrite(parsed);
+
+  return ok({ parsed, split, proposed });
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run:
+```bash
+cd /home/chase/projects/scriptr && npx vitest run tests/api/import-novelai.parse.test.ts
+```
+
+Expected: PASS — all three tests green.
+
+- [ ] **Step 5: Commit**
+
+```bash
+cd /home/chase/projects/scriptr && git add app/api/import/novelai/parse/route.ts tests/api/import-novelai.parse.test.ts && git commit -m "feat(api): POST /api/import/novelai/parse — multipart + error envelopes"
+```
+
+---
+
+### Task 2.2: parse route — happy path on the fixture
+
+**Files:**
+- Modify: `/home/chase/projects/scriptr/tests/api/import-novelai.parse.test.ts`
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `/home/chase/projects/scriptr/tests/api/import-novelai.parse.test.ts`:
+
+```ts
+describe("POST /api/import/novelai/parse — happy path", () => {
+  let tmp: string;
+  const originalEnv = process.env;
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), "scriptr-parse-"));
+    process.env = { ...originalEnv, SCRIPTR_DATA_DIR: tmp };
+  });
+  afterEach(async () => {
+    process.env = originalEnv;
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  it("returns parsed/split/proposed for the fixture", async () => {
+    const file = await readFile(FIXTURE);
+    const { POST } = await import("@/app/api/import/novelai/parse/route");
+    const res = await POST(
+      makeReq("http://localhost/api/import/novelai/parse", file)
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.data.parsed.title).toBe("Garden at Dusk");
+    expect(body.data.split.splitSource).toBe("marker");
+    expect(body.data.split.chapters.length).toBeGreaterThanOrEqual(2);
+    expect(body.data.proposed.story.keywords).toEqual(["fixture", "test"]);
+    expect(body.data.proposed.bible.characters.map((c: { name: string }) => c.name))
+      .toContain("Mira");
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it passes**
+
+Run:
+```bash
+cd /home/chase/projects/scriptr && npx vitest run tests/api/import-novelai.parse.test.ts
+```
+
+Expected: PASS — the route wiring already supports this case since Task 2.1 implemented the full flow. (If it fails, investigate: the route implementation is complete but the test may have a multipart-assembly issue.)
+
+- [ ] **Step 3: Commit**
+
+```bash
+cd /home/chase/projects/scriptr && git add tests/api/import-novelai.parse.test.ts && git commit -m "test(api): parse route happy path on fixture"
+```
+
+---
+
+### Task 2.3: commit route — new-story mode
+
+**Files:**
+- Create: `/home/chase/projects/scriptr/app/api/import/novelai/commit/route.ts`
+- Create: `/home/chase/projects/scriptr/tests/api/import-novelai.commit.test.ts`
+
+- [ ] **Step 1: Write the failing test**
+
+Write to `/home/chase/projects/scriptr/tests/api/import-novelai.commit.test.ts`:
+
+```ts
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { NextRequest } from "next/server";
+import { getStory } from "@/lib/storage/stories";
+import { listChapters } from "@/lib/storage/chapters";
+
+function makeJsonReq(url: string, body: unknown): NextRequest {
+  return new Request(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }) as unknown as NextRequest;
+}
+
+describe("POST /api/import/novelai/commit — new-story mode", () => {
+  let tmp: string;
+  const originalEnv = process.env;
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), "scriptr-commit-"));
+    process.env = { ...originalEnv, SCRIPTR_DATA_DIR: tmp };
+  });
+  afterEach(async () => {
+    process.env = originalEnv;
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  it("creates a story with description, keywords, bible, and chapters", async () => {
+    const { POST } = await import("@/app/api/import/novelai/commit/route");
+    const res = await POST(
+      makeJsonReq("http://localhost/api/import/novelai/commit", {
+        target: "new-story",
+        story: {
+          title: "Imported Book",
+          description: "a desc",
+          keywords: ["a", "b"],
+        },
+        bible: {
+          characters: [{ name: "Alice", description: "a woman" }],
+          setting: "## Town\na small town",
+          pov: "third-limited",
+          tone: "",
+          styleNotes: "some style",
+          nsfwPreferences: "",
+        },
+        chapters: [
+          { title: "One", body: "first chapter body" },
+          { title: "", body: "second chapter body" },
+        ],
+      })
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.data.slug).toBe("imported-book");
+    expect(body.data.chapterIds).toHaveLength(2);
+
+    const story = await getStory(tmp, "imported-book");
+    expect(story?.description).toBe("a desc");
+    expect(story?.keywords).toEqual(["a", "b"]);
+
+    const bibleRaw = await readFile(
+      join(tmp, "stories", "imported-book", "bible.json"),
+      "utf-8"
+    );
+    const bible = JSON.parse(bibleRaw);
+    expect(bible.characters[0].name).toBe("Alice");
+    expect(bible.styleNotes).toBe("some style");
+
+    const chapters = await listChapters(tmp, "imported-book");
+    expect(chapters.map((c) => c.title)).toEqual(["One", "Untitled"]);
+    expect(chapters[0].sections[0].content).toBe("first chapter body");
+    expect(chapters[0].source).toBe("imported");
+  });
+
+  it("auto-suffixes the slug on collision", async () => {
+    const { POST } = await import("@/app/api/import/novelai/commit/route");
+    const first = await POST(
+      makeJsonReq("http://localhost/api/import/novelai/commit", {
+        target: "new-story",
+        story: { title: "Same Title", description: "", keywords: [] },
+        bible: {
+          characters: [],
+          setting: "",
+          pov: "third-limited",
+          tone: "",
+          styleNotes: "",
+          nsfwPreferences: "",
+        },
+        chapters: [{ title: "One", body: "body" }],
+      })
+    );
+    expect((await first.json()).data.slug).toBe("same-title");
+
+    const second = await POST(
+      makeJsonReq("http://localhost/api/import/novelai/commit", {
+        target: "new-story",
+        story: { title: "Same Title", description: "", keywords: [] },
+        bible: {
+          characters: [],
+          setting: "",
+          pov: "third-limited",
+          tone: "",
+          styleNotes: "",
+          nsfwPreferences: "",
+        },
+        chapters: [{ title: "One", body: "body" }],
+      })
+    );
+    expect((await second.json()).data.slug).toBe("same-title-2");
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run:
+```bash
+cd /home/chase/projects/scriptr && npx vitest run tests/api/import-novelai.commit.test.ts
+```
+
+Expected: FAIL — route module not found.
+
+- [ ] **Step 3: Implement the commit route (new-story mode only for now)**
+
+Write to `/home/chase/projects/scriptr/app/api/import/novelai/commit/route.ts`:
+
+```ts
+import type { NextRequest } from "next/server";
+import { writeFile } from "node:fs/promises";
+import { ok, fail, readJson } from "@/lib/api";
+import { effectiveDataDir } from "@/lib/config";
+import { createStory, updateStory, deleteStory } from "@/lib/storage/stories";
+import { createImportedChapter } from "@/lib/storage/chapters";
+import { bibleJson } from "@/lib/storage/paths";
+import type { Bible } from "@/lib/types";
+import type { ProposedChapter } from "@/lib/novelai/types";
+
+type CommitRequest =
+  | {
+      target: "new-story";
+      story: { title: string; description: string; keywords: string[] };
+      bible: Bible;
+      chapters: ProposedChapter[];
+    }
+  | {
+      target: "existing-story";
+      slug: string;
+      chapters: ProposedChapter[];
+    };
+
+export async function POST(req: NextRequest) {
+  const body = await readJson<CommitRequest>(req);
+
+  if (body.target === "new-story") {
+    return handleNewStory(body);
+  }
+  if (body.target === "existing-story") {
+    return handleExistingStory(body);
+  }
+  return fail("invalid target", 400);
+}
+
+async function handleNewStory(
+  body: Extract<CommitRequest, { target: "new-story" }>
+) {
+  if (!body.story?.title || typeof body.story.title !== "string") {
+    return fail("title required", 400);
+  }
+  if (!Array.isArray(body.chapters) || body.chapters.length === 0) {
+    return fail("at least one chapter required", 400);
+  }
+
+  const dataDir = effectiveDataDir();
+  const story = await createStory(dataDir, { title: body.story.title });
+
+  try {
+    await updateStory(dataDir, story.slug, {
+      description: body.story.description ?? "",
+      keywords: Array.isArray(body.story.keywords) ? body.story.keywords : [],
+    });
+
+    await writeFile(
+      bibleJson(dataDir, story.slug),
+      JSON.stringify(body.bible, null, 2),
+      "utf-8"
+    );
+
+    const chapterIds: string[] = [];
+    for (const ch of body.chapters) {
+      const title = (ch.title || "Untitled").trim() || "Untitled";
+      const created = await createImportedChapter(dataDir, story.slug, {
+        title,
+        sectionContents: [ch.body],
+      });
+      chapterIds.push(created.id);
+    }
+
+    return ok({ slug: story.slug, chapterIds });
+  } catch (err) {
+    // Rollback: new-story mode owns the whole story dir; unlink it.
+    await deleteStory(dataDir, story.slug).catch(() => {});
+    const msg = err instanceof Error ? err.message : String(err);
+    return fail(`Failed to write story files: ${msg}`, 500);
+  }
+}
+
+async function handleExistingStory(
+  _body: Extract<CommitRequest, { target: "existing-story" }>
+) {
+  // Implemented in Task 2.4.
+  return fail("not implemented", 501);
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run:
+```bash
+cd /home/chase/projects/scriptr && npx vitest run tests/api/import-novelai.commit.test.ts
+```
+
+Expected: PASS — both new-story tests green. (The "existing-story" test will arrive in the next task.)
+
+- [ ] **Step 5: Commit**
+
+```bash
+cd /home/chase/projects/scriptr && git add app/api/import/novelai/commit/route.ts tests/api/import-novelai.commit.test.ts && git commit -m "feat(api): POST /api/import/novelai/commit — new-story mode"
+```
+
+---
+
+### Task 2.4: commit route — existing-story mode
+
+**Files:**
+- Modify: `/home/chase/projects/scriptr/app/api/import/novelai/commit/route.ts`
+- Modify: `/home/chase/projects/scriptr/tests/api/import-novelai.commit.test.ts`
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `/home/chase/projects/scriptr/tests/api/import-novelai.commit.test.ts`:
+
+```ts
+describe("POST /api/import/novelai/commit — existing-story mode", () => {
+  let tmp: string;
+  const originalEnv = process.env;
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), "scriptr-commit-ex-"));
+    process.env = { ...originalEnv, SCRIPTR_DATA_DIR: tmp };
+  });
+  afterEach(async () => {
+    process.env = originalEnv;
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  it("appends chapters to an existing story", async () => {
+    // Seed: create a story with one chapter via storage helpers directly.
+    const { createStory } = await import("@/lib/storage/stories");
+    const { createChapter } = await import("@/lib/storage/chapters");
+    const story = await createStory(tmp, { title: "Host" });
+    await createChapter(tmp, story.slug, { title: "Existing Ch 1" });
+
+    const { POST } = await import("@/app/api/import/novelai/commit/route");
+    const res = await POST(
+      makeJsonReq("http://localhost/api/import/novelai/commit", {
+        target: "existing-story",
+        slug: story.slug,
+        chapters: [
+          { title: "New A", body: "new a body" },
+          { title: "New B", body: "new b body" },
+        ],
+      })
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.slug).toBe(story.slug);
+    expect(body.data.chapterIds).toHaveLength(2);
+
+    const all = await listChapters(tmp, story.slug);
+    expect(all.map((c) => c.title)).toEqual(["Existing Ch 1", "New A", "New B"]);
+    expect(all[1].source).toBe("imported");
+  });
+
+  it("returns 404 when the story slug does not exist", async () => {
+    const { POST } = await import("@/app/api/import/novelai/commit/route");
+    const res = await POST(
+      makeJsonReq("http://localhost/api/import/novelai/commit", {
+        target: "existing-story",
+        slug: "does-not-exist",
+        chapters: [{ title: "x", body: "y" }],
+      })
+    );
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toBe("Story not found.");
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run:
+```bash
+cd /home/chase/projects/scriptr && npx vitest run tests/api/import-novelai.commit.test.ts
+```
+
+Expected: the two new tests FAIL (current handler returns 501 for existing-story).
+
+- [ ] **Step 3: Implement existing-story mode**
+
+In `/home/chase/projects/scriptr/app/api/import/novelai/commit/route.ts`, add `getStory` to the imports:
+
+```ts
+import { createStory, updateStory, deleteStory, getStory } from "@/lib/storage/stories";
+```
+
+Replace the `handleExistingStory` stub with:
+
+```ts
+async function handleExistingStory(
+  body: Extract<CommitRequest, { target: "existing-story" }>
+) {
+  if (!body.slug || typeof body.slug !== "string") {
+    return fail("slug required", 400);
+  }
+  if (!Array.isArray(body.chapters) || body.chapters.length === 0) {
+    return fail("at least one chapter required", 400);
+  }
+
+  const dataDir = effectiveDataDir();
+  const existing = await getStory(dataDir, body.slug);
+  if (!existing) {
+    return fail("Story not found.", 404);
+  }
+
+  const chapterIds: string[] = [];
+  try {
+    for (const ch of body.chapters) {
+      const title = (ch.title || "Untitled").trim() || "Untitled";
+      const created = await createImportedChapter(dataDir, body.slug, {
+        title,
+        sectionContents: [ch.body],
+      });
+      chapterIds.push(created.id);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return fail(`Failed to write chapter files: ${msg}`, 500);
+  }
+
+  return ok({ slug: body.slug, chapterIds });
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run:
+```bash
+cd /home/chase/projects/scriptr && npx vitest run tests/api/import-novelai.commit.test.ts
+```
+
+Expected: PASS — all four tests green (2 new-story + 2 existing-story).
+
+- [ ] **Step 5: Commit**
+
+```bash
+cd /home/chase/projects/scriptr && git add app/api/import/novelai/commit/route.ts tests/api/import-novelai.commit.test.ts && git commit -m "feat(api): commit route — existing-story append mode"
+```
+
+---
+
+### Task 2.5: Privacy test — exercise both new routes
+
+**Files:**
+- Modify: `/home/chase/projects/scriptr/tests/privacy/no-external-egress.test.ts`
+
+- [ ] **Step 1: Confirm the fixture path and understand the test structure**
+
+Read [tests/privacy/no-external-egress.test.ts](../../../tests/privacy/no-external-egress.test.ts) (approx. 300+ lines). The test invokes each route's `POST`/`GET`/etc. handler directly and asserts `recorded === []` at the end. New routes slot into the single big `it("exercising every non-generate route...")` block.
+
+- [ ] **Step 2: Write the failing additions**
+
+In the main `it("exercising every non-generate route records zero fetches", ...)` block, just before the final `expect(recorded).toEqual([]);`, add two new route exercises. Locate a convenient spot (e.g., after the DELETE /api/stories/[slug] block) and insert:
+
+```ts
+    // ── POST /api/import/novelai/parse ─────────────────────────────────────
+    {
+      const { POST } = await import("@/app/api/import/novelai/parse/route");
+      const fixture = await readFile(
+        join(__dirname, "..", "..", "lib", "novelai", "__fixtures__", "sample.story")
+      );
+      const fd = new FormData();
+      fd.append(
+        "file",
+        new Blob([fixture], { type: "application/octet-stream" }),
+        "sample.story"
+      );
+      const req = new Request("http://localhost/api/import/novelai/parse", {
+        method: "POST",
+        body: fd,
+      }) as unknown as NextRequest;
+      const res = await POST(req);
+      expect(res.status).toBe(200);
+    }
+
+    // ── POST /api/import/novelai/commit (new-story) ────────────────────────
+    {
+      const { POST } = await import("@/app/api/import/novelai/commit/route");
+      const req = makeReq("http://localhost/api/import/novelai/commit", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          target: "new-story",
+          story: {
+            title: "Egress Guard Story",
+            description: "",
+            keywords: [],
+          },
+          bible: {
+            characters: [],
+            setting: "",
+            pov: "third-limited",
+            tone: "",
+            styleNotes: "",
+            nsfwPreferences: "",
+          },
+          chapters: [{ title: "C", body: "body" }],
+        }),
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(200);
+    }
+
+    // ── POST /api/import/novelai/commit (existing-story) ───────────────────
+    {
+      const { POST } = await import("@/app/api/import/novelai/commit/route");
+      const req = makeReq("http://localhost/api/import/novelai/commit", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          target: "existing-story",
+          slug,
+          chapters: [{ title: "Via Egress Test", body: "x" }],
+        }),
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(200);
+    }
+```
+
+If `readFile` isn't already imported at the top of the file, add it to the `node:fs/promises` import. Likewise `__dirname` — if the file uses ES modules and `__dirname` isn't available, substitute `new URL(".", import.meta.url).pathname` or read via `require.resolve` patterns used elsewhere in the file.
+
+Also add, at the top-level ROUTES EXERCISED block comment (the commented list of routes tested), three new lines:
+
+```
+ *   POST /api/import/novelai/parse
+ *   POST /api/import/novelai/commit  (new-story)
+ *   POST /api/import/novelai/commit  (existing-story, reuses seeded slug)
+```
+
+- [ ] **Step 3: Run the privacy test**
+
+Run:
+```bash
+cd /home/chase/projects/scriptr && npx vitest run tests/privacy/no-external-egress.test.ts
+```
+
+Expected: PASS. `recorded` stays empty because no new route fetches anything outbound.
+
+- [ ] **Step 4: Run the full test suite to make sure nothing else regressed**
+
+Run:
+```bash
+cd /home/chase/projects/scriptr && npm test
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 5: Commit**
+
+```bash
+cd /home/chase/projects/scriptr && git add tests/privacy/no-external-egress.test.ts && git commit -m "test(privacy): exercise NovelAI parse + commit routes (zero egress)"
+```
+
+---
+
+**End of Chunk 2.** We now have:
+- `POST /api/import/novelai/parse` — multipart in, preview JSON out, full error coverage.
+- `POST /api/import/novelai/commit` — both new-story and existing-story modes, with rollback on new-story failure.
+- Both routes exercised in the privacy egress test with `recorded === []` confirmed.
+
+---
+
+## Chunk 3: UI dialogs + entry points + e2e
+
+Two dialogs, two entry points, one end-to-end Playwright test. All dialog state is local (useState); no Zustand.
+
+### Task 3.1: Shared chapter-list subcomponent
+
+Both dialogs render a list of editable chapters. Extract that into a small component so both dialogs share it.
+
+**Files:**
+- Create: `/home/chase/projects/scriptr/components/import/ChapterEditList.tsx`
+- Create: `/home/chase/projects/scriptr/tests/components/import/ChapterEditList.test.tsx`
+
+- [ ] **Step 1: Write the failing test**
+
+Write to `/home/chase/projects/scriptr/tests/components/import/ChapterEditList.test.tsx`:
+
+```tsx
+// @vitest-environment jsdom
+import { describe, it, expect, vi } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/react";
+import { ChapterEditList } from "@/components/import/ChapterEditList";
+
+const initial = [
+  { title: "One", body: "body one" },
+  { title: "Two", body: "body two" },
+  { title: "", body: "body three" },
+];
+
+describe("ChapterEditList", () => {
+  it("renders one row per chapter with editable title", () => {
+    render(
+      <ChapterEditList chapters={initial} splitSource="marker" onChange={() => {}} />
+    );
+    expect(screen.getAllByRole("textbox").filter((n) => n.tagName === "INPUT")).toHaveLength(3);
+    expect(screen.getByDisplayValue("One")).toBeTruthy();
+    expect(screen.getByDisplayValue("Two")).toBeTruthy();
+  });
+
+  it("calls onChange when a title is edited", () => {
+    const onChange = vi.fn();
+    render(
+      <ChapterEditList chapters={initial} splitSource="marker" onChange={onChange} />
+    );
+    const input = screen.getByDisplayValue("One") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "One Updated" } });
+    expect(onChange).toHaveBeenCalled();
+    const last = onChange.mock.calls[onChange.mock.calls.length - 1][0];
+    expect(last[0].title).toBe("One Updated");
+  });
+
+  it("removes a chapter when delete is clicked", () => {
+    const onChange = vi.fn();
+    render(
+      <ChapterEditList chapters={initial} splitSource="marker" onChange={onChange} />
+    );
+    const buttons = screen.getAllByRole("button", { name: /delete/i });
+    fireEvent.click(buttons[1]);
+    const last = onChange.mock.calls[onChange.mock.calls.length - 1][0];
+    expect(last).toHaveLength(2);
+    expect(last.map((c: { title: string }) => c.title)).toEqual(["One", ""]);
+  });
+
+  it("merges a chapter into the next when 'merge with next' is clicked", () => {
+    const onChange = vi.fn();
+    render(
+      <ChapterEditList chapters={initial} splitSource="marker" onChange={onChange} />
+    );
+    const mergeButtons = screen.getAllByRole("button", { name: /merge with next/i });
+    // Row 0's "merge with next" should combine rows 0+1.
+    fireEvent.click(mergeButtons[0]);
+    const last = onChange.mock.calls[onChange.mock.calls.length - 1][0];
+    expect(last).toHaveLength(2);
+    expect(last[0].title).toBe("One");
+    expect(last[0].body).toBe("body one\n\nbody two");
+  });
+
+  it("shows the split-source badge", () => {
+    render(
+      <ChapterEditList chapters={initial} splitSource="scenebreak-fallback" onChange={() => {}} />
+    );
+    expect(screen.getByText(/scene breaks/i)).toBeTruthy();
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run:
+```bash
+cd /home/chase/projects/scriptr && npx vitest run tests/components/import/ChapterEditList.test.tsx
+```
+
+Expected: FAIL — component module not found.
+
+- [ ] **Step 3: Implement the component**
+
+Write to `/home/chase/projects/scriptr/components/import/ChapterEditList.tsx`:
+
+```tsx
+"use client";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Trash2, ArrowDownToLine } from "lucide-react";
+import type { ProposedChapter, SplitSource } from "@/lib/novelai/types";
+
+type Props = {
+  chapters: ProposedChapter[];
+  splitSource: SplitSource;
+  onChange: (next: ProposedChapter[]) => void;
+};
+
+const SPLIT_LABEL: Record<SplitSource, string> = {
+  marker: "Split by //// markers",
+  heading: "Split by chapter headings",
+  "scenebreak-fallback": "Split by scene breaks (verify)",
+  none: "Single chapter",
+};
+
+function wordCount(s: string): number {
+  return s.trim() ? s.trim().split(/\s+/).length : 0;
+}
+
+export function ChapterEditList({ chapters, splitSource, onChange }: Props) {
+  function updateAt(i: number, patch: Partial<ProposedChapter>) {
+    onChange(chapters.map((c, idx) => (idx === i ? { ...c, ...patch } : c)));
+  }
+  function deleteAt(i: number) {
+    onChange(chapters.filter((_, idx) => idx !== i));
+  }
+  function mergeWithNext(i: number) {
+    if (i >= chapters.length - 1) return;
+    const merged: ProposedChapter = {
+      title: chapters[i].title,
+      body: `${chapters[i].body}\n\n${chapters[i + 1].body}`.trim(),
+    };
+    const next: ProposedChapter[] = [
+      ...chapters.slice(0, i),
+      merged,
+      ...chapters.slice(i + 2),
+    ];
+    onChange(next);
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="text-xs uppercase text-muted-foreground">
+        {SPLIT_LABEL[splitSource]} · {chapters.length} chapter
+        {chapters.length === 1 ? "" : "s"}
+      </div>
+      {chapters.map((ch, i) => (
+        <div
+          key={i}
+          className="border border-border rounded p-3 flex flex-col gap-2"
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground tabular-nums w-8">
+              {String(i + 1).padStart(2, "0")}
+            </span>
+            <Input
+              value={ch.title}
+              onChange={(e) => updateAt(i, { title: e.target.value })}
+              placeholder="Untitled"
+              className="flex-1 text-sm"
+            />
+            <span className="text-xs text-muted-foreground tabular-nums">
+              {wordCount(ch.body).toLocaleString()} words
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label="Merge with next"
+              title="Merge with next chapter"
+              onClick={() => mergeWithNext(i)}
+              disabled={i >= chapters.length - 1}
+            >
+              <ArrowDownToLine className="size-3.5" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label={`Delete chapter ${i + 1}`}
+              onClick={() => deleteAt(i)}
+            >
+              <Trash2 className="size-3.5" />
+            </Button>
+          </div>
+          <Textarea
+            value={ch.body}
+            onChange={(e) => updateAt(i, { body: e.target.value })}
+            className="font-mono text-xs min-h-[120px]"
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run:
+```bash
+cd /home/chase/projects/scriptr && npx vitest run tests/components/import/ChapterEditList.test.tsx
+```
+
+Expected: PASS — all 5 tests green.
+
+- [ ] **Step 5: Commit**
+
+```bash
+cd /home/chase/projects/scriptr && git add components/import/ChapterEditList.tsx tests/components/import/ChapterEditList.test.tsx && git commit -m "feat(import): shared ChapterEditList component for NovelAI dialogs"
+```
+
+---
+
+### Task 3.2: NewStoryFromNovelAIDialog
+
+**Files:**
+- Create: `/home/chase/projects/scriptr/components/import/NewStoryFromNovelAIDialog.tsx`
+- Create: `/home/chase/projects/scriptr/tests/components/import/NewStoryFromNovelAIDialog.test.tsx`
+
+- [ ] **Step 1: Write the failing test**
+
+Write to `/home/chase/projects/scriptr/tests/components/import/NewStoryFromNovelAIDialog.test.tsx`:
+
+```tsx
+// @vitest-environment jsdom
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { NewStoryFromNovelAIDialog } from "@/components/import/NewStoryFromNovelAIDialog";
+
+// Stub sonner toast
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
+
+// Stub next/navigation router
+const push = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push }),
+}));
+
+function fakeParsedResponse() {
+  return {
+    ok: true,
+    data: {
+      parsed: {
+        title: "Garden at Dusk",
+        description: "a desc",
+        tags: ["a", "b"],
+        textPreview: "",
+        contextBlocks: [],
+        lorebookEntries: [],
+        prose: "body one\n\n////\n\nbody two",
+      },
+      split: {
+        chapters: [
+          { title: "One", body: "body one" },
+          { title: "Two", body: "body two" },
+        ],
+        splitSource: "marker",
+      },
+      proposed: {
+        story: {
+          title: "Garden at Dusk",
+          description: "a desc",
+          keywords: ["a", "b"],
+        },
+        bible: {
+          characters: [{ name: "Mira", description: "a gardener" }],
+          setting: "## Walled Garden\nold stones",
+          pov: "third-limited",
+          tone: "",
+          styleNotes: "",
+          nsfwPreferences: "",
+        },
+      },
+    },
+  };
+}
+
+describe("NewStoryFromNovelAIDialog", () => {
+  let originalFetch: typeof fetch;
+  beforeEach(() => {
+    originalFetch = global.fetch;
+    push.mockReset();
+  });
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it("shows the file picker on open", () => {
+    render(<NewStoryFromNovelAIDialog open onOpenChange={() => {}} />);
+    expect(screen.getByText(/import from novelai/i)).toBeTruthy();
+    // file input is present
+    expect(document.querySelector('input[type="file"]')).toBeTruthy();
+  });
+
+  it("parses the file and renders the preview on upload", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(fakeParsedResponse()), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    ) as unknown as typeof fetch;
+
+    render(<NewStoryFromNovelAIDialog open onOpenChange={() => {}} />);
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File([new Uint8Array([1, 2, 3])], "x.story", {
+      type: "application/octet-stream",
+    });
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("Garden at Dusk")).toBeTruthy();
+    });
+    expect(screen.getByText(/Mira/)).toBeTruthy();
+    expect(screen.getByText(/## Walled Garden/)).toBeTruthy();
+    expect(screen.getAllByDisplayValue(/body (one|two)/)).toHaveLength(2);
+  });
+
+  it("commits and navigates on 'Create story'", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(fakeParsedResponse()), { status: 200 })
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ ok: true, data: { slug: "garden-at-dusk", chapterIds: ["a", "b"] } }),
+          { status: 200 }
+        )
+      ) as unknown as typeof fetch;
+
+    render(<NewStoryFromNovelAIDialog open onOpenChange={() => {}} />);
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: { files: [new File([new Uint8Array([1, 2, 3])], "x.story")] },
+    });
+    await waitFor(() => screen.getByDisplayValue("Garden at Dusk"));
+
+    fireEvent.click(screen.getByRole("button", { name: /create story/i }));
+
+    await waitFor(() => {
+      expect(push).toHaveBeenCalledWith("/s/garden-at-dusk");
+    });
+  });
+
+  it("shows the parse error and a 'Choose a different file' button on parse failure", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ ok: false, error: "Unsupported NovelAI format version: got 99, expected 1." }),
+        { status: 400 }
+      )
+    ) as unknown as typeof fetch;
+
+    render(<NewStoryFromNovelAIDialog open onOpenChange={() => {}} />);
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: { files: [new File([new Uint8Array([1])], "bad.story")] },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Unsupported NovelAI format version/)).toBeTruthy();
+    });
+    expect(screen.getByRole("button", { name: /choose a different file/i })).toBeTruthy();
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run:
+```bash
+cd /home/chase/projects/scriptr && npx vitest run tests/components/import/NewStoryFromNovelAIDialog.test.tsx
+```
+
+Expected: FAIL — component module not found.
+
+- [ ] **Step 3: Implement the dialog**
+
+Write to `/home/chase/projects/scriptr/components/import/NewStoryFromNovelAIDialog.tsx`:
+
+```tsx
+"use client";
+
+import { useCallback, useState } from "react";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { ChapterEditList } from "@/components/import/ChapterEditList";
+import type { ParsedStory, ProposedChapter, ProposedWrite, SplitResult } from "@/lib/novelai/types";
+
+type Props = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+};
+
+type ParseOk = {
+  ok: true;
+  data: {
+    parsed: ParsedStory;
+    split: SplitResult;
+    proposed: ProposedWrite;
+  };
+};
+type ParseErr = { ok: false; error: string };
+
+type Stage =
+  | { kind: "idle" }
+  | { kind: "parsing" }
+  | { kind: "error"; message: string }
+  | { kind: "preview"; data: ParseOk["data"] };
+
+export function NewStoryFromNovelAIDialog({ open, onOpenChange }: Props) {
+  const [stage, setStage] = useState<Stage>({ kind: "idle" });
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [keywords, setKeywords] = useState("");
+  const [chapters, setChapters] = useState<ProposedChapter[]>([]);
+  const [saving, setSaving] = useState(false);
+  const router = useRouter();
+
+  const reset = useCallback(() => {
+    setStage({ kind: "idle" });
+    setTitle("");
+    setDescription("");
+    setKeywords("");
+    setChapters([]);
+  }, []);
+
+  const onFile = useCallback(async (f: File) => {
+    setStage({ kind: "parsing" });
+    const fd = new FormData();
+    fd.append("file", f);
+    try {
+      const res = await fetch("/api/import/novelai/parse", {
+        method: "POST",
+        body: fd,
+      });
+      const body = (await res.json()) as ParseOk | ParseErr;
+      if (!body.ok) {
+        setStage({ kind: "error", message: body.error });
+        return;
+      }
+      setStage({ kind: "preview", data: body.data });
+      setTitle(body.data.proposed.story.title);
+      setDescription(body.data.proposed.story.description);
+      setKeywords(body.data.proposed.story.keywords.join(", "));
+      setChapters(body.data.split.chapters);
+    } catch (err) {
+      setStage({
+        kind: "error",
+        message: err instanceof Error ? err.message : "Import failed — try again.",
+      });
+    }
+  }, []);
+
+  const onCommit = useCallback(async () => {
+    if (stage.kind !== "preview") return;
+    setSaving(true);
+    try {
+      const res = await fetch("/api/import/novelai/commit", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          target: "new-story",
+          story: {
+            title: title.trim() || stage.data.proposed.story.title,
+            description,
+            keywords: keywords
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean),
+          },
+          bible: stage.data.proposed.bible,
+          chapters,
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok || !body.ok) {
+        toast.error(body.error ?? `Import failed (${res.status})`);
+        return;
+      }
+      toast.success(`Created "${title}" (${chapters.length} chapters).`);
+      onOpenChange(false);
+      reset();
+      router.push(`/s/${body.data.slug}`);
+    } finally {
+      setSaving(false);
+    }
+  }, [stage, title, description, keywords, chapters, router, onOpenChange, reset]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-stretch justify-center">
+      <div className="bg-background border border-border rounded w-full max-w-[1400px] m-4 flex flex-col">
+        <div className="border-b border-border px-4 py-2 text-sm font-semibold">
+          Import from NovelAI
+        </div>
+
+        {stage.kind === "idle" && (
+          <div className="p-8 flex-1 flex flex-col items-center justify-center gap-3">
+            <p className="text-sm text-muted-foreground">
+              Choose a NovelAI <code>.story</code> file to import.
+            </p>
+            <input
+              type="file"
+              accept=".story,application/json"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void onFile(f);
+              }}
+              data-testid="novelai-file-input"
+            />
+          </div>
+        )}
+
+        {stage.kind === "parsing" && (
+          <div className="p-8 flex-1 flex items-center justify-center text-sm text-muted-foreground">
+            Parsing…
+          </div>
+        )}
+
+        {stage.kind === "error" && (
+          <div className="p-8 flex-1 flex flex-col items-center justify-center gap-3">
+            <p className="text-sm text-destructive">{stage.message}</p>
+            <Button type="button" variant="outline" onClick={reset}>
+              Choose a different file
+            </Button>
+          </div>
+        )}
+
+        {stage.kind === "preview" && (
+          <div className="grid grid-cols-[320px_1fr_320px] flex-1 min-h-0">
+            <div className="p-4 border-r border-border flex flex-col gap-3">
+              <div>
+                <div className="text-xs uppercase text-muted-foreground mb-1">Title</div>
+                <Input value={title} onChange={(e) => setTitle(e.target.value)} />
+              </div>
+              <div>
+                <div className="text-xs uppercase text-muted-foreground mb-1">Description</div>
+                <Textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  className="min-h-[100px] text-sm"
+                />
+              </div>
+              <div>
+                <div className="text-xs uppercase text-muted-foreground mb-1">
+                  Keywords (comma-separated)
+                </div>
+                <Input value={keywords} onChange={(e) => setKeywords(e.target.value)} />
+              </div>
+            </div>
+
+            <div className="p-4 overflow-auto">
+              <ChapterEditList
+                chapters={chapters}
+                splitSource={stage.data.split.splitSource}
+                onChange={setChapters}
+              />
+            </div>
+
+            <div className="p-4 border-l border-border overflow-auto flex flex-col gap-3">
+              <div className="text-xs uppercase text-muted-foreground">Proposed Bible</div>
+              <div>
+                <div className="text-xs font-semibold mb-1">Characters</div>
+                {stage.data.proposed.bible.characters.length === 0 ? (
+                  <div className="text-xs text-muted-foreground italic">None</div>
+                ) : (
+                  <ul className="text-xs flex flex-col gap-1">
+                    {stage.data.proposed.bible.characters.map((c, i) => (
+                      <li key={i}>
+                        <strong>{c.name}</strong>: {c.description.slice(0, 80)}
+                        {c.description.length > 80 ? "…" : ""}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <div>
+                <div className="text-xs font-semibold mb-1">Setting</div>
+                <pre className="text-xs text-muted-foreground whitespace-pre-wrap">
+                  {stage.data.proposed.bible.setting || "(empty)"}
+                </pre>
+              </div>
+              <div>
+                <div className="text-xs font-semibold mb-1">Style notes</div>
+                <pre className="text-xs text-muted-foreground whitespace-pre-wrap">
+                  {stage.data.proposed.bible.styleNotes || "(empty)"}
+                </pre>
+              </div>
+              <p className="text-xs text-muted-foreground italic">
+                Edit these in the Bible editor after import.
+              </p>
+            </div>
+          </div>
+        )}
+
+        <div className="border-t border-border px-4 py-3 flex justify-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              onOpenChange(false);
+              reset();
+            }}
+            disabled={saving}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            onClick={onCommit}
+            disabled={saving || stage.kind !== "preview" || chapters.length === 0}
+          >
+            {saving ? "Creating…" : "Create story"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run:
+```bash
+cd /home/chase/projects/scriptr && npx vitest run tests/components/import/NewStoryFromNovelAIDialog.test.tsx
+```
+
+Expected: PASS — all 4 tests green.
+
+- [ ] **Step 5: Commit**
+
+```bash
+cd /home/chase/projects/scriptr && git add components/import/NewStoryFromNovelAIDialog.tsx tests/components/import/NewStoryFromNovelAIDialog.test.tsx && git commit -m "feat(import): NewStoryFromNovelAIDialog — parse, preview, create"
+```
+
+---
+
+### Task 3.3: Wire the new-story dialog into LibraryList
+
+**Files:**
+- Modify: `/home/chase/projects/scriptr/components/library/LibraryList.tsx`
+
+- [ ] **Step 1: Add the import and button**
+
+Open [components/library/LibraryList.tsx](../../../components/library/LibraryList.tsx). Near the other component imports at the top, add:
+
+```ts
+import { NewStoryFromNovelAIDialog } from "@/components/import/NewStoryFromNovelAIDialog";
+```
+
+Near `setNewStoryOpen`, add a second `useState` for the NovelAI dialog:
+
+```ts
+const [novelaiOpen, setNovelaiOpen] = useState(false);
+```
+
+Immediately after the existing `<Button onClick={() => setNewStoryOpen(true)}>New story</Button>` on **both** occurrences (around lines 184 and 193-195 per the grep output from the exploratory step), add a sibling button:
+
+```tsx
+<Button variant="outline" onClick={() => setNovelaiOpen(true)}>
+  Import from NovelAI
+</Button>
+```
+
+At the bottom of the component, near the existing `{/* New story dialog */}` block, add:
+
+```tsx
+<NewStoryFromNovelAIDialog open={novelaiOpen} onOpenChange={setNovelaiOpen} />
+```
+
+- [ ] **Step 2: Typecheck + lint**
+
+Run:
+```bash
+cd /home/chase/projects/scriptr && npm run typecheck && npm run lint
+```
+
+Expected: both exit 0.
+
+- [ ] **Step 3: Run the full test suite**
+
+Run:
+```bash
+cd /home/chase/projects/scriptr && npm test
+```
+
+Expected: PASS.
+
+- [ ] **Step 4: Manual smoke check (dev server)**
+
+Run `npm run dev` in a separate terminal, navigate to `http://127.0.0.1:3000/`, click "Import from NovelAI", confirm the dialog renders. Close it with Cancel. Stop the dev server. (This is a fast visual sanity check — the e2e test in Task 3.6 automates it.)
+
+- [ ] **Step 5: Commit**
+
+```bash
+cd /home/chase/projects/scriptr && git add components/library/LibraryList.tsx && git commit -m "feat(import): wire Import-from-NovelAI button into LibraryList"
+```
+
+---
+
+### Task 3.4: AddChaptersFromNovelAIDialog
+
+**Files:**
+- Create: `/home/chase/projects/scriptr/components/import/AddChaptersFromNovelAIDialog.tsx`
+- Create: `/home/chase/projects/scriptr/tests/components/import/AddChaptersFromNovelAIDialog.test.tsx`
+
+- [ ] **Step 1: Write the failing test**
+
+Write to `/home/chase/projects/scriptr/tests/components/import/AddChaptersFromNovelAIDialog.test.tsx`:
+
+```tsx
+// @vitest-environment jsdom
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { AddChaptersFromNovelAIDialog } from "@/components/import/AddChaptersFromNovelAIDialog";
+
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
+
+function fakeParseResp() {
+  return {
+    ok: true,
+    data: {
+      parsed: {
+        title: "Ignored Title",
+        description: "",
+        tags: ["ignored"],
+        textPreview: "",
+        contextBlocks: [],
+        lorebookEntries: [],
+        prose: "a\n\n////\n\nb",
+      },
+      split: {
+        chapters: [
+          { title: "A", body: "a" },
+          { title: "B", body: "b" },
+        ],
+        splitSource: "marker",
+      },
+      proposed: {
+        story: { title: "Ignored Title", description: "", keywords: ["ignored"] },
+        bible: {
+          characters: [],
+          setting: "",
+          pov: "third-limited",
+          tone: "",
+          styleNotes: "",
+          nsfwPreferences: "",
+        },
+      },
+    },
+  };
+}
+
+describe("AddChaptersFromNovelAIDialog", () => {
+  let originalFetch: typeof fetch;
+  beforeEach(() => {
+    originalFetch = global.fetch;
+  });
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it("shows the discarded-data banner in the preview", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(fakeParseResp()), { status: 200 })
+    ) as unknown as typeof fetch;
+
+    const onImported = vi.fn();
+    render(
+      <AddChaptersFromNovelAIDialog
+        slug="host-story"
+        open
+        onOpenChange={() => {}}
+        onImported={onImported}
+      />
+    );
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: { files: [new File([new Uint8Array([1])], "x.story")] },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/ignored in this mode/i)).toBeTruthy();
+    });
+  });
+
+  it("commits with target='existing-story' and no bible/story fields", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(fakeParseResp()), { status: 200 })
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ ok: true, data: { slug: "host-story", chapterIds: ["x", "y"] } }),
+          { status: 200 }
+        )
+      );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const onImported = vi.fn();
+    render(
+      <AddChaptersFromNovelAIDialog
+        slug="host-story"
+        open
+        onOpenChange={() => {}}
+        onImported={onImported}
+      />
+    );
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: { files: [new File([new Uint8Array([1])], "x.story")] },
+    });
+    await waitFor(() => screen.getByText(/ignored in this mode/i));
+
+    fireEvent.click(screen.getByRole("button", { name: /add 2 chapter/i }));
+
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        (c) => String(c[0]).endsWith("/commit")
+      );
+      expect(call).toBeTruthy();
+      const payload = JSON.parse(call![1].body as string);
+      expect(payload.target).toBe("existing-story");
+      expect(payload.slug).toBe("host-story");
+      expect(payload).not.toHaveProperty("bible");
+      expect(payload).not.toHaveProperty("story");
+      expect(payload.chapters).toHaveLength(2);
+    });
+    expect(onImported).toHaveBeenCalledWith(["x", "y"]);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run:
+```bash
+cd /home/chase/projects/scriptr && npx vitest run tests/components/import/AddChaptersFromNovelAIDialog.test.tsx
+```
+
+Expected: FAIL — module not found.
+
+- [ ] **Step 3: Implement the dialog**
+
+Write to `/home/chase/projects/scriptr/components/import/AddChaptersFromNovelAIDialog.tsx`:
+
+```tsx
+"use client";
+
+import { useCallback, useState } from "react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { ChapterEditList } from "@/components/import/ChapterEditList";
+import type { ParsedStory, ProposedChapter, SplitResult } from "@/lib/novelai/types";
+
+type Props = {
+  slug: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onImported: (chapterIds: string[]) => void;
+};
+
+type ParseOk = {
+  ok: true;
+  data: {
+    parsed: ParsedStory;
+    split: SplitResult;
+    proposed: unknown; // not used in this mode
+  };
+};
+type ParseErr = { ok: false; error: string };
+
+type Stage =
+  | { kind: "idle" }
+  | { kind: "parsing" }
+  | { kind: "error"; message: string }
+  | { kind: "preview"; split: SplitResult };
+
+export function AddChaptersFromNovelAIDialog({
+  slug,
+  open,
+  onOpenChange,
+  onImported,
+}: Props) {
+  const [stage, setStage] = useState<Stage>({ kind: "idle" });
+  const [chapters, setChapters] = useState<ProposedChapter[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  const reset = useCallback(() => {
+    setStage({ kind: "idle" });
+    setChapters([]);
+  }, []);
+
+  const onFile = useCallback(async (f: File) => {
+    setStage({ kind: "parsing" });
+    const fd = new FormData();
+    fd.append("file", f);
+    try {
+      const res = await fetch("/api/import/novelai/parse", {
+        method: "POST",
+        body: fd,
+      });
+      const body = (await res.json()) as ParseOk | ParseErr;
+      if (!body.ok) {
+        setStage({ kind: "error", message: body.error });
+        return;
+      }
+      setStage({ kind: "preview", split: body.data.split });
+      setChapters(body.data.split.chapters);
+    } catch (err) {
+      setStage({
+        kind: "error",
+        message: err instanceof Error ? err.message : "Import failed — try again.",
+      });
+    }
+  }, []);
+
+  const onCommit = useCallback(async () => {
+    if (stage.kind !== "preview") return;
+    setSaving(true);
+    try {
+      const res = await fetch("/api/import/novelai/commit", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          target: "existing-story",
+          slug,
+          chapters,
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok || !body.ok) {
+        toast.error(body.error ?? `Import failed (${res.status})`);
+        return;
+      }
+      toast.success(`Added ${chapters.length} chapter${chapters.length === 1 ? "" : "s"}.`);
+      onImported(body.data.chapterIds);
+      onOpenChange(false);
+      reset();
+    } finally {
+      setSaving(false);
+    }
+  }, [stage, slug, chapters, onImported, onOpenChange, reset]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-stretch justify-center">
+      <div className="bg-background border border-border rounded w-full max-w-[1100px] m-4 flex flex-col">
+        <div className="border-b border-border px-4 py-2 text-sm font-semibold">
+          Import chapters from .story
+        </div>
+
+        {stage.kind === "idle" && (
+          <div className="p-8 flex-1 flex flex-col items-center justify-center gap-3">
+            <p className="text-sm text-muted-foreground">
+              Choose a NovelAI <code>.story</code> file to append as chapters.
+            </p>
+            <input
+              type="file"
+              accept=".story,application/json"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void onFile(f);
+              }}
+              data-testid="novelai-file-input"
+            />
+          </div>
+        )}
+
+        {stage.kind === "parsing" && (
+          <div className="p-8 flex-1 flex items-center justify-center text-sm text-muted-foreground">
+            Parsing…
+          </div>
+        )}
+
+        {stage.kind === "error" && (
+          <div className="p-8 flex-1 flex flex-col items-center justify-center gap-3">
+            <p className="text-sm text-destructive">{stage.message}</p>
+            <Button type="button" variant="outline" onClick={reset}>
+              Choose a different file
+            </Button>
+          </div>
+        )}
+
+        {stage.kind === "preview" && (
+          <div className="p-4 flex-1 flex flex-col gap-3 overflow-auto">
+            <div className="border border-border rounded bg-muted/30 p-2 text-xs text-muted-foreground">
+              Description, lorebook, and tags from this .story file are ignored in this mode.
+              Use <em>Import from NovelAI</em> on the home page to import everything.
+            </div>
+            <ChapterEditList
+              chapters={chapters}
+              splitSource={stage.split.splitSource}
+              onChange={setChapters}
+            />
+          </div>
+        )}
+
+        <div className="border-t border-border px-4 py-3 flex justify-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              onOpenChange(false);
+              reset();
+            }}
+            disabled={saving}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            onClick={onCommit}
+            disabled={saving || stage.kind !== "preview" || chapters.length === 0}
+          >
+            {saving
+              ? "Adding…"
+              : `Add ${chapters.length} chapter${chapters.length === 1 ? "" : "s"}`}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run:
+```bash
+cd /home/chase/projects/scriptr && npx vitest run tests/components/import/AddChaptersFromNovelAIDialog.test.tsx
+```
+
+Expected: PASS — both tests green.
+
+- [ ] **Step 5: Commit**
+
+```bash
+cd /home/chase/projects/scriptr && git add components/import/AddChaptersFromNovelAIDialog.tsx tests/components/import/AddChaptersFromNovelAIDialog.test.tsx && git commit -m "feat(import): AddChaptersFromNovelAIDialog for existing stories"
+```
+
+---
+
+### Task 3.5: Wire the add-chapters dialog into ChapterList
+
+**Files:**
+- Modify: `/home/chase/projects/scriptr/components/editor/ChapterList.tsx`
+
+- [ ] **Step 1: Add import + second button**
+
+Open [components/editor/ChapterList.tsx](../../../components/editor/ChapterList.tsx). Near the existing import for `ImportChapterDialog` (around line 34), add:
+
+```ts
+import { AddChaptersFromNovelAIDialog } from "@/components/import/AddChaptersFromNovelAIDialog";
+```
+
+Near the existing `const [importOpen, setImportOpen] = useState(false);`, add a sibling:
+
+```ts
+const [novelaiOpen, setNovelaiOpen] = useState(false);
+```
+
+Inside the `{/* Import chapter button */}` block (around lines 282-294), add a second button below the existing one:
+
+```tsx
+<Button
+  type="button"
+  variant="ghost"
+  size="sm"
+  onClick={() => setNovelaiOpen(true)}
+  className="w-full justify-start gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+>
+  <Upload className="size-3.5" />
+  Import chapters from .story
+</Button>
+```
+
+And near the existing `<ImportChapterDialog ... />` JSX (around line 296), add a sibling:
+
+```tsx
+<AddChaptersFromNovelAIDialog
+  slug={slug}
+  open={novelaiOpen}
+  onOpenChange={setNovelaiOpen}
+  onImported={() => {
+    void mutate();
+  }}
+/>
+```
+
+- [ ] **Step 2: Typecheck + lint + test**
+
+Run:
+```bash
+cd /home/chase/projects/scriptr && npm run typecheck && npm run lint && npm test
+```
+
+Expected: all green.
+
+- [ ] **Step 3: Commit**
+
+```bash
+cd /home/chase/projects/scriptr && git add components/editor/ChapterList.tsx && git commit -m "feat(import): wire AddChapters-from-NovelAI into editor ChapterList"
+```
+
+---
+
+### Task 3.6: E2E happy-path Playwright test
+
+**Files:**
+- Create: `/home/chase/projects/scriptr/tests/e2e/novelai-import.spec.ts`
+
+- [ ] **Step 1: Write the test**
+
+Write to `/home/chase/projects/scriptr/tests/e2e/novelai-import.spec.ts`:
+
+```ts
+import { test, expect } from "@playwright/test";
+import { join } from "node:path";
+
+const FIXTURE = join(
+  __dirname,
+  "..",
+  "..",
+  "lib",
+  "novelai",
+  "__fixtures__",
+  "sample.story"
+);
+
+test("imports a .story file wholesale into a new story", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: /import from novelai/i }).first().click();
+
+  // Set the file on the hidden file input.
+  const fileInput = page.locator('input[type="file"]');
+  await fileInput.setInputFiles(FIXTURE);
+
+  // Preview renders; title prefilled from the fixture.
+  await expect(page.getByDisplayValue("Garden at Dusk")).toBeVisible();
+
+  // At least 2 chapters from the //// split.
+  const chapterRows = page.locator("text=/01\\s|02\\s|0[1-9]/i");
+  await expect(chapterRows.first()).toBeVisible();
+
+  await page.getByRole("button", { name: /create story/i }).click();
+
+  // Navigated to the story editor page.
+  await expect(page).toHaveURL(/\/s\/garden-at-dusk/);
+});
+```
+
+- [ ] **Step 2: Run the e2e test**
+
+Run:
+```bash
+cd /home/chase/projects/scriptr && npm run e2e -- tests/e2e/novelai-import.spec.ts
+```
+
+Expected: PASS. Playwright spins its own dev server on port 3001 using `SCRIPTR_DATA_DIR=/tmp/scriptr-e2e` per [playwright.config.ts](../../../playwright.config.ts), so this test does not touch real user data.
+
+- [ ] **Step 3: Commit**
+
+```bash
+cd /home/chase/projects/scriptr && git add tests/e2e/novelai-import.spec.ts && git commit -m "test(e2e): wholesale NovelAI import creates new story"
+```
+
+---
+
+### Task 3.7: Final green-pass + docs
+
+**Files:** none new; verification only.
+
+- [ ] **Step 1: Run everything**
+
+Run:
+```bash
+cd /home/chase/projects/scriptr && npm run lint && npm run typecheck && npm test && npm run e2e
+```
+
+Expected: all four exit 0 with zero failures.
+
+- [ ] **Step 2: Smoke-test in the browser once more**
+
+Start `npm run dev`, navigate to `http://127.0.0.1:3000/`. Import the fixture `.story`, verify the new story renders with chapters. Open an existing story, click "Import chapters from .story", import the same fixture, verify chapters are appended. Stop the dev server.
+
+- [ ] **Step 3: Final commit if anything needs cleanup**
+
+If the green-pass revealed any straggler issues (stale imports, lint warnings, etc.), fix and commit. If clean, there's nothing to commit.
+
+---
+
+**End of Chunk 3 — feature complete.**
+
+At this point:
+- User can click "Import from NovelAI" on the stories list, pick a `.story` file, and produce a new story with description/keywords/Bible/chapters auto-populated.
+- User can click "Import chapters from .story" inside an existing story to append chapters from a different NovelAI session.
+- The `////` marker works in both flows and in the existing paste-based `ImportChapterDialog`.
+- Both new routes are exercised by the privacy egress test and provably don't fetch anything outbound.
+- The synthetic fixture lets unit, API, component, and e2e tests run without depending on any real NovelAI export.
+- All tests (unit, API, component, privacy, e2e) pass on a clean checkout.
+

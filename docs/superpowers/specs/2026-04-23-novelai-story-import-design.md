@@ -118,7 +118,7 @@ Server:
     decode.ts    — base64 + msgpack decode, tree walk, source filter
     split.ts     — //// marker, heading heuristics, chapter chunks
     map.ts       — context/lorebook → Bible fields
-    types.ts     — ParsedStory, ProposedChapter, ProposedBible, SplitResult
+    types.ts     — ParsedStory, ProposedChapter, ProposedWrite, SplitResult
   lib/publish/cleanup.ts (existing)
                  — extend splitChapterChunks to recognize //// as well
 ```
@@ -173,7 +173,7 @@ Steps:
 | Invalid outer JSON | `"File is not a valid NovelAI .story file."` |
 | Wrong `storyContainerVersion` | `"Unsupported NovelAI format version: got N, expected 1."` |
 | msgpack decode throws | `"Could not read the document inside this .story file."` |
-| No source=2 segments | `"No AI-generated prose found — did you import before running any AI turns?"` |
+| Tree walk found no prose segments ≥60 chars | `"No AI-generated prose found — did you import before running any AI turns?"` |
 | File > 10MB | `"File too large (limit 10MB)."` |
 | Upload missing | `"No file uploaded."` |
 
