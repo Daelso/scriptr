@@ -95,3 +95,35 @@ describe("splitProse — chapter headings", () => {
     expect(r.chapters[0].title).toBe("");
   });
 });
+
+describe("splitProse — horizontal-rule fallback", () => {
+  it("ignores 1-2 horizontal rules (likely scene breaks, not chapter breaks)", () => {
+    const prose = "a\n\n* * *\n\nb";
+    const r = splitProse(prose);
+    expect(r.splitSource).toBe("none");
+    expect(r.chapters).toHaveLength(1);
+    expect(r.chapters[0].body).toContain("* * *");
+  });
+
+  it("splits on 3+ horizontal rules as chapter breaks", () => {
+    const prose = "a\n\n***\n\nb\n\n***\n\nc\n\n***\n\nd";
+    const r = splitProse(prose);
+    expect(r.splitSource).toBe("scenebreak-fallback");
+    expect(r.chapters).toHaveLength(4);
+    expect(r.chapters.map((c) => c.body)).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("also accepts --- as rule lines", () => {
+    const prose = "a\n\n---\n\nb\n\n---\n\nc\n\n---\n\nd";
+    const r = splitProse(prose);
+    expect(r.splitSource).toBe("scenebreak-fallback");
+    expect(r.chapters).toHaveLength(4);
+  });
+
+  it("also accepts ___ as rule lines", () => {
+    const prose = "a\n\n___\n\nb\n\n___\n\nc\n\n___\n\nd";
+    const r = splitProse(prose);
+    expect(r.splitSource).toBe("scenebreak-fallback");
+    expect(r.chapters).toHaveLength(4);
+  });
+});
