@@ -74,7 +74,7 @@ Electron's `app.getPath("userData")` resolves the right root per platform; we ap
 
 - **Windows:** `%APPDATA%\scriptr\data` (`C:\Users\<user>\AppData\Roaming\scriptr\data`)
 - **macOS:** `~/Library/Application Support/scriptr/data`
-- **Linux:** `$XDG_DATA_HOME/scriptr/data`, falling back to `~/.local/share/scriptr/data`
+- **Linux:** `$XDG_CONFIG_HOME/scriptr/data`, falling back to `~/.config/scriptr/data` (this is what Electron's `app.getPath("userData")` resolves to on Linux — `appData` defaults to `$XDG_CONFIG_HOME` or `~/.config`, not `~/.local/share`)
 
 ### Integration point
 
@@ -180,11 +180,13 @@ Content:
 
 ### Mechanism
 
-`electron-updater` with GitHub Releases as the feed. On startup, after the main window is shown, call `autoUpdater.checkForUpdates()` unless `updates.checkOnLaunch === false` **or the app is in first-run onboarding** (no API key configured yet). First-run suppression prevents the very first launch from making any network call before the user has configured anything — the check resumes on the next launch after onboarding. If an update is found, download in the background. When ready, show a non-modal notification in the app:
+`electron-updater` with GitHub Releases as the feed. After the main window's `did-finish-load` event, call `autoUpdater.checkForUpdates()` unless `updates.checkOnLaunch === false` **or the app is in first-run onboarding** (no API key configured yet). First-run suppression prevents the very first launch from making any network call before the user has configured anything — the check resumes on the next launch after onboarding. If an update is found, download in the background. When ready, show a non-modal notification in the app:
 
-> Update v0.3.0 ready — restart to install.
+> Update v0.3.0 downloaded — quit the app to install on next launch.
 
-User clicks, `autoUpdater.quitAndInstall()` exits and relaunches into the new version.
+`autoUpdater.autoInstallOnAppQuit = true` means the install happens on the next normal exit; the user doesn't need to click anything beyond closing the window. We deliberately **do not** wire a "Restart to install" button — that would require either a renderer→main IPC bridge (excluded by the no-preload constraint in the Process Architecture section) or a sentinel-file watcher in the main process (additional surface area for v1). Install-on-quit is consistent with the no-IPC posture and works without ceremony.
+
+The notification is delivered to the renderer via `webContents.executeJavaScript` dispatching a `CustomEvent("scriptr:update-ready", { detail: <version> })` — the renderer listens for this event in a small client-side hook and shows a toast. No mutable IPC; one-way main→renderer notification only.
 
 ### Settings
 
@@ -192,9 +194,10 @@ New section in `app/settings/page.tsx`, visible only under Electron:
 
 - `updates.checkOnLaunch: boolean` (default `true`)
 - `updates.lastCheckedAt: string` (read-only ISO timestamp)
-- **Check now** button — force-runs a check regardless of toggle state.
 
 Stored in `data/config.json` alongside existing config. Main process reads it on launch.
+
+**No "Check now" button in v1.** A user-triggered check would need a way to call into the main process from the renderer; without an IPC bridge or sentinel-file mechanism we can't make the button do what it claims. Cut from v1 — users wanting an immediate check can quit and relaunch.
 
 ### Privacy surface
 
