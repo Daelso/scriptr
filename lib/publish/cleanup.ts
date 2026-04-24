@@ -146,8 +146,11 @@ function normalizeQuotes(input: string, warnings: string[]): string {
 
 // Chapter-break pre-split. Runs BEFORE cleanup — the marker is consumed
 // as a chapter delimiter, not fed to normalizeSceneBreaks.
-// Matches whole-line `=== CHAPTER ===` with case-insensitive / relaxed whitespace.
-const CHAPTER_MARKER = /^[ \t]*={3,}[ \t]*chapter[ \t]*={3,}[ \t]*$/gim;
+// Matches whole-line chapter markers. Two accepted forms:
+//   === CHAPTER === (classic paste-importer marker)
+//   ////            (4+ slashes; shared with the NovelAI .story importer)
+const CHAPTER_MARKER =
+  /^[ \t]*(?:={3,}[ \t]*chapter[ \t]*={3,}|\/{4,})[ \t]*$/gim;
 
 export function splitChapterChunks(raw: string): string[] {
   return raw.split(CHAPTER_MARKER);
