@@ -23,7 +23,7 @@ function makeReq(
   if (file) {
     fd.append(
       "file",
-      new Blob([file], { type: "application/octet-stream" }),
+      new Blob([new Uint8Array(file)], { type: "application/octet-stream" }),
       filename
     );
   }

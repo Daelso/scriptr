@@ -13,11 +13,16 @@ export async function POST(req: NextRequest) {
   }
 
   const fileEntry = form.get("file");
-  if (!(fileEntry instanceof File) && !(fileEntry instanceof Blob)) {
+  if (
+    fileEntry === null ||
+    typeof fileEntry !== "object" ||
+    typeof (fileEntry as { arrayBuffer?: unknown }).arrayBuffer !== "function"
+  ) {
     return fail("No file uploaded.", 400);
   }
+  const fileLike = fileEntry as { arrayBuffer(): Promise<ArrayBuffer> };
 
-  const buf = Buffer.from(await fileEntry.arrayBuffer());
+  const buf = Buffer.from(await fileLike.arrayBuffer());
   if (buf.byteLength === 0) {
     return fail("No file uploaded.", 400);
   }
