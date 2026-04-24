@@ -382,3 +382,20 @@ describe("splitChapterChunks", () => {
     expect(out[0].trim()).toBe("");
   });
 });
+
+describe("splitChapterChunks — //// marker", () => {
+  it("splits on //// alongside === CHAPTER ===", () => {
+    const raw = "first\n\n////\n\nsecond";
+    const parts = splitChapterChunks(raw);
+    expect(parts).toHaveLength(2);
+    expect(parts[0].trim()).toBe("first");
+    expect(parts[1].trim()).toBe("second");
+  });
+
+  it("splits on either //// or === CHAPTER === in the same document", () => {
+    const raw = "a\n\n////\n\nb\n\n=== CHAPTER ===\n\nc";
+    const parts = splitChapterChunks(raw);
+    expect(parts).toHaveLength(3);
+    expect(parts.map((p) => p.trim())).toEqual(["a", "b", "c"]);
+  });
+});
