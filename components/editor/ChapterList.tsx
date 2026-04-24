@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ChapterListItem } from "@/components/editor/ChapterListItem";
 import { ImportChapterDialog } from "@/components/publish/ImportChapterDialog";
+import { AddChaptersFromNovelAIDialog } from "@/components/import/AddChaptersFromNovelAIDialog";
 import type { Chapter } from "@/lib/types";
 
 // ─── Fetcher ──────────────────────────────────────────────────────────────────
@@ -65,6 +66,7 @@ export function ChapterList({ slug, selectedChapterId, onSelect }: ChapterListPr
   const [newChapterTitle, setNewChapterTitle] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [novelaiOpen, setNovelaiOpen] = useState(false);
 
   // ── DnD sensors ───────────────────────────────────────────────────────────
 
@@ -291,12 +293,31 @@ export function ChapterList({ slug, selectedChapterId, onSelect }: ChapterListPr
           <Upload className="size-3.5" />
           Import chapter
         </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => setNovelaiOpen(true)}
+          className="w-full justify-start gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <Upload className="size-3.5" />
+          Import chapters from .story
+        </Button>
       </div>
 
       <ImportChapterDialog
         slug={slug}
         open={importOpen}
         onOpenChange={setImportOpen}
+        onImported={() => {
+          void mutate();
+        }}
+      />
+
+      <AddChaptersFromNovelAIDialog
+        slug={slug}
+        open={novelaiOpen}
+        onOpenChange={setNovelaiOpen}
         onImported={() => {
           void mutate();
         }}
