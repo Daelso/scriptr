@@ -20,7 +20,7 @@ test.describe("NovelAI .story import", () => {
     await rm("/tmp/scriptr-e2e", { recursive: true, force: true });
   });
 
-  test("imports a .story file wholesale into a new story", async ({ page }) => {
+  test("imports a .story file with //// into multiple stories", async ({ page }) => {
     await page.goto("/");
     await page.getByRole("button", { name: /import from novelai/i }).first().click();
 
@@ -28,35 +28,31 @@ test.describe("NovelAI .story import", () => {
     const fileInput = page.locator('input[type="file"]');
     await fileInput.setInputFiles(FIXTURE);
 
-    // Preview renders; title prefilled from the fixture.
-    // getByDisplayValue is not available in this Playwright version — use
-    // toHaveValue on the first visible textbox in the preview panel instead.
-    await expect(page.getByRole("textbox").first()).toHaveValue("Garden at Dusk", {
+    // The fixture has a `////` marker, so the preview shows two story-cards.
+    await expect(page.locator('[data-testid="story-card-0"]')).toBeVisible({
       timeout: 10_000,
     });
+    await expect(page.locator('[data-testid="story-card-1"]')).toBeVisible();
 
-    // Chapter-list split-source badge proves the //// marker was honored.
-    await expect(page.getByText(/split by \/\/\/\/ markers/i)).toBeVisible();
+    // Story 1 keeps the mapped title with a "Part 1" suffix; Story 2 is "Part 2".
+    await expect(
+      page.locator('input[value="Garden at Dusk - Part 1"]')
+    ).toBeVisible();
+    await expect(
+      page.locator('input[value="Garden at Dusk - Part 2"]')
+    ).toBeVisible();
 
-    await page.getByRole("button", { name: /create story/i }).click();
+    // Commit: "Create 2 stories".
+    await page.getByRole("button", { name: /create 2 stories/i }).click();
 
-    // Redirect to the story editor. The URL may include a ?chapter= query
-    // param, so match the slug before any optional query string.
-    await expect(page).toHaveURL(/\/s\/garden-at-dusk(\?.*)?$/, { timeout: 15_000 });
+    // Redirects to the first story's editor.
+    await expect(page).toHaveURL(
+      /\/s\/garden-at-dusk-part-1(\?.*)?$/,
+      { timeout: 15_000 }
+    );
 
-    // The editor opens on chapter 1. Chapter 1 content from the fixture is
-    // visible in the section editor (the garden prose before the //// split).
+    // The editor opens on the first chapter; fixture-specific prose is visible.
     await expect(page.getByText(/The garden at dusk/i).first()).toBeVisible({
-      timeout: 10_000,
-    });
-
-    // Click chapter 2 in the chapter list to load its content. Chapter 2
-    // contains "Chapter 2: Morning" as inline prose (the //// split placed it
-    // at the top of the second chapter body).
-    await page.getByText("02").click();
-
-    // Editor shows fixture-specific prose from chapter 2.
-    await expect(page.getByText(/Chapter 2: Morning/i).first()).toBeVisible({
       timeout: 10_000,
     });
   });
