@@ -77,3 +77,33 @@ describe("POST /api/import/novelai/parse — errors", () => {
     expect(body.error).toContain("Unsupported NovelAI format version");
   });
 });
+
+describe("POST /api/import/novelai/parse — happy path", () => {
+  let tmp: string;
+  const originalEnv = process.env;
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), "scriptr-parse-"));
+    process.env = { ...originalEnv, SCRIPTR_DATA_DIR: tmp };
+  });
+  afterEach(async () => {
+    process.env = originalEnv;
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  it("returns parsed/split/proposed for the fixture", async () => {
+    const file = await readFile(FIXTURE);
+    const { POST } = await import("@/app/api/import/novelai/parse/route");
+    const res = await POST(
+      makeReq("http://localhost/api/import/novelai/parse", file)
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.data.parsed.title).toBe("Garden at Dusk");
+    expect(body.data.split.splitSource).toBe("marker");
+    expect(body.data.split.chapters.length).toBeGreaterThanOrEqual(2);
+    expect(body.data.proposed.story.keywords).toEqual(["fixture", "test"]);
+    expect(body.data.proposed.bible.characters.map((c: { name: string }) => c.name))
+      .toContain("Mira");
+  });
+});
