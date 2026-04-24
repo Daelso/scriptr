@@ -17,13 +17,14 @@ const FIXTURE = join(
 function makeReq(
   url: string,
   file: Buffer | null,
-  filename = "sample.story"
+  filename = "sample.story",
+  type = "application/octet-stream"
 ): NextRequest {
   const fd = new FormData();
   if (file) {
     fd.append(
       "file",
-      new Blob([new Uint8Array(file)], { type: "application/octet-stream" }),
+      new Blob([new Uint8Array(file)], { type }),
       filename
     );
   }
@@ -105,5 +106,55 @@ describe("POST /api/import/novelai/parse — happy path", () => {
     expect(body.data.proposed.story.keywords).toEqual(["fixture", "test"]);
     expect(body.data.proposed.bible.characters.map((c: { name: string }) => c.name))
       .toContain("Mira");
+  });
+
+  it("accepts a .txt upload and cleans NovelAI artifacts", async () => {
+    const text = [
+      "Story Premise (fixed canon):",
+      "User-typed canon that should be dropped.",
+      "More directives.",
+      "[1/2]",
+      "[1/2]",
+      '"Dare," I said.',
+      "",
+      "{ Author note that should vanish. }",
+      "",
+      "More of the story continues here.",
+      "",
+      "[2/2]",
+      "Second page of prose.",
+    ].join("\n");
+
+    const buf = Buffer.from(text, "utf-8");
+    const { POST } = await import("@/app/api/import/novelai/parse/route");
+    const res = await POST(
+      makeReq(
+        "http://localhost/api/import/novelai/parse",
+        buf,
+        "My Story (2026-04-24T14_16_27.902Z).txt",
+        "text/plain"
+      )
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    // Title derived from filename (timestamp suffix stripped).
+    expect(body.data.parsed.title).toBe("My Story");
+    // Bible/fields empty for .txt imports.
+    expect(body.data.parsed.tags).toEqual([]);
+    expect(body.data.parsed.contextBlocks).toEqual([]);
+    expect(body.data.parsed.lorebookEntries).toEqual([]);
+    expect(body.data.parsed.description).toBe("");
+    // Cleaned prose contains short dialogue and no markers/notes/premise.
+    expect(body.data.parsed.prose).toContain('"Dare," I said.');
+    expect(body.data.parsed.prose).toContain("More of the story continues");
+    expect(body.data.parsed.prose).toContain("Second page of prose.");
+    expect(body.data.parsed.prose).not.toContain("Story Premise");
+    expect(body.data.parsed.prose).not.toContain("User-typed canon");
+    expect(body.data.parsed.prose).not.toContain("[1/2]");
+    expect(body.data.parsed.prose).not.toContain("[2/2]");
+    expect(body.data.parsed.prose).not.toContain("Author note");
+    expect(body.data.parsed.prose).not.toContain("{");
+    expect(body.data.parsed.prose).not.toContain("}");
   });
 });
