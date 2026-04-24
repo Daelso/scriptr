@@ -52,10 +52,12 @@
  *   DELETE /api/stories/[slug]/chapters/[id]
  *   DELETE /api/stories/[slug]
  *   POST /api/import/novelai/commit  (new-story mode)
+ *   POST /api/import/novelai/parse
+ *   POST /api/import/novelai/commit  (existing-story, reuses seeded slug)
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { NextRequest } from "next/server";
@@ -358,6 +360,22 @@ describe("no external egress from API routes", () => {
       expect(res.status).toBe(200);
     }
 
+    // ── POST /api/import/novelai/commit (existing-story, reuses seed) ──────
+    {
+      const { POST } = await import("@/app/api/import/novelai/commit/route");
+      const req = makeReq("http://localhost/api/import/novelai/commit", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          target: "existing-story",
+          slug, // the seeded story from earlier in this test
+          chapters: [{ title: "Via Egress Test", body: "some body" }],
+        }),
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(200);
+    }
+
     // ── DELETE /api/stories/[slug] ─────────────────────────────────────────
     {
       const { DELETE } = await import("@/app/api/stories/[slug]/route");
@@ -387,6 +405,26 @@ describe("no external egress from API routes", () => {
         }),
         headers: { "content-type": "application/json" },
       });
+      const res = await POST(req);
+      expect(res.status).toBe(200);
+    }
+
+    // ── POST /api/import/novelai/parse ─────────────────────────────────────
+    {
+      const { POST } = await import("@/app/api/import/novelai/parse/route");
+      const fixture = await readFile(
+        join(__dirname, "..", "..", "lib", "novelai", "__fixtures__", "sample.story")
+      );
+      const fd = new FormData();
+      fd.append(
+        "file",
+        new Blob([new Uint8Array(fixture)], { type: "application/octet-stream" }),
+        "sample.story"
+      );
+      const req = new Request("http://localhost/api/import/novelai/parse", {
+        method: "POST",
+        body: fd,
+      }) as unknown as NextRequest;
       const res = await POST(req);
       expect(res.status).toBe(200);
     }
