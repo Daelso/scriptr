@@ -74,6 +74,21 @@ describe("POST /api/import/novelai/commit — new-story mode", () => {
     expect(chapters[0].source).toBe("imported");
   });
 
+  it("returns 400 when the bible shape is invalid", async () => {
+    const { POST } = await import("@/app/api/import/novelai/commit/route");
+    const res = await POST(
+      makeJsonReq("http://localhost/api/import/novelai/commit", {
+        target: "new-story",
+        story: { title: "Bad Bible", description: "", keywords: [] },
+        bible: { characters: "not-an-array" }, // malformed
+        chapters: [{ title: "x", body: "y" }],
+      })
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/bible/i);
+  });
+
   it("auto-suffixes the slug on collision", async () => {
     const { POST } = await import("@/app/api/import/novelai/commit/route");
     const first = await POST(
