@@ -64,7 +64,9 @@ console.log("GET / →", root.status);
 console.log("GET /api/settings →", settings.status);
 
 server.close();
-await app.close();
+// app.close() may not exist in all Next versions — guard.
+if (typeof app.close === "function") await app.close();
+process.exit(0);
 ```
 
 - [ ] **Step 3: Build Next and run the spike**
@@ -140,19 +142,25 @@ Create `/home/chase/projects/scriptr/electron/tsconfig.json`:
     "moduleResolution": "Node",
     "lib": ["ES2022"],
     "types": ["node"],
-    "outDir": "../dist/electron",
-    "rootDir": ".",
+    "outDir": "../dist",
+    "rootDir": "..",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "declaration": false,
-    "sourceMap": true
+    "sourceMap": true,
+    "baseUrl": "..",
+    "paths": {
+      "@/*": ["./*"]
+    }
   },
-  "include": ["**/*.ts"],
-  "exclude": ["**/*.test.ts"]
+  "include": ["**/*.ts", "../lib/**/*.ts"],
+  "exclude": ["**/*.test.ts", "../lib/**/*.test.ts"]
 }
 ```
+
+**Why these settings:** `electron/main.ts` and `electron/update.ts` import from `../lib/config`, and `electron/main.ts` also imports `../lib/storage/paths`. With `rootDir: "."` (the electron dir), `tsc` rejects those cross-directory imports with TS6059. Setting `rootDir: ".."` (project root) and including `../lib/**/*.ts` gives the compiler everything it needs. The output ends up under `dist/electron/...` because tsc preserves source structure relative to rootDir; `package.json#main` already points there. The `paths` mapping lets us optionally use `@/lib/...` style imports — though we use relative imports in `electron/` to keep the main process self-contained.
 
 - [ ] **Step 2: Exclude electron/ from the main tsconfig**
 
@@ -374,6 +382,12 @@ describe("settings API — updates field", () => {
     expect(body.data.updates?.checkOnLaunch).toBe(true);
   });
 
+  it("GET includes isElectron flag", async () => {
+    const res = await GET();
+    const body = await res.json();
+    expect(typeof body.data.isElectron).toBe("boolean");
+  });
+
   it("PUT persists updates.checkOnLaunch=false", async () => {
     const req = new Request("http://127.0.0.1/api/settings", {
       method: "PUT",
@@ -396,7 +410,7 @@ Run:
 cd /home/chase/projects/scriptr && npx vitest run tests/api/settings-updates.test.ts
 ```
 
-Expected: the GET test passes (config has defaults), the PUT test fails because `updates` is not in the allowed list.
+Expected: all three tests fail. `GET returns updates defaults` fails because the route's GET response doesn't yet include `updates`. `GET includes isElectron flag` fails for the same reason. `PUT persists updates.checkOnLaunch=false` fails because `updates` is not in the route's `allowed` whitelist.
 
 - [ ] **Step 3: Extend the route**
 
@@ -528,61 +542,45 @@ cd /home/chase/projects/scriptr && git add lib/storage/paths.ts tests/lib/storag
 
 ---
 
-### Task 1.7: Extend the no-telemetry ESLint rule to block Electron analytics
+### Task 1.7: Extend the no-telemetry ESLint rule to block Electron analytics packages
 
-The existing rule blocks browser analytics. Add Electron-side telemetry packages and make sure `crashReporter` can't be imported from Electron.
+The existing rule blocks browser analytics imports. Extend it for Electron-ecosystem packages that ship telemetry.
+
+**Note on `crashReporter`:** Electron's `crashReporter` is a **named export of the `"electron"` module** (`import { crashReporter } from "electron"`), not a submodule path. We can't blanket-block `"electron"` itself — `electron/main.ts` legitimately imports `app`, `BrowserWindow`, `session`, etc. from it. Rather than complicate the lint rule with named-specifier inspection, we ban `crashReporter` usage by code-review convention plus a load-bearing comment in `electron/main.ts` (added in Task 2.6) that references this decision. The lint rule below catches packages whose entire purpose is telemetry.
 
 **Files:**
 - Modify: `/home/chase/projects/scriptr/eslint-rules/no-telemetry.js`
-- Test: `/home/chase/projects/scriptr/tests/lint/no-telemetry.test.ts` (if exists) or fresh file
 
-- [ ] **Step 1: Check whether a rule test exists**
+- [ ] **Step 1: Extend the BLOCKED list**
 
-Run:
-```bash
-cd /home/chase/projects/scriptr && ls tests/lint/ 2>/dev/null || echo "no lint tests"
-```
-
-If none, skip to Step 3 — we'll verify by ESLint running against a bad fixture file.
-
-- [ ] **Step 2: If tests exist, add a case for `electron/crashReporter`**
-
-If there's a rule test, add a case:
-
-```ts
-invalid: [
-  // ...existing cases...
-  { code: `import { crashReporter } from "electron/crashReporter";`, errors: [{ messageId: "blocked" }] },
-  { code: `import { Amplitude } from "@amplitude/analytics-browser";`, errors: [{ messageId: "blocked" }] },
-]
-```
-
-- [ ] **Step 3: Extend the BLOCKED list**
-
-Edit `/home/chase/projects/scriptr/eslint-rules/no-telemetry.js`. Add these entries to the `BLOCKED` array (maintain alphabetical grouping with comment):
+Edit `/home/chase/projects/scriptr/eslint-rules/no-telemetry.js`. Add these entries to the `BLOCKED` array (after the existing Plausible/Matomo entries):
 
 ```js
-// Electron-specific
-"electron/crashReporter",        // Electron crash reports
-"electron-log",                  // often used for remote logging
+// Electron-specific telemetry packages (note: `crashReporter` from "electron"
+// is enforced by code review — see comment in electron/main.ts)
+"electron-log",                  // popular remote-logging package; can phone home
+"@electron/remote",              // not telemetry per se but enables main-process access from renderer; ban out of caution
+"electron-google-analytics",
+"electron-fiddle-telemetry",
 ```
 
 Keep everything else unchanged.
 
-- [ ] **Step 4: Verify by creating a bad fixture and linting it**
+- [ ] **Step 2: Verify by creating a bad fixture and linting it**
 
 Run:
 ```bash
 cd /home/chase/projects/scriptr && mkdir -p /tmp/scriptr-lint-check && cat > /tmp/scriptr-lint-check/bad.ts <<'EOF'
-import { crashReporter } from "electron/crashReporter";
-export const _ = crashReporter;
+import log from "electron-log";
+export const _ = log;
 EOF
-npx eslint --rulesdir eslint-rules --no-config-lookup --rule '{"scriptr/no-telemetry": "error"}' --plugin scriptr /tmp/scriptr-lint-check/bad.ts 2>&1 | head -20
+npx eslint /tmp/scriptr-lint-check/bad.ts 2>&1 | head -20
+rm -rf /tmp/scriptr-lint-check
 ```
 
-Expected: ESLint emits the "Telemetry package 'electron/crashReporter' is banned" error. (If the `--rulesdir` / `--no-config-lookup` flags don't work in ESLint 9 in this repo, fall back to running `npm run lint` against a real file that imports the blocked package — then remove the file.)
+Expected: ESLint emits the "Telemetry package 'electron-log' is banned" error. (If the file is outside the project root and ESLint refuses to lint it, copy it inside the project temporarily, run `npm run lint`, then delete it.)
 
-- [ ] **Step 5: Verify current lint still passes against real code**
+- [ ] **Step 3: Verify current lint still passes against real code**
 
 Run:
 ```bash
@@ -591,10 +589,10 @@ cd /home/chase/projects/scriptr && npm run lint
 
 Expected: passes. No existing code imports the newly blocked packages.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-cd /home/chase/projects/scriptr && git add eslint-rules/no-telemetry.js && git commit -m "chore(lint): block electron/crashReporter + electron-log telemetry"
+cd /home/chase/projects/scriptr && git add eslint-rules/no-telemetry.js && git commit -m "chore(lint): block Electron-ecosystem telemetry packages"
 ```
 
 ---
@@ -623,7 +621,7 @@ if (updatesEnabled) connectSrc.push("https://api.github.com");
 
 const cspDirectives = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval'", // Next.js dev needs inline/eval
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self'",
@@ -667,16 +665,16 @@ Expected: `.next/standalone/` exists and contains `server.js`, `node_modules/`, 
 
 Run:
 ```bash
-cd /home/chase/projects/scriptr && (npm run dev >/tmp/scriptr-dev.log 2>&1 &) && sleep 6 && curl -sI http://127.0.0.1:3000 | grep -i "content-security-policy" && kill %1 2>/dev/null; true
+cd /home/chase/projects/scriptr && npm run dev >/tmp/scriptr-dev.log 2>&1 & echo $! > /tmp/scriptr-dev.pid; sleep 6; curl -sI http://127.0.0.1:3000 | grep -i "content-security-policy"; kill $(cat /tmp/scriptr-dev.pid) 2>/dev/null; rm -f /tmp/scriptr-dev.pid
 ```
 
-Expected: CSP header shows `connect-src 'self' https://api.x.ai` (no api.github.com, since `SCRIPTR_UPDATES_CHECK` isn't set).
+Expected: CSP header shows `connect-src 'self' https://api.x.ai` (no api.github.com, since `SCRIPTR_UPDATES_CHECK` isn't set). Verify the dev server actually died: `pgrep -f "next dev" || echo "stopped"`.
 
 - [ ] **Step 4: Verify conditional GitHub entry**
 
 Run:
 ```bash
-cd /home/chase/projects/scriptr && (SCRIPTR_UPDATES_CHECK=1 npm run dev >/tmp/scriptr-dev.log 2>&1 &) && sleep 6 && curl -sI http://127.0.0.1:3000 | grep -i "content-security-policy" && kill %1 2>/dev/null; true
+cd /home/chase/projects/scriptr && SCRIPTR_UPDATES_CHECK=1 npm run dev >/tmp/scriptr-dev.log 2>&1 & echo $! > /tmp/scriptr-dev.pid; sleep 6; curl -sI http://127.0.0.1:3000 | grep -i "content-security-policy"; kill $(cat /tmp/scriptr-dev.pid) 2>/dev/null; rm -f /tmp/scriptr-dev.pid
 ```
 
 Expected: CSP header now includes `https://api.github.com` in `connect-src`.
@@ -1234,7 +1232,7 @@ cd /home/chase/projects/scriptr && git add electron/server.ts && git commit -m "
 
 ### Task 2.4: `electron/update.ts` — auto-updater wrapper
 
-Thin wrapper over `electron-updater`. Reads settings from `config.json` via the existing storage helpers, updates `lastCheckedAt` on each check, and notifies via a callback when a new version is ready.
+Thin wrapper over `electron-updater`. Reads settings from `config.json` via the existing storage helpers, updates `lastCheckedAt` after each check, and notifies via a callback when a new version is ready. Updates install on next quit (no IPC required to apply them).
 
 **Files:**
 - Create: `/home/chase/projects/scriptr/electron/update.ts`
@@ -1258,13 +1256,16 @@ export async function isCheckEnabled(dataDir: string): Promise<boolean> {
 }
 
 /**
- * Wire up electron-updater. Returns a function that triggers a check on demand
- * (e.g., the "Check now" button). Automatic checks happen in main.ts.
+ * Wire up electron-updater. The returned `runCheck()` function performs one
+ * check + records `lastCheckedAt`. main.ts calls this once after the window
+ * finishes loading.
  */
 export function configureUpdater({ dataDir, onUpdateReady }: UpdateDeps): () => Promise<void> {
   autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = false;
-  // electron-updater pulls release YAML from the feed configured in publish options (electron-builder.yml).
+  // Install on next quit — no IPC bridge needed. The user closes the app
+  // normally and the new version is in place on next launch. See spec
+  // "Auto-update → Mechanism".
+  autoUpdater.autoInstallOnAppQuit = true;
 
   autoUpdater.on("update-downloaded", (info) => {
     onUpdateReady(info.version);
@@ -1275,24 +1276,25 @@ export function configureUpdater({ dataDir, onUpdateReady }: UpdateDeps): () => 
     console.error("[updater] check failed:", err.message);
   });
 
-  return async function checkNow() {
+  return async function runCheck() {
     try {
       await autoUpdater.checkForUpdates();
     } finally {
+      // Read current config and merge — never overwrite the whole `updates`
+      // sub-object, since future fields would be silently dropped.
+      const current = await loadConfig(dataDir);
       await saveConfig(dataDir, {
         updates: {
-          checkOnLaunch: (await loadConfig(dataDir)).updates?.checkOnLaunch ?? true,
+          ...(current.updates ?? { checkOnLaunch: true }),
           lastCheckedAt: new Date().toISOString(),
         },
       });
     }
   };
 }
-
-export function installUpdate(): void {
-  autoUpdater.quitAndInstall();
-}
 ```
+
+Note: there's no exported `installUpdate()` function. With `autoInstallOnAppQuit = true`, the install is automatic on the next normal app exit. We deliberately don't expose `quitAndInstall()` because invoking it from a Next.js route handler would only work in the programmatic-server case (where Next runs in the same process as Electron); the spawn-fallback case can't call into main-process modules. Keeping the no-IPC posture simple.
 
 - [ ] **Step 2: Verify it type-compiles**
 
@@ -1301,12 +1303,12 @@ Run:
 cd /home/chase/projects/scriptr && npm run build:electron
 ```
 
-Expected: `dist/electron/update.js` exists, no errors. (Note: this is the first file that imports from `../lib/config` — confirm it resolves. If TS complains about `@/lib/config` style paths, use relative imports as shown.)
+Expected: `dist/electron/update.js` exists, no errors.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /home/chase/projects/scriptr && git add electron/update.ts && git commit -m "feat(electron): update module — electron-updater wrapper with config-backed settings"
+cd /home/chase/projects/scriptr && git add electron/update.ts && git commit -m "feat(electron): update module — electron-updater wrapper, install on quit"
 ```
 
 ---
@@ -1419,12 +1421,17 @@ Wires everything: resolve data dir → set SCRIPTR_DATA_DIR → conditionally se
 Create `/home/chase/projects/scriptr/electron/main.ts`:
 
 ```ts
+// PRIVACY: Do NOT import `crashReporter` from "electron" (or call
+// `crashReporter.start()`). Electron's crash reporter is off by default and
+// must stay that way. The no-telemetry ESLint rule cannot enforce this
+// because `crashReporter` is a named export of "electron" rather than its
+// own package — see Task 1.7's note.
 import { app, BrowserWindow, Menu, dialog, shell, session } from "electron";
 import { join } from "node:path";
 import { resolveDataDir } from "./migrate";
 import { startNextServer, type ServerHandle } from "./server";
 import { installNetworkFilter } from "./network-filter";
-import { configureUpdater, isCheckEnabled, installUpdate } from "./update";
+import { configureUpdater, isCheckEnabled } from "./update";
 import { buildAppMenu } from "./menu";
 import { loadConfig } from "../lib/config";
 import { blockedRequestsLog } from "../lib/storage/paths";
@@ -1433,12 +1440,35 @@ const isDev = !app.isPackaged;
 let serverHandle: ServerHandle | null = null;
 let mainWindow: BrowserWindow | null = null;
 
+// ─── Single-instance lock ────────────────────────────────────────────────────
+// Two concurrent Electron processes against the same userData would race on
+// config.json and story files. If we lose the lock, exit immediately and let
+// the existing instance focus its window.
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
+
+// ─── App lifecycle hooks ─────────────────────────────────────────────────────
+
 app.on("ready", () => {
   void main();
 });
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+// macOS: re-create the window when the dock icon is clicked after window close
+app.on("activate", () => {
+  if (BrowserWindow.getAllWindows().length === 0) void main();
 });
 
 app.on("will-quit", async (e) => {
@@ -1452,6 +1482,15 @@ app.on("will-quit", async (e) => {
     }
   }
 });
+
+// Defense-in-depth: deny window-open for ANY web-contents (including any
+// child the renderer might spawn). main window's handler is set per-window
+// below; this is a global fallback.
+app.on("web-contents-created", (_, contents) => {
+  contents.setWindowOpenHandler(() => ({ action: "deny" }));
+});
+
+// ─── Main startup sequence ───────────────────────────────────────────────────
 
 async function main(): Promise<void> {
   // 1. Resolve data directory (may prompt + migrate)
@@ -1486,12 +1525,13 @@ async function main(): Promise<void> {
   const cfg = await loadConfig(dataDir);
   const needsOnboarding = !cfg.apiKey;
 
-  // 6. Create the window
+  // 6. Create the window — application menu set once for all platforms
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     title: "scriptr",
     backgroundColor: "#ffffff",
+    show: false, // wait for ready-to-show to avoid blank flash
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -1500,48 +1540,49 @@ async function main(): Promise<void> {
       devTools: isDev,
     },
   });
+  Menu.setApplicationMenu(buildAppMenu(dataDir, isDev));
 
-  mainWindow.setMenu(buildAppMenu(dataDir, isDev));
-  if (process.platform !== "darwin") {
-    Menu.setApplicationMenu(mainWindow.getMenu());
-  }
-
-  // External-link handler: allowlist-guarded shell.openExternal
+  // External-link handler: allowlist-guarded shell.openExternal.
+  // Tighter than just `endsWith(".x.ai")` — match exact host or an explicit
+  // subdomain set, and require GitHub URLs to be under the scriptr repo.
+  const xAiHosts = new Set(["x.ai", "console.x.ai", "api.x.ai"]);
+  const githubRepoPrefix = "/Daelso/scriptr"; // owner/repo from electron-builder.yml
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     try {
       const parsed = new URL(url);
-      const allowed =
-        (parsed.protocol === "https:" && parsed.hostname.endsWith(".x.ai")) ||
-        (parsed.protocol === "https:" && parsed.hostname === "github.com") ||
-        parsed.href.startsWith("https://github.com/");
-      if (allowed) void shell.openExternal(url);
+      const isXai = parsed.protocol === "https:" && xAiHosts.has(parsed.hostname);
+      const isScriptrRepo =
+        parsed.protocol === "https:" &&
+        parsed.hostname === "github.com" &&
+        parsed.pathname.startsWith(githubRepoPrefix);
+      if (isXai || isScriptrRepo) void shell.openExternal(url);
     } catch {
       // ignore invalid URLs
     }
     return { action: "deny" };
   });
 
+  mainWindow.once("ready-to-show", () => mainWindow?.show());
+
   const landing = needsOnboarding ? "/settings?onboarding=1" : "/";
   await mainWindow.loadURL(serverHandle.url + landing);
 
-  // 7. Updates: skip during onboarding so the first launch makes zero network calls
-  //    until the user has configured the app.
+  // 7. Updates: skip during onboarding (no network calls until the user has
+  //    configured the app) and gate behind did-finish-load so the check
+  //    doesn't compete with the first paint.
   if (updatesEnabled && !needsOnboarding) {
-    const checkNow = configureUpdater({
+    const runCheck = configureUpdater({
       dataDir,
       onUpdateReady: (version) => {
         mainWindow?.webContents.executeJavaScript(
           `window.dispatchEvent(new CustomEvent("scriptr:update-ready", { detail: ${JSON.stringify(version)} }))`,
-        ).catch(() => { /* swallow */ });
+        ).catch(() => { /* swallow — notification UX is best-effort */ });
       },
     });
-    void checkNow();
+    mainWindow.webContents.once("did-finish-load", () => {
+      void runCheck();
+    });
   }
-
-  // Swallowed for now: an IPC hook could let the UI trigger installUpdate()
-  // when the user clicks "Restart to install". Not wired in v1 — the user
-  // can close+reopen the app to pick up the downloaded update.
-  void installUpdate; // silence unused-export warning in type-check
 }
 ```
 
@@ -1619,24 +1660,28 @@ const { data: settings } = useSWR<{
 2. Render this block near the top of the root `<section>`:
 
 ```tsx
-{settings?.isElectron && (
-  <div className="rounded-md border border-border/60 bg-muted/30 p-4">
-    <h3 className="mb-2 text-sm font-medium">Desktop app network activity</h3>
-    <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-      <dt className="text-muted-foreground">Allowed destinations</dt>
-      <dd>
-        <code>https://api.x.ai</code> (generation)
-        {settings.updates?.checkOnLaunch && (
-          <>, <code>https://api.github.com</code> (updates)</>
-        )}
-      </dd>
-      <dt className="text-muted-foreground">Update check on launch</dt>
-      <dd>{settings.updates?.checkOnLaunch ? "enabled" : "disabled"}</dd>
-      <dt className="text-muted-foreground">Last check</dt>
-      <dd>{settings.updates?.lastCheckedAt ?? "never"}</dd>
-    </dl>
-  </div>
-)}
+{settings?.isElectron && (() => {
+  // checkOnLaunch defaults to true — only `false` should render as "disabled".
+  const updatesOn = settings.updates?.checkOnLaunch !== false;
+  return (
+    <div className="rounded-md border border-border/60 bg-muted/30 p-4">
+      <h3 className="mb-2 text-sm font-medium">Desktop app network activity</h3>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+        <dt className="text-muted-foreground">Allowed destinations</dt>
+        <dd>
+          <code>https://api.x.ai</code> (generation)
+          {updatesOn && (
+            <>, <code>https://api.github.com</code> (updates)</>
+          )}
+        </dd>
+        <dt className="text-muted-foreground">Update check on launch</dt>
+        <dd>{updatesOn ? "enabled" : "disabled"}</dd>
+        <dt className="text-muted-foreground">Last check</dt>
+        <dd>{settings.updates?.lastCheckedAt ?? "never"}</dd>
+      </dl>
+    </div>
+  );
+})()}
 ```
 
 - [ ] **Step 3: Manual verify in dev**
@@ -1653,40 +1698,126 @@ cd /home/chase/projects/scriptr && git add components/settings/PrivacyPanel.tsx 
 
 ### Task 3.2: `SettingsForm` — onboarding banner + updates section
 
-Adds (a) a welcome banner when `?onboarding=1`, and (b) an updates toggle + "Check now" + last-checked timestamp, both visible only under Electron.
+Adds (a) a welcome banner when `?onboarding=1`, and (b) a "Check for updates on launch" toggle plus last-checked timestamp, visible only under Electron. **No "Check now" button in v1** — see spec note. A button that doesn't actually trigger an immediate check would mislead users.
 
 **Files:**
 - Modify: `/home/chase/projects/scriptr/components/settings/SettingsForm.tsx`
 
-- [ ] **Step 1: Read the existing form**
+The existing form is one ~565-line component built around `SettingsData` (server shape), `FormState` (form shape), `formFromData()`, and `handleSave()`. New code follows that pattern — extend the types, extend `formFromData`, extend `handleSave`'s body, add a new `<section>` in the JSX.
 
-Run:
-```bash
-cd /home/chase/projects/scriptr && wc -l components/settings/SettingsForm.tsx
+- [ ] **Step 1: Extend `SettingsData` and `FormState`**
+
+In `components/settings/SettingsForm.tsx`, update the `SettingsData` interface (around line 25):
+
+```ts
+interface SettingsData {
+  hasKey: boolean;
+  keyPreview?: string;
+  defaultModel: string;
+  bindHost: string;
+  theme: "light" | "dark" | "system";
+  autoRecap: boolean;
+  includeLastChapterFullText: boolean;
+  styleDefaults?: StyleRules;
+  updates?: { checkOnLaunch: boolean; lastCheckedAt?: string };
+  isElectron?: boolean;
+}
 ```
 
-Read the full file. Understand where the API key input lives — the banner goes directly above it.
+Update `FormState` (around line 36) to add the new field:
 
-- [ ] **Step 2: Add the onboarding banner**
+```ts
+interface FormState {
+  apiKey: string;
+  modelSelect: string;
+  customModel: string;
+  theme: "light" | "dark" | "system";
+  autoRecap: boolean;
+  includeLastChapter: boolean;
+  style: Required<StyleRules>;
+  updateCheckOnLaunch: boolean;
+}
+```
 
-Import `useSearchParams` from `next/navigation`:
+Update `DEFAULT_FORM` (around line 54):
+
+```ts
+const DEFAULT_FORM: FormState = {
+  apiKey: "",
+  modelSelect: "grok-4-latest",
+  customModel: "",
+  theme: "system",
+  autoRecap: true,
+  includeLastChapter: false,
+  style: { ...DEFAULT_STYLE },
+  updateCheckOnLaunch: true,
+};
+```
+
+Update `formFromData` (around line 64) to add the line:
+
+```ts
+function formFromData(data: SettingsData): FormState {
+  return {
+    apiKey: "",
+    modelSelect: isKnownModel(data.defaultModel) ? data.defaultModel : "custom",
+    customModel: isKnownModel(data.defaultModel) ? "" : data.defaultModel,
+    theme: data.theme,
+    autoRecap: data.autoRecap,
+    includeLastChapter: data.includeLastChapterFullText,
+    style: { ...DEFAULT_STYLE, ...(data.styleDefaults ?? {}) },
+    updateCheckOnLaunch: data.updates?.checkOnLaunch !== false, // default true
+  };
+}
+```
+
+- [ ] **Step 2: Update `handleSave` to include the `updates` patch**
+
+In the `body` object inside `handleSave` (around line 129), add:
+
+```ts
+const body: Record<string, unknown> = {
+  defaultModel: effectiveModel,
+  theme: form.theme,
+  autoRecap: form.autoRecap,
+  includeLastChapterFullText: form.includeLastChapter,
+  styleDefaults: diffAgainstDefault(form.style),
+};
+
+// Only send the updates patch when running under Electron, to keep the web
+// build's behavior identical.
+if (data?.isElectron) {
+  body.updates = {
+    ...(data.updates ?? { checkOnLaunch: true }),
+    checkOnLaunch: form.updateCheckOnLaunch,
+  };
+}
+
+if (form.apiKey !== "") {
+  body.apiKey = form.apiKey;
+}
+```
+
+- [ ] **Step 3: Add the onboarding banner**
+
+Add the import at the top of the file:
 
 ```tsx
 import { useSearchParams } from "next/navigation";
 ```
 
-At the top of the component, read the flag:
+In the component body (after the existing `useState`/`useSWR` setup), read the flag:
 
 ```tsx
 const search = useSearchParams();
 const onboarding = search.get("onboarding") === "1";
 ```
 
-Render above the API key field:
+Render above the existing API section. Find the `return (...)` block and insert this as the first child of the outer `<div className="flex flex-col gap-8">`:
 
 ```tsx
 {onboarding && (
-  <div className="mb-4 rounded-md border border-blue-500/30 bg-blue-500/5 p-4">
+  <div className="rounded-md border border-blue-500/30 bg-blue-500/5 p-4">
     <h2 className="text-sm font-semibold">Welcome to scriptr</h2>
     <p className="mt-1 text-sm text-muted-foreground">
       Paste your xAI API key below to get started.{" "}
@@ -1703,178 +1834,78 @@ Render above the API key field:
 )}
 ```
 
-- [ ] **Step 3: Add the updates section (Electron-only)**
+- [ ] **Step 4: Add the Updates section (Electron-only)**
 
-Read the SWR hook(s) already in this file to pick up `isElectron` and `updates` from the GET response. If they aren't already on the response type, extend it. Render this block below the existing style-defaults / other settings:
+Insert this new `<section>` right before the existing Appearance section (the `{/* ── Appearance ── */}` comment near line 511). It mirrors the Appearance section's structure:
 
 ```tsx
-{settings.isElectron && (
-  <section className="mt-6 flex flex-col gap-3">
-    <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-      Updates
-    </h2>
-    <label className="flex items-center gap-2 text-sm">
-      <input
-        type="checkbox"
-        checked={settings.updates?.checkOnLaunch ?? true}
-        onChange={(e) =>
-          updateSettings({
-            updates: {
-              checkOnLaunch: e.target.checked,
-              lastCheckedAt: settings.updates?.lastCheckedAt,
-            },
-          })
-        }
-      />
-      Check for updates on launch
-    </label>
-    <div className="flex items-center gap-3 text-sm text-muted-foreground">
-      <span>
-        Last checked: {settings.updates?.lastCheckedAt ?? "never"}
-      </span>
-      <button
-        type="button"
-        className="rounded border px-2 py-1 text-xs"
-        onClick={async () => {
-          await fetch("/api/updates/check-now", { method: "POST" });
-          // SWR will refresh on focus; for immediacy, mutate() if available
-        }}
-      >
-        Check now
-      </button>
-    </div>
-  </section>
+{data.isElectron && (
+  <>
+    <Separator />
+    <section className="flex flex-col gap-4">
+      <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+        Updates
+      </h2>
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-col gap-0.5">
+          <Label htmlFor="update-check-on-launch">Check for updates on launch</Label>
+          <p className="text-xs text-muted-foreground">
+            Queries GitHub Releases when the app starts. Disable to make zero
+            network calls outside of generation.
+          </p>
+        </div>
+        <Switch
+          id="update-check-on-launch"
+          checked={form.updateCheckOnLaunch}
+          onCheckedChange={(v) => patch({ updateCheckOnLaunch: v })}
+        />
+      </div>
+      <div className="text-xs text-muted-foreground">
+        Last checked: {data.updates?.lastCheckedAt ?? "never"}
+      </div>
+    </section>
+  </>
 )}
 ```
 
-(Replace `updateSettings({...})` with whatever helper the form uses to PUT partial settings. Read the file first to match its style.)
-
-- [ ] **Step 4: Add the `/api/updates/check-now` route**
-
-Create `/home/chase/projects/scriptr/app/api/updates/check-now/route.ts`:
-
-```ts
-import { ok, fail } from "@/lib/api";
-
-export async function POST() {
-  if (!process.versions.electron) {
-    return fail("Updates only available in the desktop app", 400);
-  }
-  // The Electron main process polls config.updates.lastCheckedAt after running
-  // its check. For "check now" from the UI, we signal it via a sentinel file
-  // — Chunk 3 Task 3.2b wires the main process to watch for it. In v1, we keep
-  // it simple: the UI call is a no-op; the user relies on next-launch check
-  // or restarting the app.
-  return ok({ queued: true });
-}
-```
-
-**Note:** This is intentionally minimal for v1. A proper in-app "Check now" would need the main process to expose an IPC/HTTP endpoint that triggers `checkNow()`. That's an enhancement — deferred. The button still exists so users know the feature is there; it just tells them the check will happen next launch.
-
-- [ ] **Step 5: Add the new route to the egress test**
-
-Edit `/home/chase/projects/scriptr/tests/privacy/no-external-egress.test.ts`. Find the block that iterates through routes and add the new POST. Follow the existing pattern exactly — do not invent a new shape.
-
-- [ ] **Step 6: Verify tests**
+- [ ] **Step 5: Verify the test from Task 1.5 still passes**
 
 Run:
 ```bash
-cd /home/chase/projects/scriptr && npm test
+cd /home/chase/projects/scriptr && npx vitest run tests/api/settings-updates.test.ts
 ```
 
-Expected: all green.
+Expected: all three tests still pass.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Verify the existing egress test still passes**
+
+Run:
+```bash
+cd /home/chase/projects/scriptr && npx vitest run tests/privacy/no-external-egress.test.ts
+```
+
+Expected: passes. (No new routes added — we explicitly do not create `/api/updates/check-now`. See spec note.)
+
+- [ ] **Step 7: Manual verify**
+
+Run `npm run dev`, open `http://127.0.0.1:3000/settings?onboarding=1`. Expected: banner is visible. The Updates section is **not** visible in web mode (`isElectron === false`). After Chunk 2 is in place, the same page under `npm run dev:electron` should show the Updates section.
+
+- [ ] **Step 8: Commit**
 
 ```bash
-cd /home/chase/projects/scriptr && git add components/settings/SettingsForm.tsx app/api/updates/check-now/route.ts tests/privacy/no-external-egress.test.ts && git commit -m "feat(settings): onboarding banner + updates section (Electron-only)"
+cd /home/chase/projects/scriptr && git add components/settings/SettingsForm.tsx && git commit -m "feat(settings): onboarding banner + Electron-only updates toggle"
 ```
 
 ---
 
-### Task 3.3: Update-off egress test
+### Task 3.3: (no Next.js test — privacy guarantee covered elsewhere)
 
-Prove that when `updates.checkOnLaunch` is `false`, nothing in the Next server reaches out to `api.github.com`. This test complements the main-process filter test — different layer, same invariant.
+The Next.js layer does **not** make GitHub calls — the auto-updater runs in the Electron main process. The privacy guarantee that "no GitHub calls when updates are disabled" is covered by:
 
-**Files:**
-- Create: `/home/chase/projects/scriptr/tests/privacy/update-opt-out.test.ts`
+- [tests/electron/network-filter.test.ts](../../../tests/electron/network-filter.test.ts) (Task 2.1) — asserts the main-process filter blocks `api.github.com` when `updatesEnabled: false`. This is the actual privacy boundary.
+- [tests/privacy/no-external-egress.test.ts](../../../tests/privacy/no-external-egress.test.ts) — already asserts no API route makes outbound calls. Continues to pass without modification because no new routes were added.
 
-- [ ] **Step 1: Write the test**
-
-Write `/home/chase/projects/scriptr/tests/privacy/update-opt-out.test.ts`:
-
-```ts
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { GET } from "@/app/api/settings/route";
-import { POST } from "@/app/api/updates/check-now/route";
-
-let recorded: { url: string; method: string }[] = [];
-const origFetch = globalThis.fetch;
-
-beforeEach(() => {
-  recorded = [];
-  globalThis.fetch = (input, init) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
-    recorded.push({ url, method: init?.method ?? "GET" });
-    return Promise.resolve(new Response("{}", { status: 200 }));
-  };
-});
-afterEach(() => {
-  globalThis.fetch = origFetch;
-});
-
-describe("privacy — update opt-out", () => {
-  let dir: string;
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), "scriptr-upd-"));
-    await writeFile(
-      join(dir, "config.json"),
-      JSON.stringify({ updates: { checkOnLaunch: false } }),
-      "utf-8",
-    );
-    process.env.SCRIPTR_DATA_DIR = dir;
-  });
-  afterEach(async () => {
-    delete process.env.SCRIPTR_DATA_DIR;
-    await rm(dir, { recursive: true, force: true });
-  });
-
-  it("GET /api/settings does not fetch anything", async () => {
-    await GET();
-    expect(recorded).toEqual([]);
-  });
-
-  it("POST /api/updates/check-now does not fetch github", async () => {
-    // Simulate Next running under Electron so the route doesn't early-return.
-    const original = (process.versions as Record<string, string | undefined>).electron;
-    (process.versions as Record<string, string | undefined>).electron = "33.0.0";
-    try {
-      await POST();
-    } finally {
-      (process.versions as Record<string, string | undefined>).electron = original;
-    }
-    expect(recorded.find((r) => r.url.includes("github.com"))).toBeUndefined();
-  });
-});
-```
-
-- [ ] **Step 2: Run the test**
-
-Run:
-```bash
-cd /home/chase/projects/scriptr && npx vitest run tests/privacy/update-opt-out.test.ts
-```
-
-Expected: both tests pass.
-
-- [ ] **Step 3: Commit**
-
-```bash
-cd /home/chase/projects/scriptr && git add tests/privacy/update-opt-out.test.ts && git commit -m "test(privacy): assert no github fetch when updates disabled"
-```
+A redundant Next.js-side test (e.g., a hypothetical `/api/updates/check-now` route assertion) would either duplicate the existing egress test or test nothing real, since no such route exists in v1. **Skip — no action needed for this task.**
 
 ---
 
@@ -1892,15 +1923,23 @@ Create `/home/chase/projects/scriptr/electron-builder.yml`:
 ```yaml
 appId: com.scriptr.app
 productName: scriptr
-# Copyright: stock string — update if you have a legal entity
 copyright: Copyright © 2026 scriptr
 
-# Files bundled into the resources directory of the installer
+# Files bundled into the asar inside the installer.
+# We let electron-builder do its normal "copy production deps" pass — the
+# main process needs `electron-updater` and its transitive deps at runtime.
+# `dist/` (compiled main process) is the entry point; `package.json#main`
+# points there.
 files:
   - "dist/electron/**/*"
+  - "dist/lib/**/*"
   - "package.json"
-  - "!node_modules/**/*" # we pull deps from standalone instead
-# Next.js standalone output — this is the Next app that main.ts boots
+  - "!**/*.map"
+  - "!**/__tests__/**"
+  - "!**/*.test.*"
+
+# Next.js standalone output — copied into resources/app, where main.ts
+# expects it under process.resourcesPath/app.
 extraResources:
   - from: ".next/standalone"
     to: "app"
@@ -1912,8 +1951,9 @@ extraResources:
 directories:
   output: "release"
 
-# Don't sign anything for v1 — design decision, flagged in README
+# Don't sign anything for v1 — design decision, flagged in README.
 forceCodeSigning: false
+
 mac:
   identity: null
   hardenedRuntime: false
@@ -1922,16 +1962,19 @@ mac:
     - target: dmg
       arch: [x64, arm64]
   category: public.app-category.productivity
+
 win:
   signAndEditExecutable: false
   target:
     - target: nsis
       arch: [x64]
   publisherName: scriptr
+
 nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+
 linux:
   target:
     - AppImage
@@ -1947,19 +1990,32 @@ publish:
   releaseType: draft
 ```
 
-- [ ] **Step 2: Verify electron-builder parses the config**
+**Note on `files`:** earlier drafts excluded `node_modules/**/*`, which would have broken the runtime (Electron needs `electron-updater` and its deps). Letting electron-builder run its default production-deps copy is correct — it only includes packages listed under `dependencies` in `package.json` (not `devDependencies`), and tree-shakes accordingly. Currently `electron-updater` is in `devDependencies` from Task 1.2; **move it to `dependencies`** before running the package step. Verify in Step 2.
+
+- [ ] **Step 2: Move `electron-updater` from devDependencies to dependencies**
+
+`electron-updater` is needed at runtime by the main process. It must be a regular dep, not a dev dep, or electron-builder will not include it in the package.
 
 Run:
 ```bash
-cd /home/chase/projects/scriptr && npx electron-builder --help >/dev/null && npx electron-builder --dir --config electron-builder.yml 2>&1 | tail -30
+cd /home/chase/projects/scriptr && npm uninstall electron-updater && npm install --save electron-updater@^6
 ```
 
-Expected: It runs at least as far as collecting files. It will likely fail somewhere if `.next/standalone` hasn't been built yet — that's fine; you're only verifying config parsing. Run `npm run build && npm run build:electron` first if you want a clean pass.
+Expected: `electron-updater` now appears under `dependencies` in `package.json`. `electron` and `electron-builder` themselves stay in `devDependencies` (only used at build time).
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: Verify electron-builder produces a working unpacked app**
+
+Run:
+```bash
+cd /home/chase/projects/scriptr && npm run build && npm run build:electron && npx electron-builder --dir --config electron-builder.yml 2>&1 | tail -30
+```
+
+Expected: completes without error. `release/linux-unpacked/` (or platform-equivalent) contains the app, including `resources/app.asar` (which has `dist/` and `package.json`) and `resources/app/` (the Next standalone bundle). Spot-check that `resources/app.asar.unpacked/node_modules/electron-updater` exists, or that `electron-updater` is inside the asar — if neither, the runtime will throw `MODULE_NOT_FOUND`.
+
+- [ ] **Step 4: Commit**
 
 ```bash
-cd /home/chase/projects/scriptr && git add electron-builder.yml && git commit -m "chore(electron-builder): unsigned cross-platform config (NSIS, dmg, AppImage, deb)"
+cd /home/chase/projects/scriptr && git add electron-builder.yml package.json package-lock.json && git commit -m "chore(electron-builder): unsigned cross-platform config; promote electron-updater to runtime dep"
 ```
 
 ---
@@ -1983,9 +2039,33 @@ on:
     tags:
       - "v*.*.*"
 
+# electron-builder needs to upload artifacts to the GitHub Release, which
+# requires write access to the repo's contents. The default GITHUB_TOKEN
+# is read-only without this block.
+permissions:
+  contents: write
+
 jobs:
+  # Run typecheck + lint + tests once on Linux. Cross-platform packaging
+  # bugs aren't caught by tests; running them on every OS triples CI cost
+  # for no signal.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+
   build:
+    needs: test
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
@@ -2005,17 +2085,13 @@ jobs:
       - name: Compile Electron main process
         run: npm run build:electron
 
-      - name: Typecheck + lint + test
-        run: |
-          npm run typecheck
-          npm run lint
-          npm test
-
       - name: Package with electron-builder
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --publish always
 ```
+
+**Why a separate `test` job:** running `npm test` on Windows + macOS adds CI minutes without catching anything the Linux run doesn't. Vitest tests in this repo are cross-platform-clean (use `tmpdir()`, no shell-script in tests), but a single-OS test job is simpler reasoning. The `build` matrix depends on `test` so a test failure aborts the package builds.
 
 - [ ] **Step 2: Commit**
 
@@ -2062,7 +2138,7 @@ Open the `.dmg`, drag scriptr to Applications. On first launch, macOS will refus
 
 ### Linux
 
-Download the AppImage, make it executable (`chmod +x scriptr-*.AppImage`), and double-click. On Debian/Ubuntu, the `.deb` is available as an alternative.
+Download the AppImage and make it executable: `chmod +x scriptr-*.AppImage`. Run from a terminal (`./scriptr-*.AppImage`) or, if your distro's file manager is configured to launch executable AppImages, double-click. Some distros require installing FUSE first (`sudo apt install libfuse2` on Debian/Ubuntu). On Debian/Ubuntu the `.deb` is available as an alternative — install with `sudo dpkg -i scriptr_*.deb`.
 
 ### Data location
 
@@ -2070,7 +2146,7 @@ Stories, chapters, bible, and config live in:
 
 - **Windows:** `%APPDATA%\scriptr\data`
 - **macOS:** `~/Library/Application Support/scriptr/data`
-- **Linux:** `~/.local/share/scriptr/data`
+- **Linux:** `~/.config/scriptr/data` (or `$XDG_CONFIG_HOME/scriptr/data` if set)
 
 From the app: **File → Reveal Data Folder** opens it. Back up this folder to preserve your work.
 ```
