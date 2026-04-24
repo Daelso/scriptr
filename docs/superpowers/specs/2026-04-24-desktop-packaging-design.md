@@ -91,6 +91,8 @@ Main process, before starting Next:
    - **Use in place** → persist the chosen path to `<userData>/location.json` (`{ "dataDir": "<abs path>" }`). Main process reads `location.json` on every subsequent launch and honors it.
 3. Else → create empty `<userData>/data/` and boot.
 
+**`location.json` is the only file the main process reads from `userData` directly.** Everything else flows through `effectiveDataDir()`. Future contributors adding main-process state should extend `location.json` or use `dataDir` — not sprinkle more files into `userData`.
+
 ### Reveal-folder menu item
 
 Add a File (or Help) menu entry: **Reveal data folder** → `shell.openPath(effectiveDataDir())`. Necessary because the default location is hidden on all three platforms and users need it for backup / inspection.
@@ -128,7 +130,9 @@ Main process installs `session.defaultSession.webRequest.onBeforeRequest` with a
 - `https://api.x.ai/*`
 - `https://api.github.com/repos/<owner>/scriptr/releases/*` — **only if update checks are enabled**
 
-Any other URL: `callback({ cancel: true })`, logged to `<dataDir>/logs/blocked-requests.log`. This is belt-and-suspenders against a dependency introducing a tracker — CSP would catch most of it, but a main-process filter is a hard gate that can't be relaxed by a compromised renderer.
+Any other URL: `callback({ cancel: true })`, logged to a blocked-requests log file. **Path resolved via a new helper in [lib/storage/paths.ts](lib/storage/paths.ts)** (e.g., `blockedRequestsLog()` → `<dataDir>/logs/blocked-requests.log`) rather than hand-concatenated — per the "never hand-concatenate paths" rule in CLAUDE.md. This introduces a `logs/` convention that future log files can share.
+
+This is belt-and-suspenders against a dependency introducing a tracker — CSP would catch most of it, but a main-process filter is a hard gate that can't be relaxed by a compromised renderer.
 
 ### Renderer lockdown
 
@@ -153,7 +157,7 @@ Enabled in dev builds. Disabled in packaged builds via `BrowserWindow` config + 
 
 ### Carried over from web build
 
-- CSP response headers from `next.config.ts` — still bind, since the renderer loads from `http://127.0.0.1:<port>` which is served by Next.
+- CSP response headers from `next.config.ts` — still bind, since the renderer loads from `http://127.0.0.1:<port>` which is served by Next. `'self'` resolves to `http://127.0.0.1:<ephemeral-port>` per launch — no code or test may hard-code `http://127.0.0.1:3000` as the same-origin expectation. Audit during implementation.
 - `scriptr/no-telemetry` ESLint rule — unchanged.
 - `tests/privacy/no-external-egress.test.ts` — unchanged, still runs per route.
 
@@ -164,7 +168,9 @@ Enabled in dev builds. Disabled in packaged builds via `BrowserWindow` config + 
 
 ### Privacy panel disclosure
 
-Existing `/api/privacy/last-payload` surface gets a new section, shown only when running under Electron (detected via `process.versions.electron`):
+Existing `/api/privacy/last-payload` surface gets a new section, shown only when running under Electron. Detection is **server-side in the route handler** via `process.versions.electron` (set when Next runs under the Electron Node binary), plumbed to the client as a boolean flag in the response payload. The renderer reads that flag to conditionally render the new section.
+
+Content:
 
 - Desktop app network destinations (api.x.ai, optional api.github.com for updates)
 - Update check frequency: `checkOnLaunch` toggle state
@@ -174,7 +180,7 @@ Existing `/api/privacy/last-payload` surface gets a new section, shown only when
 
 ### Mechanism
 
-`electron-updater` with GitHub Releases as the feed. On startup, after the main window is shown, call `autoUpdater.checkForUpdates()` unless `updates.checkOnLaunch === false`. If an update is found, download in the background. When ready, show a non-modal notification in the app:
+`electron-updater` with GitHub Releases as the feed. On startup, after the main window is shown, call `autoUpdater.checkForUpdates()` unless `updates.checkOnLaunch === false` **or the app is in first-run onboarding** (no API key configured yet). First-run suppression prevents the very first launch from making any network call before the user has configured anything — the check resumes on the next launch after onboarding. If an update is found, download in the background. When ready, show a non-modal notification in the app:
 
 > Update v0.3.0 ready — restart to install.
 
