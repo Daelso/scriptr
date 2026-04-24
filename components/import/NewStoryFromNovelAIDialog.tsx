@@ -215,7 +215,7 @@ export function NewStoryFromNovelAIDialog({ open, onOpenChange }: Props) {
           <div className="flex-1 overflow-auto p-4 flex flex-col gap-4">
             <div className="text-xs text-muted-foreground">
               This file contains <strong>{stories.length}</strong> stories (separated by{" "}
-              <code>////</code>). Each will be created as its own story.
+              <code>{"////"}</code>). Each will be created as its own story.
             </div>
             {stories.map((s, i) => (
               <div

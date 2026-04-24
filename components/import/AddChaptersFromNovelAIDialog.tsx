@@ -221,7 +221,7 @@ export function AddChaptersFromNovelAIDialog({
                   data-testid="multi-story-banner"
                 >
                   This file contains {stage.preview.storyCount} story-break (
-                  <code>////</code>) markers. They&apos;ve been ignored — use{" "}
+                  <code>{"////"}</code>) markers. They&apos;ve been ignored — use{" "}
                   <em>Import from NovelAI</em> on the home page to create separate stories.
                 </div>
               )}
