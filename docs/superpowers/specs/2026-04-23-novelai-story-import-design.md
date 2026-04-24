@@ -45,20 +45,53 @@ The `////` marker is **also** added to [lib/publish/cleanup.ts](../../../lib/pub
 
 Title inference for chapters without an explicit heading: first non-empty sentence, truncated to 60 chars, trailing punctuation stripped.
 
-## Bible mapping
+## Story + Bible mapping
 
-Per Q4 (Approach A: auto-map, user edits in Bible editor after import):
+Per Q4 (Approach A: auto-map, user edits afterward). The spec originally assumed custom Bible buckets, but the real Scriptr schema ([lib/types.ts](../../../lib/types.ts)) is:
 
-- **Premise** ← `metadata.description` if non-empty, else `metadata.textPreview`.
-- **People / Places** ← `content.lorebook.entries[]` partitioned by:
-  - `entry.category` name match against `/person|character|people/i` → People; `/place|location|setting/i` → Places.
-  - No category → pronoun sniff (`he |she |they |his |her |their ` in first sentence) → People; location-cue sniff (`is a` + noun like `city|town|village|room|house|building|campus|dorm|forest`) → Places.
-  - Default fallback: People.
-  - `name` ← `entry.displayName` or first key in `entry.keys`; `description` ← `entry.text`.
-- **Notes** ← `content.context[].text` entries joined with `\n\n---\n\n` separator. This captures Memory + Author's Note verbatim without attempting to classify character sheets, canon rules, or style notes. User re-organizes in the Bible editor after import.
-- **Tags** ← `metadata.tags` written to `story.tags` (not Bible).
+```ts
+type Story = { ..., description: string, keywords: string[], ... };
+type Bible = {
+  characters: Array<{ name: string; description: string; traits?: string }>;
+  setting: string;
+  pov: "first" | "second" | "third-limited" | "third-omniscient";
+  tone: string;
+  styleNotes: string;
+  nsfwPreferences: string;
+  styleOverrides?: StyleRules;
+};
+```
+
+Mapping:
+
+- **`Story.description`** ← `metadata.description` if non-empty, else `metadata.textPreview`.
+- **`Story.keywords`** ← `metadata.tags`.
+- **`Bible.characters`** ← lorebook entries classified as People:
+  - `entry.category` matches `/person|character|people/i` → People.
+  - No category → pronoun sniff (`he |she |they |his |her |their ` in first sentence of `entry.text`) → People.
+  - Default fallback when ambiguous: People.
+  - Each entry: `{ name: entry.displayName || entry.keys[0], description: entry.text }` (no `traits` — NovelAI doesn't have an equivalent).
+- **`Bible.setting`** ← lorebook entries classified as Places, concatenated with one blank line between entries; each entry formatted as `"## <displayName>\n<entry.text>"`.
+  - `entry.category` matches `/place|location|setting/i` → Places.
+  - No category + location-cue sniff (`is a` + noun like `city|town|village|room|house|building|campus|dorm|forest` in first sentence) → Places.
+  - If there are zero Place entries, `setting` is left empty (user fills in later).
+- **`Bible.styleNotes`** ← `content.context[].text` entries joined with `\n\n---\n\n`. Captures Memory + Author's Note verbatim. NovelAI users often put character sheets in Memory; those will land here too. Users re-organize in the Bible editor post-import.
+- **`Bible.pov`, `Bible.tone`, `Bible.nsfwPreferences`** ← defaults (`"third-limited"`, `""`, `""`). User fills in.
 
 **Silently dropped:** `metadata.favorite`, `lorebook.{categories,order,settings}`, per-entry `contextConfig`, `ephemeralContext`, `phraseBiasGroups`, `bannedSequenceGroups`, `messageSettings`, `sideChats`, `userScripts`, `scriptStorage`, `contextDefaults`, `settingsDirty`, `didGenerate`, `isModified`, `hasDocument`, `isTA`.
+
+### Proposed-bible shape passed to the UI
+
+The parse endpoint returns a `ProposedWrite` shape that mirrors the actual storage targets so the UI can render directly:
+
+```ts
+type ProposedWrite = {
+  story: { title: string; description: string; keywords: string[] };
+  bible: Bible;           // ready-to-write
+};
+```
+
+(Earlier draft called this `ProposedBible` with `{premise, people, places, notes}`. That shape is gone.)
 
 ## Architecture
 
@@ -144,13 +177,12 @@ type ParseOk = {
   data: {
     parsed: ParsedStory;
     split: SplitResult;          // chapters + splitSource
-    bible: ProposedBible;
-    suggestedSlug: string;       // slugified from parsed.title
+    proposed: ProposedWrite;     // { story: {title,description,keywords}, bible }
   };
 };
 ```
 
-Implementation: read buffer, call `decodeNovelAIStory` → `splitProse` → `mapToBible` → slugify. Max file size check (10MB) runs before msgpack to avoid OOM on a pathological upload.
+Implementation: read buffer, call `decodeNovelAIStory` → `splitProse` → `mapToProposedWrite`. Max file size check (10MB) runs before msgpack to avoid OOM on a pathological upload. Slug is **not** derived here; the commit endpoint's `createStory` handles slug derivation + collision suffixing via `uniqueSlug`.
 
 ### `POST /api/import/novelai/commit`
 
@@ -159,9 +191,9 @@ JSON body:
 ```ts
 type CommitRequest =
   | { target: "new-story";
-      title: string; slug: string; tags: string[];
+      story: { title: string; description: string; keywords: string[] };
+      bible: Bible;
       chapters: ProposedChapter[];
-      bible: ProposedBible;
     }
   | { target: "existing-story";
       slug: string;
@@ -177,23 +209,21 @@ type CommitOk = { ok: true; data: { slug: string; chapterIds: string[] } };
 
 **New-story sequence:**
 
-1. Validate slug via [lib/storage/stories.ts](../../../lib/storage/stories.ts); on collision return `{ok:false, error, suggestion:"slug-2"}`. The existing `ApiResult<T>` error shape is widened with an optional `suggestion?: string` field so this stays a single envelope rather than a bespoke error type. Client resubmits with chosen slug (no silent rename).
-2. Create story dir via `storyDir(slug)` from [lib/storage/paths.ts](../../../lib/storage/paths.ts).
-3. Write `story.json` (same schema used by existing new-story flow).
-4. Write `bible.json` from the committed `ProposedBible`.
-5. For each chapter, write `chapters/NNN-<slug>.json` with prose as a single section `{id, content}`. User can split into sections post-import in the editor if desired.
-6. Return `{slug, chapterIds}`.
+1. Call `createStory(dataDir, {title: story.title})` — slug is derived from title by the existing helper, which already handles collisions via `uniqueSlug` by suffixing (`-2`, `-3`, …). The user never picks a slug, matching the existing new-story UX elsewhere in the app.
+2. Call `updateStory(dataDir, slug, {description, keywords})` to persist premise + tags.
+3. Write `bible.json` via `fs.writeFile` on `bibleJson(dataDir, slug)` with the committed `Bible`.
+4. For each chapter, call `createImportedChapter(dataDir, slug, {title, sectionContents:[body]})` — same helper the paste importer uses, which sets `source:"imported"` and auto-numbers the chapter file.
+5. Return `{slug, chapterIds}` where `chapterIds` is each `createImportedChapter` return's `.id`.
 
 **Existing-story sequence:**
 
-1. Verify story slug exists.
-2. Find next chapter number via chapter storage helpers.
-3. Write chapters continuing numbering.
-4. Return `{slug, chapterIds}`.
+1. `getStory(dataDir, slug)`; if null, return `{ok:false, error:"Story not found."}`.
+2. For each chapter, call `createImportedChapter` (continues numbering naturally — that helper appends to `story.chapterOrder`).
+3. Return `{slug, chapterIds}`.
 
-**Atomicity:** new-story mode uses a try/catch; if any write fails mid-create, unlink the partially-created story dir before returning the error. Existing-story mode writes chapter-by-chapter; mid-flight failure leaves earlier chapters written (recoverable, acceptable — same semantics as the paste importer).
+**Atomicity:** new-story mode uses a try/catch; if any write fails after `createStory` succeeded, unlink the story dir with `deleteStory(dataDir, slug)` before returning the error. Existing-story mode writes chapter-by-chapter; mid-flight failure leaves earlier chapters written (recoverable, acceptable — same semantics as the paste importer).
 
-Both routes use the `ApiResult<T>` envelope from [lib/api.ts](../../../lib/api.ts).
+Both routes use the `ApiResult<T>` envelope from [lib/api.ts](../../../lib/api.ts). No `suggestion` extension to the envelope is needed — slug collisions are handled server-side silently.
 
 ### Privacy
 
@@ -207,12 +237,10 @@ Both new routes are local-only (filesystem I/O; no outbound fetch). Added to the
 
 1. **Pick file** — drop zone + file picker accepting `.story`. POST to `/api/import/novelai/parse`.
 2. **Preview & edit** — three columns:
-   - **Left (Story metadata):** editable `title`, `slug` (with debounced collision check against `GET /api/stories`), `tags` comma-separated.
+   - **Left (Story metadata):** editable `title`, `description`, `keywords` (comma-separated). Prefilled from `proposed.story`. No slug field — the server derives it.
    - **Center (Chapter list):** row per detected chapter with editable title, word count, split-source badge (`"////"`, `"Chapter heading"`, `"scene breaks (verify)"`). Expand to edit body in a textarea. Per-row actions: delete (removes from commit), merge-with-next (concatenates bodies).
-   - **Right (Proposed Bible):** read-only preview of Premise / People / Places / Notes. Footnote: *"Edit in the Bible editor after import."*
-3. **Commit** — "Create story" button POSTs `target: "new-story"`. On success, toast + navigate to `/s/<slug>`.
-
-**Slug collision UX:** inline message like *"'foo' is taken — try 'foo-2'."* with clickable suggestion. Defense-in-depth recheck at commit time.
+   - **Right (Proposed Bible):** read-only preview of `characters[]`, `setting`, `styleNotes`. Footnote: *"Edit in the Bible editor after import."*
+3. **Commit** — "Create story" button POSTs `target: "new-story"`. On success, toast (showing the final slug, which may have been auto-suffixed) + navigate to `/s/<slug>`.
 
 **Error states:** parse failure shows the server error in a muted panel with a "Choose a different file" button that resets state.
 
@@ -231,7 +259,7 @@ Both new routes are local-only (filesystem I/O; no outbound fetch). Added to the
 3. **Options row:** checkbox "Generate recap via Grok" (same behavior as paste dialog: recap generation runs **post-commit, per-chapter, sequentially**, via `/api/generate/recap` — already on the privacy egress-allowlist as an outbound route).
 4. **Commit** — "Add N chapter(s)" POSTs `target: "existing-story"` with current slug. Success: toast, close dialog, SWR revalidates chapter list. Stay on the current page.
 
-**Discarded-data affordance:** banner at top of preview: *"Premise, lorebook, and tags from this .story file are ignored in this mode. Use 'New story from NovelAI' on the home page to import everything."*
+**Discarded-data affordance:** banner at top of preview: *"Description, lorebook, and tags from this .story file are ignored in this mode. Use 'Import from NovelAI' on the home page to import everything."*
 
 **Why reuse the paste dialog's preview helper but not the component:** shared *output presentation* via the pure `renderChapterPreviewHtml` function; different *input handling* (file + parsed JSON vs. textarea + cleanup). Sharing the whole component would create conditional mess.
 
