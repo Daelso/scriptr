@@ -121,11 +121,11 @@ export function NewStoryFromNovelAIDialog({ open, onOpenChange }: Props) {
         {stage.kind === "idle" && (
           <div className="p-8 flex-1 flex flex-col items-center justify-center gap-3">
             <p className="text-sm text-muted-foreground">
-              Choose a NovelAI <code>.story</code> file to import.
+              Choose a NovelAI export (<code>.txt</code> or <code>.story</code>) to import.
             </p>
             <input
               type="file"
-              accept=".story,application/json"
+              accept=".txt,.story,application/json,text/plain"
               onChange={(e) => {
                 const f = e.target.files?.[0];
                 if (f) void onFile(f);
