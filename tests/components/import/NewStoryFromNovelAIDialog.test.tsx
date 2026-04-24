@@ -42,7 +42,16 @@ async function flush() {
   });
 }
 
-function fakeParsedResponse() {
+const EMPTY_BIBLE = {
+  characters: [],
+  setting: "",
+  pov: "third-limited",
+  tone: "",
+  styleNotes: "",
+  nsfwPreferences: "",
+};
+
+function fakeSingleStoryResponse() {
   return {
     ok: true,
     data: {
@@ -53,36 +62,78 @@ function fakeParsedResponse() {
         textPreview: "",
         contextBlocks: [],
         lorebookEntries: [],
-        prose: "body one\n\n////\n\nbody two",
+        prose: "Chapter 1\n\nbody one\n\nChapter 2\n\nbody two",
       },
-      split: {
-        chapters: [
-          { title: "One", body: "body one" },
-          { title: "Two", body: "body two" },
-        ],
-        splitSource: "marker",
-      },
-      proposed: {
-        story: {
-          title: "Garden at Dusk",
-          description: "a desc",
-          keywords: ["a", "b"],
+      stories: [
+        {
+          split: {
+            chapters: [
+              { title: "One", body: "body one" },
+              { title: "Two", body: "body two" },
+            ],
+            splitSource: "heading",
+          },
+          proposed: {
+            story: {
+              title: "Garden at Dusk",
+              description: "a desc",
+              keywords: ["a", "b"],
+            },
+            bible: {
+              characters: [{ name: "Mira", description: "a gardener" }],
+              setting: "## Walled Garden\nold stones",
+              pov: "third-limited",
+              tone: "",
+              styleNotes: "",
+              nsfwPreferences: "",
+            },
+          },
         },
-        bible: {
-          characters: [{ name: "Mira", description: "a gardener" }],
-          setting: "## Walled Garden\nold stones",
-          pov: "third-limited",
-          tone: "",
-          styleNotes: "",
-          nsfwPreferences: "",
-        },
+      ],
+    },
+  };
+}
+
+function fakeMultiStoryResponse() {
+  return {
+    ok: true,
+    data: {
+      parsed: {
+        title: "Saga",
+        description: "",
+        tags: [],
+        textPreview: "",
+        contextBlocks: [],
+        lorebookEntries: [],
+        prose: "a\n\n////\n\nb\n\n////\n\nc",
       },
+      stories: [
+        {
+          split: {
+            chapters: [{ title: "Opening", body: "alpha" }],
+            splitSource: "none",
+          },
+          proposed: {
+            story: { title: "Saga - Part 1", description: "", keywords: [] },
+            bible: EMPTY_BIBLE,
+          },
+        },
+        {
+          split: {
+            chapters: [{ title: "Middle", body: "beta" }],
+            splitSource: "none",
+          },
+          proposed: {
+            story: { title: "Saga - Part 2", description: "", keywords: [] },
+            bible: EMPTY_BIBLE,
+          },
+        },
+      ],
     },
   };
 }
 
 function setFileOnInput(input: HTMLInputElement, file: File) {
-  // JSDOM doesn't let us assign .files directly. Use defineProperty.
   Object.defineProperty(input, "files", {
     value: [file],
     writable: false,
@@ -112,9 +163,9 @@ describe("NewStoryFromNovelAIDialog", () => {
     unmount();
   });
 
-  it("parses the file and renders the preview on upload", async () => {
+  it("parses the file and renders the single-story preview on upload", async () => {
     global.fetch = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify(fakeParsedResponse()), { status: 200 })
+      new Response(JSON.stringify(fakeSingleStoryResponse()), { status: 200 })
     ) as unknown as typeof fetch;
 
     const { container, unmount } = mount(
@@ -131,10 +182,14 @@ describe("NewStoryFromNovelAIDialog", () => {
     await flush();
     await flush();
 
-    const titleInput = container.querySelector('input[value="Garden at Dusk"]') as HTMLInputElement | null;
+    const titleInput = container.querySelector(
+      'input[value="Garden at Dusk"]'
+    ) as HTMLInputElement | null;
     expect(titleInput).toBeTruthy();
     expect(container.textContent ?? "").toMatch(/Mira/);
     expect(container.textContent ?? "").toMatch(/## Walled Garden/);
+    // No multi-story card when there's only one story.
+    expect(container.querySelector('[data-testid="story-card-0"]')).toBeNull();
 
     const chapterBodies = Array.from(container.querySelectorAll("textarea"))
       .map((t) => (t as HTMLTextAreaElement).value);
@@ -144,15 +199,48 @@ describe("NewStoryFromNovelAIDialog", () => {
     unmount();
   });
 
-  it("commits and navigates on 'Create story'", async () => {
+  it("renders one story-card per story when multi-story", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(fakeMultiStoryResponse()), { status: 200 })
+    ) as unknown as typeof fetch;
+
+    const { container, unmount } = mount(
+      <NewStoryFromNovelAIDialog open onOpenChange={() => {}} />
+    );
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    setFileOnInput(fileInput, new File([new Uint8Array([1])], "x.txt"));
+    await flush();
+    await flush();
+
+    // Two story cards.
+    expect(container.querySelector('[data-testid="story-card-0"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="story-card-1"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="story-card-2"]')).toBeNull();
+
+    // Commit button reflects the count.
+    const buttons = Array.from(container.querySelectorAll("button"));
+    const createBtn = buttons.find((b) => /create 2 stories/i.test(b.textContent ?? ""));
+    expect(createBtn).toBeTruthy();
+
+    // Both titles appear as input values.
+    expect(container.querySelector('input[value="Saga - Part 1"]')).toBeTruthy();
+    expect(container.querySelector('input[value="Saga - Part 2"]')).toBeTruthy();
+
+    unmount();
+  });
+
+  it("commits and navigates to the first slug on 'Create story' (single)", async () => {
     global.fetch = vi
       .fn()
       .mockResolvedValueOnce(
-        new Response(JSON.stringify(fakeParsedResponse()), { status: 200 })
+        new Response(JSON.stringify(fakeSingleStoryResponse()), { status: 200 })
       )
       .mockResolvedValueOnce(
         new Response(
-          JSON.stringify({ ok: true, data: { slug: "garden-at-dusk", chapterIds: ["a", "b"] } }),
+          JSON.stringify({
+            ok: true,
+            data: { slugs: ["garden-at-dusk"], chapterIds: ["a", "b"] },
+          }),
           { status: 200 }
         )
       ) as unknown as typeof fetch;
@@ -161,15 +249,14 @@ describe("NewStoryFromNovelAIDialog", () => {
       <NewStoryFromNovelAIDialog open onOpenChange={() => {}} />
     );
     const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
-    setFileOnInput(
-      fileInput,
-      new File([new Uint8Array([1, 2, 3])], "x.story")
-    );
+    setFileOnInput(fileInput, new File([new Uint8Array([1, 2, 3])], "x.story"));
     await flush();
     await flush();
 
     const buttons = Array.from(container.querySelectorAll("button"));
-    const createBtn = buttons.find((b) => /create story/i.test(b.textContent ?? "")) as HTMLButtonElement;
+    const createBtn = buttons.find((b) =>
+      /^\s*create story\s*$/i.test(b.textContent ?? "")
+    ) as HTMLButtonElement;
     expect(createBtn).toBeTruthy();
     act(() => {
       createBtn.click();
@@ -181,10 +268,73 @@ describe("NewStoryFromNovelAIDialog", () => {
     unmount();
   });
 
+  it("commits multi-story and navigates to the first slug", async () => {
+    const commitBodies: unknown[] = [];
+    global.fetch = vi
+      .fn()
+      .mockImplementation(async (url: unknown, init?: { body?: string }) => {
+        const u = String(url);
+        if (u.endsWith("/parse")) {
+          return new Response(JSON.stringify(fakeMultiStoryResponse()), { status: 200 });
+        }
+        if (u.endsWith("/commit")) {
+          commitBodies.push(JSON.parse(init?.body ?? "{}"));
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              data: {
+                slugs: ["saga-part-1", "saga-part-2"],
+                chapterIds: ["c1", "c2"],
+              },
+            }),
+            { status: 200 }
+          );
+        }
+        return new Response("", { status: 404 });
+      }) as unknown as typeof fetch;
+
+    const { container, unmount } = mount(
+      <NewStoryFromNovelAIDialog open onOpenChange={() => {}} />
+    );
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    setFileOnInput(fileInput, new File([new Uint8Array([1])], "x.txt"));
+    await flush();
+    await flush();
+
+    const buttons = Array.from(container.querySelectorAll("button"));
+    const createBtn = buttons.find((b) =>
+      /create 2 stories/i.test(b.textContent ?? "")
+    ) as HTMLButtonElement;
+    expect(createBtn).toBeTruthy();
+    act(() => {
+      createBtn.click();
+    });
+    await flush();
+    await flush();
+
+    // Commit payload is the new `stories: []` shape.
+    expect(commitBodies).toHaveLength(1);
+    const payload = commitBodies[0] as {
+      target: string;
+      stories: Array<{ story: { title: string } }>;
+    };
+    expect(payload.target).toBe("new-story");
+    expect(payload.stories).toHaveLength(2);
+    expect(payload.stories[0].story.title).toBe("Saga - Part 1");
+    expect(payload.stories[1].story.title).toBe("Saga - Part 2");
+
+    // Routes to the first slug.
+    expect(push).toHaveBeenCalledWith("/s/saga-part-1");
+    unmount();
+  });
+
   it("shows the parse error and a 'Choose a different file' button on parse failure", async () => {
     global.fetch = vi.fn().mockResolvedValue(
       new Response(
-        JSON.stringify({ ok: false, error: "Unsupported NovelAI format version: got 99, expected 1." }),
+        JSON.stringify({
+          ok: false,
+          error: "Unsupported NovelAI format version: got 99, expected 1.",
+        }),
         { status: 400 }
       )
     ) as unknown as typeof fetch;
@@ -199,7 +349,9 @@ describe("NewStoryFromNovelAIDialog", () => {
 
     expect(container.textContent ?? "").toMatch(/Unsupported NovelAI format version/);
     const buttons = Array.from(container.querySelectorAll("button"));
-    expect(buttons.some((b) => /choose a different file/i.test(b.textContent ?? ""))).toBe(true);
+    expect(
+      buttons.some((b) => /choose a different file/i.test(b.textContent ?? ""))
+    ).toBe(true);
     unmount();
   });
 });
