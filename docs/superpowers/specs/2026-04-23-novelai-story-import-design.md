@@ -28,9 +28,18 @@ Both dialogs let the user edit chapter titles, body text, delete unwanted chapte
 
 ## Prose extraction decisions
 
-NovelAI stores user prompts and AI output as separate ordered sections inside the CRDT document, each with a `source` field (1 = user-typed prompt, 2 = AI output, based on observed pattern in the sample file). Per Q1 during brainstorming:
+NovelAI's `content.document` is a base64/msgpack CRDT op log where arbitrary-typed keys (floats, lists, long prose strings) appear throughout the decoded tree. Initial brainstorming proposed filtering by a `source` field (1 = user prompt, 2 = AI output) stored alongside each section, but investigation of the real sample file showed the document does not contain a tidy `{sectionId: {type,text,meta,source}}` map — prose appears both as dict *values* and as dict *keys* across multiple sub-maps, and source metadata is not co-located with text in a way that survives a robust schema-agnostic walk.
 
-- **Only AI output (source=2) is imported as chapter prose.** User-typed prompts like *"Begin with Chapter 1: 'The Measurement.'"* are dropped. This produces the cleanest prose; users who want prompts preserved can copy them manually.
+**Adopted approach (Approach 1 from the brainstorm): depth-first tree walk.** The decoder collects every string ≥ 60 characters from the decoded tree (values and dict keys alike), dedupes in order of first encounter, and applies a **filter list** of known-metadata strings to strip duplicates:
+
+- `metadata.description`
+- `metadata.textPreview`
+- each `content.context[].text`
+- each `content.lorebook.entries[].text`
+
+These four sources of text leak into the CRDT as long dict keys; filtering them removes the obvious noise. What remains is the user's prose plus any prompt text that is long enough to clear the 60-char threshold. **Some user-prompt leakage is expected** — the user removes these in the import dialog's per-chapter body editor, which is already part of the design for the new-story path.
+
+This trade-off was accepted over a deeper CRDT reverse-engineering effort (Approach 2 in the brainstorm) because the second approach is a multi-week investment for a one-way import.
 
 ## Chapter splitting — priority order
 
@@ -142,17 +151,20 @@ Steps:
 
 1. `JSON.parse` outer envelope; reject unless `storyContainerVersion === 1`.
 2. Read `metadata`, `content.context`, `content.lorebook` directly (plain JSON).
-3. Base64-decode `content.document` to bytes.
-4. Feed bytes to `@msgpack/msgpack` Decoder configured with:
-   - `extensionCodec` wrapping unknown ext codes as opaque `{kind:"ext", code, data}` (we don't need to interpret NovelAI's CRDT op markers).
-5. Decoded stream is multiple top-level objects. Shape: `[extMarker, extMarker, keyTable, sectionsMap, ...history]`. Keep `keyTable` and `sectionsMap`; discard the rest.
-6. **Extract prose in order:** walk `sectionsMap`, collect entries of shape `{type:"text", source:2, text:string}` (schema indices resolved via `keyTable`). Order by position in `content.document`'s `order` list when present; fall back to document order otherwise.
-7. Trim section boundary noise (leading space, stray newlines); preserve internal paragraph breaks.
-8. Join prose with `\n\n`.
+3. Base64-decode `content.document` to bytes; reject empty.
+4. Feed bytes to `@msgpack/msgpack` `decodeMulti()` — returns a stream of top-level objects. msgpack `Map` objects (with non-string keys) are preserved as JS `Map`; `Object` maps decode to plain objects. Ext types decode to opaque `{type, data}` — we don't interpret them.
+5. Build the **filter set**: `{metadata.description, metadata.textPreview, each context[].text, each lorebook.entries[].text}`, trimmed and empty-filtered.
+6. **Walk every top-level object depth-first.** For each node:
+   - `string` → if `length >= 60` AND not already seen AND not in the filter set, push to `segments` and mark as seen.
+   - `Map` → visit each key and value.
+   - plain object → visit each key (string) and value.
+   - `Array` → visit each element.
+   - primitive (number, boolean, null, undefined) or ext object → skip.
+7. Join `segments` with `\n\n`. If the result is empty, throw `"No AI-generated prose found — did you import before running any AI turns?"`.
 
-Key-table resolution: the first array in the decoded stream is a key schema like `["sections", "order", "history", "dirtySections", "step"]`. Integer keys encountered later are indices into it; the decoder keeps a `Map<number,string>` and translates.
+**Why this works:** on real NovelAI documents, the user's authored prose appears as long strings (≥60 chars) in multiple places in the tree (often as dict keys). The filter set removes metadata duplicates. A small amount of user-prompt leakage is accepted (see "Prose extraction decisions" above).
 
-**Assumptions to validate during implementation:** The `source=1` / `source=2` semantics (user prompt vs. AI output) are inferred from a single sample file. The implementation plan's first step is a spike against the committed fixture to confirm the schema; if a second `.story` sample is available, cross-check there too. Everything downstream of `decode.ts` (split, map, UI) only needs a string-in/string-out contract, so schema surprises are contained to one module.
+**Implementation order:** the plan's Task 1.6 is the high-risk step. The recommended sequence is (a) implement tree-walk against the synthetic fixture; (b) when tests are green, pass a real user-provided `.story` file through a one-off scratch script and visually inspect `prose.slice(0, 800)` — if obvious metadata leaks are present, widen the filter set; if prose is empty, loosen `MIN_PROSE_LEN` or check that real files decode as `Map` rather than plain object. Scratch file must not be committed.
 
 ### Parse-time errors (each returned as `{ok:false, error}`)
 
