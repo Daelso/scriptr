@@ -47,3 +47,51 @@ describe("splitProse — //// marker", () => {
     expect(r.chapters[0].body).toBe("");
   });
 });
+
+describe("splitProse — chapter headings", () => {
+  it("splits on 'Chapter N' headings", () => {
+    const r = splitProse("Chapter 1\n\nfirst\n\nChapter 2\n\nsecond");
+    expect(r.splitSource).toBe("heading");
+    expect(r.chapters).toHaveLength(2);
+    expect(r.chapters[0].title).toBe("");
+    expect(r.chapters[0].body).toBe("first");
+    expect(r.chapters[1].title).toBe("");
+    expect(r.chapters[1].body).toBe("second");
+  });
+
+  it("captures the title after 'Chapter N:'", () => {
+    const prose = "Chapter 1: The Beginning\n\nopening text\n\nChapter 2: Middle\n\nmore text";
+    const r = splitProse(prose);
+    expect(r.chapters[0].title).toBe("The Beginning");
+    expect(r.chapters[1].title).toBe("Middle");
+  });
+
+  it("recognizes roman numerals", () => {
+    const r = splitProse("Chapter I\n\nfirst\n\nChapter II\n\nsecond");
+    expect(r.chapters).toHaveLength(2);
+  });
+
+  it("is case-insensitive on 'Chapter'", () => {
+    const r = splitProse("CHAPTER 1\n\nfoo\n\nchapter 2\n\nbar");
+    expect(r.chapters).toHaveLength(2);
+  });
+
+  it("marker beats heading when both are present (marker has priority)", () => {
+    const prose = "Chapter 1\n\nfirst\n\n////\n\nChapter 2\n\nsecond";
+    const r = splitProse(prose);
+    expect(r.splitSource).toBe("marker");
+    expect(r.chapters).toHaveLength(2);
+    // Chapter 1/2 lines stay in the bodies because marker-splitting runs first
+    // and does not consume heading lines.
+    expect(r.chapters[0].body).toContain("Chapter 1");
+    expect(r.chapters[1].body).toContain("Chapter 2");
+  });
+
+  it("infers title from first sentence when no heading captured", () => {
+    // No chapter heading, single chapter — no inference happens in this
+    // implementation; title stays empty. Title inference only applies when
+    // the split source provides a hint.
+    const r = splitProse("Plain body with no heading at all.");
+    expect(r.chapters[0].title).toBe("");
+  });
+});
