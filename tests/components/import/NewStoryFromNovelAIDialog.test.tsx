@@ -229,6 +229,147 @@ describe("NewStoryFromNovelAIDialog", () => {
     unmount();
   });
 
+  it("removes a story-card when its 'Remove' button is clicked", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(fakeMultiStoryResponse()), { status: 200 })
+    ) as unknown as typeof fetch;
+
+    const { container, unmount } = mount(
+      <NewStoryFromNovelAIDialog open onOpenChange={() => {}} />
+    );
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    setFileOnInput(fileInput, new File([new Uint8Array([1])], "x.txt"));
+    await flush();
+    await flush();
+
+    // Sanity: 2 story cards rendered, commit button reads "Create 2 stories".
+    expect(container.querySelector('[data-testid="story-card-0"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="story-card-1"]')).toBeTruthy();
+    let buttons = Array.from(container.querySelectorAll("button"));
+    expect(
+      buttons.find((b) => /create 2 stories/i.test(b.textContent ?? ""))
+    ).toBeTruthy();
+
+    // Click "Remove" on Story 1 (the first card). Both Remove buttons share
+    // the aria-label `Remove story N`; click the one for story 1.
+    const removeBtn = buttons.find(
+      (b) => b.getAttribute("aria-label") === "Remove story 1"
+    ) as HTMLButtonElement;
+    expect(removeBtn).toBeTruthy();
+    expect(removeBtn.disabled).toBe(false);
+    act(() => {
+      removeBtn.click();
+    });
+    await flush();
+
+    // Now there's only 1 card. The remaining card is the one that was
+    // originally Story 2 — its title input should still hold "Saga - Part 2".
+    expect(container.querySelector('[data-testid="story-card-1"]')).toBeNull();
+    expect(container.querySelector('input[value="Saga - Part 2"]')).toBeTruthy();
+    expect(container.querySelector('input[value="Saga - Part 1"]')).toBeNull();
+
+    // Commit button label updates to single-story copy.
+    buttons = Array.from(container.querySelectorAll("button"));
+    expect(
+      buttons.find((b) => /^create story$/i.test(b.textContent ?? ""))
+    ).toBeTruthy();
+
+    // The remaining card's Remove button is now disabled (can't remove the last).
+    const remainingRemove = buttons.find(
+      (b) => b.getAttribute("aria-label") === "Remove story 1"
+    ) as HTMLButtonElement | undefined;
+    if (remainingRemove) {
+      expect(remainingRemove.disabled).toBe(true);
+    }
+
+    unmount();
+  });
+
+  it("commit payload after removing one story only contains the remaining story", async () => {
+    let commitBody: unknown = null;
+    const fetchMock = vi.fn().mockImplementation(async (url: unknown, init?: { body?: string }) => {
+      const u = String(url);
+      if (u.endsWith("/parse")) {
+        return new Response(JSON.stringify(fakeMultiStoryResponse()), { status: 200 });
+      }
+      if (u.endsWith("/commit")) {
+        commitBody = JSON.parse(init?.body ?? "{}");
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            data: { slugs: ["saga-part-2"], chapterIds: ["c1"] },
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response("", { status: 404 });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { container, unmount } = mount(
+      <NewStoryFromNovelAIDialog open onOpenChange={() => {}} />
+    );
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    setFileOnInput(fileInput, new File([new Uint8Array([1])], "x.txt"));
+    await flush();
+    await flush();
+
+    // Drop story 1.
+    const buttons = Array.from(container.querySelectorAll("button"));
+    const removeBtn = buttons.find(
+      (b) => b.getAttribute("aria-label") === "Remove story 1"
+    ) as HTMLButtonElement;
+    act(() => {
+      removeBtn.click();
+    });
+    await flush();
+
+    // Click commit. Label is now "Create story" (single).
+    const buttonsAfter = Array.from(container.querySelectorAll("button"));
+    const createBtn = buttonsAfter.find((b) =>
+      /^create story$/i.test(b.textContent ?? "")
+    ) as HTMLButtonElement;
+    act(() => {
+      createBtn.click();
+    });
+    await flush();
+    await flush();
+
+    expect(commitBody).toBeTruthy();
+    const payload = commitBody as {
+      target: string;
+      stories: Array<{ story: { title: string } }>;
+    };
+    expect(payload.target).toBe("new-story");
+    expect(payload.stories).toHaveLength(1);
+    expect(payload.stories[0].story.title).toBe("Saga - Part 2");
+
+    unmount();
+  });
+
+  it("Remove button is hidden/disabled when only one story is present (single-story mode)", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(fakeSingleStoryResponse()), { status: 200 })
+    ) as unknown as typeof fetch;
+
+    const { container, unmount } = mount(
+      <NewStoryFromNovelAIDialog open onOpenChange={() => {}} />
+    );
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    setFileOnInput(fileInput, new File([new Uint8Array([1])], "x.txt"));
+    await flush();
+    await flush();
+
+    // Single-story mode renders without story-card containers, so no Remove
+    // button should exist at all.
+    const removeBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.getAttribute("aria-label")?.startsWith("Remove story")
+    );
+    expect(removeBtn).toBeUndefined();
+
+    unmount();
+  });
+
   it("commits and navigates to the first slug on 'Create story' (single)", async () => {
     global.fetch = vi
       .fn()

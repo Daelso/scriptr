@@ -103,6 +103,14 @@ export function NewStoryFromNovelAIDialog({ open, onOpenChange }: Props) {
     );
   }
 
+  function removeStoryAt(i: number) {
+    setStories((prev) => {
+      // Guard: never reduce below 1 — the commit button is the way to abandon.
+      if (prev.length <= 1) return prev;
+      return prev.filter((_, idx) => idx !== i);
+    });
+  }
+
   const onCommit = useCallback(async () => {
     if (stage.kind !== "preview" || stories.length === 0) return;
     setSaving(true);
@@ -223,8 +231,19 @@ export function NewStoryFromNovelAIDialog({ open, onOpenChange }: Props) {
                 className="border border-border rounded"
                 data-testid={`story-card-${i}`}
               >
-                <div className="border-b border-border px-3 py-2 text-xs font-semibold bg-muted/30">
-                  Story {i + 1} of {stories.length}
+                <div className="border-b border-border px-3 py-2 text-xs font-semibold bg-muted/30 flex items-center justify-between gap-2">
+                  <span>Story {i + 1} of {stories.length}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Remove story ${i + 1}`}
+                    onClick={() => removeStoryAt(i)}
+                    disabled={stories.length <= 1 || saving}
+                    className="text-xs text-muted-foreground hover:text-destructive h-6 px-2"
+                  >
+                    Remove
+                  </Button>
                 </div>
                 <StoryCardBody
                   story={s}
