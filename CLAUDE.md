@@ -52,5 +52,11 @@ Privacy is a product pillar (see the top of [README.md](README.md)). Several mec
 ### API routes
 All under [app/api/](app/api/). Each route is a small adapter: parse with `readJson` from [lib/api.ts](lib/api.ts), call storage or grok, return an `ApiResult<T>` envelope. Handlers are directly callable in tests — the API and egress tests invoke them without starting a server (see the pattern in [tests/privacy/no-external-egress.test.ts](tests/privacy/no-external-egress.test.ts)).
 
+### Import (NovelAI exports)
+`.story` and `.txt` exports are parsed in [lib/novelai/](lib/novelai/) (decode → clean → split → map) and committed via `/api/import/novelai/parse` and `/api/import/novelai/commit`. `////` is the story-split delimiter (multi-story exports land as separate stories); rule/heading splits require 1+ occurrence. See [lib/novelai/split.ts](lib/novelai/split.ts).
+
+### Publish (EPUB export)
+EPUB generation lives in [lib/publish/](lib/publish/) and is exposed via `/api/stories/[slug]/export/epub`. We ship both EPUB3 (KDP/modern readers) and EPUB2 (Smashwords-only). Gotchas: `epub-gen-memory` takes cover options as a **positional vararg**, and disk paths for `cover` MUST be `file://` URLs (use `pathToFileURL`) — bare absolute paths silently produce 0-byte covers. `@likecoin/epubcheck-ts` validation is wired up but currently crashes under Next.js 16, so validation is silently non-functional.
+
 ### Planning docs
-Feature work is designed in [docs/superpowers/specs/](docs/superpowers/specs/) and executed from [docs/superpowers/plans/](docs/superpowers/plans/). MVP Writer shipped as `v0.1.0-mvp-writer`; the active spec is the Publishing Kit (EPUB/DOCX/PDF) at [docs/superpowers/specs/2026-04-20-publishing-kit-design.md](docs/superpowers/specs/2026-04-20-publishing-kit-design.md).
+Feature work is designed in [docs/superpowers/specs/](docs/superpowers/specs/) and executed from [docs/superpowers/plans/](docs/superpowers/plans/). Shipped milestones: `v0.1.0-mvp-writer`, `v0.2.0-publishing-kit` (EPUB2/EPUB3 via [lib/publish/epub.ts](lib/publish/epub.ts)). Since then: style rules, section-editor sticky focus, copy-prompt-for-webui, NovelAI story import. Check `git tag -l` and the newest file in specs/ before assuming what's "active."
