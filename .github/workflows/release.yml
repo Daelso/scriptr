@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+# electron-builder needs to upload artifacts to the GitHub Release, which
+# requires write access to the repo's contents. The default GITHUB_TOKEN
+# is read-only without this block.
+permissions:
+  contents: write
+
+jobs:
+  # Run typecheck + lint + tests once on Linux. Cross-platform packaging
+  # bugs aren't caught by tests; running them on every OS triples CI cost
+  # for no signal.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Next.js
+        run: npm run build
+
+      - name: Compile Electron main process
+        run: npm run build:electron
+
+      - name: Package with electron-builder
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --publish always
