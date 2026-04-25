@@ -102,6 +102,46 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         run: npx electron-builder --publish never
 
+      # Visual smoke-verify that the fuses landed in the packaged binary.
+      # Output goes to the job log; a human reviews on each release.
+      # Authoritative value lock-in is in tests/electron/fuses.test.ts.
+      - name: Verify Electron fuses
+        shell: bash
+        run: |
+          # macOS has both x64 and arm64 outputs (electron-builder.yml
+          # configures arch: [x64, arm64]) — produces release/mac/scriptr.app
+          # and release/mac-arm64/scriptr.app. We discover and read each
+          # *.app under release/ so neither arch silently skips verification.
+          case "${{ matrix.os }}" in
+            ubuntu-latest)
+              bins=("release/linux-unpacked/scriptr")
+              ;;
+            windows-latest)
+              bins=("release/win-unpacked/scriptr.exe")
+              ;;
+            macos-latest)
+              mapfile -t apps < <(find release -maxdepth 3 -type d -name "scriptr.app" 2>/dev/null)
+              if [[ ${#apps[@]} -eq 0 ]]; then
+                echo "::error ::No scriptr.app found under release/"
+                ls -la release/ || true
+                exit 1
+              fi
+              bins=()
+              for app in "${apps[@]}"; do
+                bins+=("$app/Contents/MacOS/scriptr")
+              done
+              ;;
+          esac
+          for bin in "${bins[@]}"; do
+            if [[ ! -e "$bin" ]]; then
+              echo "::error ::Expected packaged binary not found at $bin"
+              ls -la "$(dirname "$bin")" || true
+              exit 1
+            fi
+            echo "--- Fuses for $bin ---"
+            npx --yes @electron/fuses read --app "$bin"
+          done
+
       # Upload installers as workflow artifacts so manual runs are useful.
       # On tag push these are duplicated by the GitHub Release upload; harmless.
       - name: Upload installers as workflow artifact
