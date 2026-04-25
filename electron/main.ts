@@ -5,7 +5,7 @@
 // own package — see Task 1.7's note.
 import { app, BrowserWindow, Menu, dialog, shell, session } from "electron";
 import { join } from "node:path";
-import { resolveDataDir } from "./migrate";
+import { resolveDataDir, StartupCancelledError } from "./migrate";
 import { startNextServer, type ServerHandle } from "./server";
 import { installNetworkFilter } from "./network-filter";
 import { configureUpdater, isCheckEnabled } from "./update";
@@ -76,7 +76,11 @@ async function main(): Promise<void> {
   try {
     dataDir = await resolveDataDir(app, dialog);
   } catch (err) {
-    await dialog.showErrorBox("scriptr", (err as Error).message);
+    // StartupCancelledError already carries a user-friendly message; other
+    // errors are unexpected and we surface them raw for diagnosis.
+    if (!(err instanceof StartupCancelledError)) {
+      await dialog.showErrorBox("scriptr", (err as Error).message);
+    }
     app.quit();
     return;
   }
@@ -107,6 +111,16 @@ async function main(): Promise<void> {
     loopbackPort: serverHandle.port,
     updatesEnabled,
     logPath: blockedRequestsLog(dataDir),
+  });
+
+  // 4b. Deny every browser permission request (camera, microphone,
+  //     geolocation, notifications, midi, clipboard-read, etc.). scriptr is
+  //     a writing app — it has no legitimate use for any of these, and
+  //     they're all ways an XSS payload could exfiltrate or fingerprint.
+  //     WebRTC also doesn't go through onBeforeRequest; this is the only
+  //     place to deny it cleanly.
+  session.defaultSession.setPermissionRequestHandler((_wc, _perm, callback) => {
+    callback(false);
   });
 
   // 5. Create the window — application menu set once for all platforms

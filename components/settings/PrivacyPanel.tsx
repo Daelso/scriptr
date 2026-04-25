@@ -28,10 +28,13 @@ export function PrivacyPanel() {
 
   const { data: stories } = useSWR<Story[]>("/api/stories", fetcher);
 
+  // Match SettingsForm's revalidation policy — settings don't change without
+  // user action, so refetching on focus just doubles the request cost when
+  // both components mount on the settings page.
   const { data: settings } = useSWR<{
     isElectron?: boolean;
     updates?: { checkOnLaunch: boolean; lastCheckedAt?: string };
-  }>("/api/settings", fetcher);
+  }>("/api/settings", fetcher, { revalidateOnFocus: false });
 
   const {
     data: payload,
@@ -63,7 +66,9 @@ export function PrivacyPanel() {
               <dd>
                 <code>https://api.x.ai</code> (generation)
                 {updatesOn && (
-                  <>, <code>https://api.github.com</code> (updates)</>
+                  <>
+                    , <code>github.com</code> + <code>objects.githubusercontent.com</code> (update check &amp; downloads)
+                  </>
                 )}
               </dd>
               <dt className="text-muted-foreground">Update check on launch</dt>

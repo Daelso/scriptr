@@ -1,6 +1,14 @@
-import { cp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { App, Dialog } from "electron";
+
+/** User-facing error thrown when the user picks "Quit scriptr" at the migration prompt. */
+export class StartupCancelledError extends Error {
+  constructor() {
+    super("scriptr needs a data folder to start. Reopen the app to choose again.");
+    this.name = "StartupCancelledError";
+  }
+}
 
 export type StartupInputs = {
   userData: string;
@@ -80,9 +88,23 @@ export async function resolveDataDir(app: App, dialog: Dialog): Promise<string> 
       return decision.dataDir;
 
     case "prompt": {
+      // Reject candidates that contain symlinks pointing outside themselves —
+      // a malicious cwd (e.g. user double-clicks the app from a hostile
+      // Downloads folder) could otherwise inject content into the trusted
+      // data directory via a planted ./data/ with a symlink in it.
+      const safe = await isCandidateSafe(decision.candidate);
+      if (!safe) {
+        await dialog.showErrorBox(
+          "scriptr",
+          `Refusing to migrate ${decision.candidate} — directory contains symlinks. ` +
+            `Move or copy the data folder manually if it's legitimate.`,
+        );
+        throw new StartupCancelledError();
+      }
+
       const { response } = await dialog.showMessageBox({
         type: "question",
-        buttons: ["Copy to new location", "Use in place", "Cancel"],
+        buttons: ["Copy to new location", "Use in place", "Quit scriptr"],
         defaultId: 0,
         cancelId: 2,
         message: "Existing scriptr data found",
@@ -92,7 +114,13 @@ export async function resolveDataDir(app: App, dialog: Dialog): Promise<string> 
           `or keep the existing folder and point the app there?`,
       });
       if (response === 0) {
-        await cp(decision.candidate, decision.targetIfCopy, { recursive: true });
+        // verbatimSymlinks preserves any symlinks as links rather than copying
+        // through them; combined with the safety check above, the target dir
+        // ends up with the same shape as the source.
+        await cp(decision.candidate, decision.targetIfCopy, {
+          recursive: true,
+          verbatimSymlinks: true,
+        });
         return decision.targetIfCopy;
       }
       if (response === 1) {
@@ -104,8 +132,29 @@ export async function resolveDataDir(app: App, dialog: Dialog): Promise<string> 
         );
         return decision.candidate;
       }
-      throw new Error("Startup cancelled by user at migration prompt");
+      throw new StartupCancelledError();
     }
+  }
+}
+
+/**
+ * A candidate data directory is "safe" if its real path equals its given path
+ * (no symlink redirection on the directory itself) and none of its top-level
+ * entries are symlinks. We don't recurse — a malicious tree deeper than one
+ * level still gets caught by `verbatimSymlinks: true` during cp.
+ */
+async function isCandidateSafe(candidate: string): Promise<boolean> {
+  try {
+    const real = await realpath(candidate);
+    if (real !== candidate) return false;
+    const { readdir } = await import("node:fs/promises");
+    const entries = await readdir(candidate, { withFileTypes: true });
+    for (const e of entries) {
+      if (e.isSymbolicLink()) return false;
+    }
+    return true;
+  } catch {
+    return false;
   }
 }
 
