@@ -23,28 +23,46 @@ export function configureUpdater({ dataDir, onUpdateReady }: UpdateDeps): () => 
   // "Auto-update → Mechanism".
   autoUpdater.autoInstallOnAppQuit = true;
 
+  // Track the most recent error so runCheck() can decide whether to
+  // stamp lastCheckedAt. autoUpdater fires "error" asynchronously — the
+  // checkForUpdates() promise itself often resolves even on transport
+  // failures because some error paths only surface via this event.
+  let lastErrorAt: number | null = null;
+
   autoUpdater.on("update-downloaded", (info) => {
     onUpdateReady(info.version);
   });
 
   autoUpdater.on("error", (err) => {
+    lastErrorAt = Date.now();
     // Swallow — a failed update check must never crash the app.
     console.error("[updater] check failed:", err.message);
   });
 
   return async function runCheck() {
+    const startedAt = Date.now();
+    let threw = false;
     try {
       await autoUpdater.checkForUpdates();
-    } finally {
-      // Read current config and merge — never overwrite the whole `updates`
-      // sub-object, since future fields would be silently dropped.
-      const current = await loadConfig(dataDir);
-      await saveConfig(dataDir, {
-        updates: {
-          ...(current.updates ?? { checkOnLaunch: true }),
-          lastCheckedAt: new Date().toISOString(),
-        },
-      });
+    } catch {
+      threw = true;
     }
+    // Treat as failure if checkForUpdates rejected OR the "error" event fired
+    // during this call. We deliberately do NOT update lastCheckedAt on
+    // failure — that timestamp documents the last *successful* contact with
+    // the update feed, so a Settings UI showing "Last checked: 2 weeks ago"
+    // reflects reality (offline / GitHub down) rather than masking it as
+    // "Last checked: just now".
+    if (threw || (lastErrorAt !== null && lastErrorAt >= startedAt)) return;
+
+    // Read current config and merge — never overwrite the whole `updates`
+    // sub-object, since future fields would be silently dropped.
+    const current = await loadConfig(dataDir);
+    await saveConfig(dataDir, {
+      updates: {
+        ...(current.updates ?? { checkOnLaunch: true }),
+        lastCheckedAt: new Date().toISOString(),
+      },
+    });
   };
 }

@@ -15,11 +15,23 @@ const projectRoot = dirname(fileURLToPath(import.meta.url));
 const updatesEnabled = process.env.SCRIPTR_UPDATES_CHECK === "1";
 
 const connectSrc = ["'self'", "https://api.x.ai"];
-if (updatesEnabled) connectSrc.push("https://api.github.com");
+if (updatesEnabled) {
+  // electron-updater walks api.github.com → github.com (redirect target) →
+  // objects.githubusercontent.com (artifact CDN). All three need CSP.
+  connectSrc.push("https://api.github.com", "https://github.com", "https://objects.githubusercontent.com");
+}
+
+// `unsafe-eval` is needed for Next.js dev server (HMR / fast refresh) but
+// never for the production bundle. Dropping it in prod removes the most
+// abused script-injection sink.
+const isProd = process.env.NODE_ENV === "production";
+const scriptSrc = isProd
+  ? "script-src 'self' 'unsafe-inline'"
+  : "script-src 'self' 'unsafe-inline' 'unsafe-eval'";
 
 const cspDirectives = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval'", // Next.js dev needs inline/eval
+  scriptSrc,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self'",
