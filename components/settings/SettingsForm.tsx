@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
@@ -122,6 +122,7 @@ export function SettingsForm() {
   });
 
   const search = useSearchParams();
+  const router = useRouter();
   const onboarding = search.get("onboarding") === "1";
 
   function patch(partial: Partial<FormState>) {
@@ -169,7 +170,16 @@ export function SettingsForm() {
       // mutate() triggers onSuccess which will re-seed form; clear apiKey field now
       patch({ apiKey: "" });
       await mutate();
-      toast.success("Settings saved");
+      // If the user was in the onboarding flow and just saved their first key,
+      // drop the ?onboarding=1 query param so the welcome banner stops showing.
+      const justFinishedOnboarding =
+        onboarding && form.apiKey !== "" && (data === undefined || !data.hasKey);
+      if (justFinishedOnboarding) {
+        router.replace("/settings");
+        toast.success("Setup complete — welcome to scriptr");
+      } else {
+        toast.success("Settings saved");
+      }
     } catch {
       toast.error("Save failed");
     } finally {

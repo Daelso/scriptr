@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { TopBar } from "@/components/layout/TopBar";
 import { Toaster } from "@/components/ui/sonner";
+import { UpdateReadyToast } from "@/components/desktop/UpdateReadyToast";
 
 export const metadata: Metadata = {
   title: "scriptr",
@@ -19,6 +20,7 @@ export default function RootLayout({
         <TopBar />
         <main>{children}</main>
         <Toaster />
+        <UpdateReadyToast />
       </body>
     </html>
   );
