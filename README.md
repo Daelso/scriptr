@@ -72,6 +72,40 @@ Open `http://127.0.0.1:3000`.
 
 ---
 
+## Desktop install
+
+scriptr ships as an unsigned desktop app for Windows, macOS, and Linux. Download the latest installer from the [Releases page](https://github.com/Daelso/scriptr/releases).
+
+### Windows
+
+Run the installer. Windows SmartScreen will show "Windows protected your PC" — click **More info**, then **Run anyway**. This happens because the installer is unsigned. The app installs per-user by default; no admin rights needed.
+
+### macOS
+
+Open the `.dmg`, drag scriptr to Applications. On first launch, macOS will refuse to open it — right-click scriptr in Applications and choose **Open**, then confirm. Gatekeeper remembers the exception; future launches don't prompt.
+
+### Linux
+
+Download the AppImage and make it executable: `chmod +x scriptr-*.AppImage`. Run from a terminal (`./scriptr-*.AppImage`) or, if your distro's file manager is configured to launch executable AppImages, double-click. Some distros require installing FUSE first (`sudo apt install libfuse2` on Debian/Ubuntu). On Debian/Ubuntu the `.deb` is available as an alternative — install with `sudo dpkg -i scriptr_*.deb`.
+
+### Data location
+
+Stories, chapters, bible, and config live in:
+
+- **Windows:** `%APPDATA%\scriptr\data`
+- **macOS:** `~/Library/Application Support/scriptr/data`
+- **Linux:** `~/.config/scriptr/data` (or `$XDG_CONFIG_HOME/scriptr/data` if set)
+
+From the app: **File → Reveal Data Folder** opens it. Back up this folder to preserve your work.
+
+### Updates — what to know
+
+Update checks are **enabled by default but easy to turn off** in Settings. When enabled, the app fetches release metadata from GitHub on launch and downloads new versions in the background; they install on next quit. The Privacy panel under Settings always shows what destinations the desktop app is contacting.
+
+**Integrity model — read this before relying on auto-updates.** Releases are unsigned, so we can't verify them via OS code-signing. `electron-updater` does verify the SHA512 of each downloaded artifact against the manifest published in the GitHub release, but the **chain of trust ends at the GitHub repo**: if our GitHub account, a maintainer's PAT, or the CI release token were compromised, an attacker could publish a backdoored release whose manifest matches its (malicious) artifact, and your install would auto-apply it on next quit. If you'd rather not accept that risk, **turn off "Check for updates on launch" in Settings** and update manually from the Releases page on a cadence you control.
+
+---
+
 ## Running on LAN
 
 ```

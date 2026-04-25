@@ -77,3 +77,34 @@ describe("config", () => {
     });
   });
 });
+
+describe("config — updates settings", () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "scriptr-config-"));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("defaults updates.checkOnLaunch to true", () => {
+    expect(DEFAULT_CONFIG.updates?.checkOnLaunch).toBe(true);
+  });
+
+  it("defaults updates.lastCheckedAt to undefined", () => {
+    expect(DEFAULT_CONFIG.updates?.lastCheckedAt).toBeUndefined();
+  });
+
+  it("persists updates.checkOnLaunch false across save/load", async () => {
+    await saveConfig(dir, { updates: { checkOnLaunch: false } });
+    const loaded = await loadConfig(dir);
+    expect(loaded.updates?.checkOnLaunch).toBe(false);
+  });
+
+  it("persists updates.lastCheckedAt across save/load", async () => {
+    const ts = "2026-04-24T10:00:00.000Z";
+    await saveConfig(dir, { updates: { checkOnLaunch: true, lastCheckedAt: ts } });
+    const loaded = await loadConfig(dir);
+    expect(loaded.updates?.lastCheckedAt).toBe(ts);
+  });
+});
