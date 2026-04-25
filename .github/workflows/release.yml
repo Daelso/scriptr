@@ -1,0 +1,120 @@
+name: Release
+
+# Triggers:
+# - Tag push (v*.*.*) → real release: builds + publishes artifacts to a
+#   draft GitHub Release.
+# - Manual workflow_dispatch → smoke build: builds artifacts on each OS
+#   and uploads them as workflow artifacts (downloadable from the run page).
+#   No GitHub Release is created. Use this to test installers before tagging.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: "Which OSes to build (comma list of: linux,windows,macos)"
+        type: string
+        default: "linux,windows,macos"
+
+# electron-builder needs to upload artifacts to the GitHub Release, which
+# requires write access to the repo's contents. The default GITHUB_TOKEN
+# is read-only without this block.
+permissions:
+  contents: write
+
+jobs:
+  # Run typecheck + lint + tests once on Linux. Cross-platform packaging
+  # bugs aren't caught by tests; running them on every OS triples CI cost
+  # for no signal.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+
+  # Emits the OS matrix as JSON. Tag pushes always build all three;
+  # workflow_dispatch honors the `platforms` input. We do this in a job
+  # rather than the matrix definition because GitHub Actions doesn't allow
+  # `matrix` to be referenced in job-level `if:` conditions.
+  setup:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            echo 'matrix=["ubuntu-latest","windows-latest","macos-latest"]' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          input='${{ github.event.inputs.platforms }}'
+          oses=()
+          [[ "$input" == *"linux"*   ]] && oses+=('"ubuntu-latest"')
+          [[ "$input" == *"windows"* ]] && oses+=('"windows-latest"')
+          [[ "$input" == *"macos"*   ]] && oses+=('"macos-latest"')
+          if [[ ${#oses[@]} -eq 0 ]]; then
+            echo "::error ::No OSes selected (input: '$input'). Use a comma list of: linux,windows,macos"
+            exit 1
+          fi
+          IFS=, ; echo "matrix=[${oses[*]}]" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.setup.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Next.js
+        run: npm run build
+
+      - name: Compile Electron main process
+        run: npm run build:electron
+
+      # On tag push: publish to GitHub Releases. Otherwise: just build.
+      - name: Package with electron-builder (tag push — publish to release)
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --publish always
+
+      - name: Package with electron-builder (manual run — build only)
+        if: github.event_name == 'workflow_dispatch'
+        run: npx electron-builder --publish never
+
+      # Upload installers as workflow artifacts so manual runs are useful.
+      # On tag push these are duplicated by the GitHub Release upload; harmless.
+      - name: Upload installers as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: scriptr-${{ matrix.os }}
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.zip
+            release/*.AppImage
+            release/*.deb
+            release/*.yml
+            release/*.blockmap
+          if-no-files-found: warn
+          retention-days: 14
