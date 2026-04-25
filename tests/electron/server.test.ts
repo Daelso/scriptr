@@ -38,6 +38,34 @@ describe("server — buildChildEnv", () => {
     expect(env.LANG).toBe("en_US.UTF-8");
   });
 
+  it("propagates Windows-critical variables (SYSTEMROOT etc.) — Node crypto fails without these", () => {
+    const winParent = {
+      SYSTEMROOT: "C:\\Windows",
+      WINDIR: "C:\\Windows",
+      COMSPEC: "C:\\Windows\\System32\\cmd.exe",
+      PATHEXT: ".COM;.EXE;.BAT;.CMD",
+      PROGRAMFILES: "C:\\Program Files",
+      "PROGRAMFILES(X86)": "C:\\Program Files (x86)",
+      PROGRAMDATA: "C:\\ProgramData",
+      HOMEDRIVE: "C:",
+      HOMEPATH: "\\Users\\X",
+      OS: "Windows_NT",
+      NUMBER_OF_PROCESSORS: "8",
+    };
+    const env = buildChildEnv(winParent as unknown as NodeJS.ProcessEnv, 1);
+    expect(env.SYSTEMROOT).toBe("C:\\Windows");
+    expect(env.WINDIR).toBe("C:\\Windows");
+    expect(env.COMSPEC).toBe("C:\\Windows\\System32\\cmd.exe");
+    expect(env.PATHEXT).toBe(".COM;.EXE;.BAT;.CMD");
+    expect(env.PROGRAMFILES).toBe("C:\\Program Files");
+    expect(env["PROGRAMFILES(X86)"]).toBe("C:\\Program Files (x86)");
+    expect(env.PROGRAMDATA).toBe("C:\\ProgramData");
+    expect(env.HOMEDRIVE).toBe("C:");
+    expect(env.HOMEPATH).toBe("\\Users\\X");
+    expect(env.OS).toBe("Windows_NT");
+    expect(env.NUMBER_OF_PROCESSORS).toBe("8");
+  });
+
   it("blocks sensitive parent variables", () => {
     const env = buildChildEnv(parent as unknown as NodeJS.ProcessEnv, 41234);
     expect(env.SSH_AUTH_SOCK).toBeUndefined();

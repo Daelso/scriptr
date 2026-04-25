@@ -17,8 +17,11 @@
  * SCRIPTR_DATA_DIR=/tmp/scriptr-e2e) defined in playwright.config.ts.
  */
 import { test, expect } from "@playwright/test";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, unlink } from "node:fs/promises";
+import { join } from "node:path";
 import { E2E_DATA_DIR } from "../../playwright.config";
+
+const CONFIG_FILE = join(E2E_DATA_DIR, "config.json");
 
 test.beforeAll(async () => {
   await rm(E2E_DATA_DIR, { recursive: true, force: true });
@@ -120,4 +123,118 @@ test("settings form still saves successfully (regression)", async ({ page }) => 
   const after = await (await page.request.get("/api/settings")).json();
   expect(after.ok).toBe(true);
   expect(after.data.autoRecap).toBe(!initialAutoRecap);
+});
+
+// ─── Onboarding completion: banner clears, URL updates, "Setup complete" toast ──
+
+test("onboarding save clears banner, drops query param, and shows Setup complete toast", async ({ page }) => {
+  // Force a clean "no key on file" state so the onboarding-completion branch
+  // (`!data.hasKey && form.apiKey !== ""`) actually fires. Other tests in this
+  // file may have written a config.json with apiKey unset but still present.
+  await unlink(CONFIG_FILE).catch(() => {
+    /* fine — it may not exist */
+  });
+
+  await page.goto("/settings?onboarding=1");
+  await expect(page.getByLabel("xAI API key")).toBeVisible();
+
+  // Sanity: banner is up at the start.
+  const banner = page.getByRole("heading", { name: "Welcome to scriptr" });
+  await expect(banner).toBeVisible();
+  expect(page.url()).toContain("onboarding=1");
+
+  // Confirm hasKey is false right now (so the route through `justFinishedOnboarding` is the one we're exercising).
+  const before = await (await page.request.get("/api/settings")).json();
+  expect(before.data.hasKey).toBe(false);
+
+  // Type a fake key and save.
+  await page.getByLabel("xAI API key").fill("xai-test-onboarding-key-1234");
+
+  const putWait = page.waitForResponse(
+    (r) => r.url().endsWith("/api/settings") && r.request().method() === "PUT",
+  );
+  await page.getByRole("button", { name: "Save" }).click();
+  const putRes = await putWait;
+  expect(putRes.ok()).toBe(true);
+
+  // The completion toast — the wording is intentional and asserted by name.
+  await expect(page.getByText(/Setup complete/i)).toBeVisible();
+  // And the generic "Settings saved" toast must NOT be the one shown.
+  await expect(page.getByText("Settings saved", { exact: true })).toHaveCount(0);
+
+  // router.replace("/settings") should drop ?onboarding=1.
+  await expect.poll(() => page.url(), { timeout: 5_000 }).not.toContain("onboarding=1");
+  await expect(page.url()).toMatch(/\/settings$/);
+
+  // And the welcome banner is gone.
+  await expect(banner).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /Get a key/i })).toHaveCount(0);
+
+  // Cleanup so later tests don't see a saved key.
+  await unlink(CONFIG_FILE).catch(() => {});
+});
+
+// ─── Settings save (non-onboarding) shows the plain "Settings saved" toast ──
+
+test("non-onboarding save shows 'Settings saved' (NOT 'Setup complete')", async ({ page }) => {
+  await page.goto("/settings");
+  await expect(page.getByLabel("xAI API key")).toBeVisible();
+
+  // No edits needed — clicking Save with the form unchanged still fires PUT
+  // and shows the toast. (apiKey is empty and not sent; hasKey may be true or
+  // false at this point, but onboarding=1 is absent so the branch can't fire.)
+  const putWait = page.waitForResponse(
+    (r) => r.url().endsWith("/api/settings") && r.request().method() === "PUT",
+  );
+  await page.getByRole("button", { name: "Save" }).click();
+  const putRes = await putWait;
+  expect(putRes.ok()).toBe(true);
+
+  // Plain toast wording — the onboarding-only "Setup complete" string MUST NOT fire here.
+  await expect(page.getByText("Settings saved", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Setup complete/i)).toHaveCount(0);
+
+  // URL stays /settings (we never had ?onboarding=1, but assert it didn't sprout one).
+  expect(page.url()).toMatch(/\/settings$/);
+});
+
+// ─── CSP: dev-server must keep 'unsafe-eval' in script-src (HMR needs it) ──
+
+test("dev-server CSP keeps 'unsafe-eval' in script-src", async ({ request }) => {
+  // Hit a page route (not /api/*) — `headers()` in next.config.ts targets "/:path*".
+  const res = await request.get("/settings");
+  expect(res.ok()).toBe(true);
+
+  const csp = res.headers()["content-security-policy"];
+  expect(csp, "CSP header missing on /settings").toBeTruthy();
+
+  // Find the script-src directive specifically — substring search would also
+  // catch 'unsafe-eval' if it appeared anywhere else in the policy.
+  const scriptSrc = csp
+    .split(";")
+    .map((d) => d.trim())
+    .find((d) => d.startsWith("script-src "));
+  expect(scriptSrc, `no script-src directive in CSP: ${csp}`).toBeTruthy();
+  expect(scriptSrc).toContain("'unsafe-eval'");
+  expect(scriptSrc).toContain("'self'");
+  expect(scriptSrc).toContain("'unsafe-inline'");
+});
+
+// ─── CSP: connect-src is restricted to self + api.x.ai in web-mode dev ──
+
+test("dev-server CSP connect-src is restricted to self and api.x.ai", async ({ request }) => {
+  const res = await request.get("/settings");
+  const csp = res.headers()["content-security-policy"];
+  expect(csp).toBeTruthy();
+
+  const connectSrc = csp
+    .split(";")
+    .map((d) => d.trim())
+    .find((d) => d.startsWith("connect-src "));
+  expect(connectSrc, `no connect-src directive in CSP: ${csp}`).toBeTruthy();
+  expect(connectSrc).toContain("'self'");
+  expect(connectSrc).toContain("https://api.x.ai");
+  // Update-related origins must NOT leak into the web build.
+  expect(connectSrc).not.toContain("api.github.com");
+  expect(connectSrc).not.toContain("objects.githubusercontent.com");
 });
