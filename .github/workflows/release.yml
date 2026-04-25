@@ -40,23 +40,41 @@ jobs:
       - run: npm run lint
       - run: npm test
 
-  build:
+  # Emits the OS matrix as JSON. Tag pushes always build all three;
+  # workflow_dispatch honors the `platforms` input. We do this in a job
+  # rather than the matrix definition because GitHub Actions doesn't allow
+  # `matrix` to be referenced in job-level `if:` conditions.
+  setup:
     needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            echo 'matrix=["ubuntu-latest","windows-latest","macos-latest"]' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          input='${{ github.event.inputs.platforms }}'
+          oses=()
+          [[ "$input" == *"linux"*   ]] && oses+=('"ubuntu-latest"')
+          [[ "$input" == *"windows"* ]] && oses+=('"windows-latest"')
+          [[ "$input" == *"macos"*   ]] && oses+=('"macos-latest"')
+          if [[ ${#oses[@]} -eq 0 ]]; then
+            echo "::error ::No OSes selected (input: '$input'). Use a comma list of: linux,windows,macos"
+            exit 1
+          fi
+          IFS=, ; echo "matrix=[${oses[*]}]" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: setup
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: ${{ fromJSON(needs.setup.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
-    # Filter the matrix on workflow_dispatch by inspecting the input. Tag
-    # pushes always run all three.
-    if: |
-      github.event_name == 'push' || (
-        github.event_name == 'workflow_dispatch' && (
-          (matrix.os == 'ubuntu-latest'  && contains(github.event.inputs.platforms, 'linux'))   ||
-          (matrix.os == 'windows-latest' && contains(github.event.inputs.platforms, 'windows')) ||
-          (matrix.os == 'macos-latest'   && contains(github.event.inputs.platforms, 'macos'))
-        )
-      )
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
