@@ -31,35 +31,17 @@ directories:
 # Don't sign anything for v1 — design decision, flagged in README.
 forceCodeSigning: false
 
-# Compile-time security toggles baked into the packaged Electron binary.
+# Bake compile-time security fuses into the packaged Electron binary.
 # Each fuse rewrites a sentinel byte at package time; once flipped, the
 # behavior cannot be re-enabled at runtime by argv or env.
+# Authoritative fuse values + comments live in electron/afterPack.cjs.
+# Lock-down test in tests/electron/fuses.test.ts.
 # https://www.electronjs.org/docs/latest/tutorial/fuses
-electronFuses:
-  # MUST stay true. electron/server.ts spawns process.execPath with
-  # ELECTRON_RUN_AS_NODE=1 to run Next's standalone server.js. Flipping
-  # this off would break that spawn — packaged app would fail to boot.
-  runAsNode: true
-
-  # Refuse to load JavaScript from outside the asar archive. Tamper guard.
-  onlyLoadAppFromAsar: true
-
-  # Block --inspect / --remote-debugging-port from attaching a debugger to
-  # the main process. Without this, an attacker with code-execution on the
-  # user's machine could attach to a running scriptr.exe and exfiltrate the
-  # in-memory xAI key.
-  enableNodeCliInspectArguments: false
-
-  # Same hardening for NODE_OPTIONS.
-  enableNodeOptionsEnvironmentVariable: false
-
-  # Encrypt cookies at rest using OS-level keys (Keychain / DPAPI /
-  # libsecret). scriptr doesn't deliberately set cookies; defense in depth.
-  enableCookieEncryption: true
-
-  # Default true. Set explicitly so future electron-builder upgrades
-  # don't silently flip it.
-  loadBrowserProcessSpecificV8Snapshot: true
+#
+# NOTE: electron-builder 26+ has a declarative `electronFuses:` key that
+# wraps @electron/fuses, but we ship 25.1.8 which rejects it as unknown.
+# When/if we upgrade to 26+, this hook can be replaced with that block.
+afterPack: ./electron/afterPack.cjs
 
 mac:
   identity: null
