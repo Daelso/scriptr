@@ -8,6 +8,8 @@ import {
   exportsDir,
   coverPath,
   lastPayloadFile,
+  logsDir,
+  blockedRequestsLog,
 } from "@/lib/storage/paths";
 
 describe("storage paths", () => {
@@ -33,5 +35,17 @@ describe("storage paths", () => {
     expect(exportsDir(dataDir, "x")).toBe("/tmp/fakedata/stories/x/exports");
     expect(coverPath(dataDir, "x")).toBe("/tmp/fakedata/stories/x/cover.jpg");
     expect(lastPayloadFile(dataDir, "x")).toBe("/tmp/fakedata/stories/x/.last-payload.json");
+  });
+});
+
+describe("paths — logs", () => {
+  const DATA = "/data";
+
+  it("logsDir returns <dataDir>/logs", () => {
+    expect(logsDir(DATA)).toBe("/data/logs");
+  });
+
+  it("blockedRequestsLog returns <dataDir>/logs/blocked-requests.log", () => {
+    expect(blockedRequestsLog(DATA)).toBe("/data/logs/blocked-requests.log");
   });
 });
