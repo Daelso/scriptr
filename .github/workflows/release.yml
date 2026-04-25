@@ -102,6 +102,69 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         run: npx electron-builder --publish never
 
+      # Visual smoke-verify that the fuses landed in the packaged binary.
+      # Output goes to the job log; a human reviews on each release.
+      # Authoritative value lock-in is in tests/electron/fuses.test.ts.
+      - name: Verify Electron fuses
+        shell: bash
+        run: |
+          # Per-platform target list:
+          # - Linux: linux-unpacked/scriptr is the staging tree electron-builder
+          #   applies fuses to before packaging. We ALSO extract the shipped
+          #   AppImage (--appimage-extract; no FUSE required) and verify its
+          #   binary so we cover both staging and shipped artifact.
+          # - Windows: win-unpacked/scriptr.exe is what NSIS bundles; bytes
+          #   pass through the installer wrapper unchanged.
+          # - macOS: arch:[x64,arm64] without a universal target produces
+          #   release/mac/scriptr.app and release/mac-arm64/scriptr.app. We
+          #   discover each and pass the .app bundle (NOT the inner Mach-O
+          #   binary) to `@electron/fuses read --app`, which is the documented
+          #   interface for macOS app bundles.
+          targets=()
+          case "${{ matrix.os }}" in
+            ubuntu-latest)
+              targets+=("release/linux-unpacked/scriptr")
+              appimage=$(find release -maxdepth 2 -type f -name "*.AppImage" 2>/dev/null | head -1)
+              if [[ -n "$appimage" ]]; then
+                chmod +x "$appimage"
+                # --appimage-extract dumps the squashfs to ./squashfs-root/
+                # in the cwd. cd into release/ so we don't pollute the repo.
+                (cd release && ./"$(basename "$appimage")" --appimage-extract >/dev/null)
+                if [[ -e release/squashfs-root/scriptr ]]; then
+                  targets+=("release/squashfs-root/scriptr")
+                else
+                  echo "::warning ::AppImage extracted but no scriptr binary at squashfs-root/scriptr"
+                  ls -la release/squashfs-root/ || true
+                fi
+              else
+                echo "::warning ::No .AppImage found under release/; only staging tree verified"
+              fi
+              ;;
+            windows-latest)
+              targets+=("release/win-unpacked/scriptr.exe")
+              ;;
+            macos-latest)
+              mapfile -t apps < <(find release -maxdepth 3 -type d -name "scriptr.app" 2>/dev/null)
+              if [[ ${#apps[@]} -eq 0 ]]; then
+                echo "::error ::No scriptr.app found under release/"
+                ls -la release/ || true
+                exit 1
+              fi
+              for app in "${apps[@]}"; do
+                targets+=("$app")
+              done
+              ;;
+          esac
+          for target in "${targets[@]}"; do
+            if [[ ! -e "$target" ]]; then
+              echo "::error ::Expected packaged target not found at $target"
+              ls -la "$(dirname "$target")" || true
+              exit 1
+            fi
+            echo "--- Fuses for $target ---"
+            npx --yes @electron/fuses read --app "$target"
+          done
+
       # Upload installers as workflow artifacts so manual runs are useful.
       # On tag push these are duplicated by the GitHub Release upload; harmless.
       - name: Upload installers as workflow artifact

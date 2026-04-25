@@ -37,3 +37,6 @@ export function logsDir(dataDir: string) {
 export function blockedRequestsLog(dataDir: string) {
   return join(logsDir(dataDir), "blocked-requests.log");
 }
+export function crashesLog(dataDir: string) {
+  return join(logsDir(dataDir), "crashes.log");
+}
