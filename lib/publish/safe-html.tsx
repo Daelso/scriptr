@@ -1,7 +1,7 @@
 "use client";
 
-import DOMPurify from "isomorphic-dompurify";
 import type { Config as DOMPurifyConfig } from "dompurify";
+import { sanitizeWith } from "@/lib/publish/sanitize-html";
 
 type Props = {
   html: string;
@@ -15,25 +15,6 @@ type Props = {
 
 const BASE_TAGS = ["div", "h1", "p", "strong", "em", "span"];
 const BASE_ATTR = ["class"];
-
-// Attributes that carry URIs and must therefore be re-checked against
-// `extra.ALLOWED_URI_REGEXP`. DOMPurify lets `data:` URIs through on its
-// built-in DATA_URI_TAGS (img/audio/video/source/image/track) regardless of
-// `ALLOWED_URI_REGEXP`, so when callers opt in to a strict regex we enforce
-// it ourselves via a temporary `uponSanitizeAttribute` hook.
-const URI_ATTRS = new Set([
-  "src",
-  "href",
-  "xlink:href",
-  "srcset",
-  "poster",
-  "cite",
-  "formaction",
-  "action",
-  "background",
-  "longdesc",
-  "usemap",
-]);
 
 /**
  * Render trusted HTML through DOMPurify as a defense-in-depth layer. The
@@ -56,23 +37,7 @@ export function SafeHtml({ html, className, extra }: Props) {
     config.ALLOWED_URI_REGEXP = extra.ALLOWED_URI_REGEXP;
   }
 
-  let clean: ReturnType<typeof DOMPurify.sanitize>;
-  const regex = extra?.ALLOWED_URI_REGEXP;
-  if (regex) {
-    const hook = (_node: Element, data: { attrName: string; attrValue: string; keepAttr: boolean }) => {
-      if (URI_ATTRS.has(data.attrName) && !regex.test(data.attrValue)) {
-        data.keepAttr = false;
-      }
-    };
-    DOMPurify.addHook("uponSanitizeAttribute", hook);
-    try {
-      clean = DOMPurify.sanitize(html, config);
-    } finally {
-      DOMPurify.removeHook("uponSanitizeAttribute", hook);
-    }
-  } else {
-    clean = DOMPurify.sanitize(html, config);
-  }
+  const clean = sanitizeWith(html, config, extra?.ALLOWED_URI_REGEXP);
 
   return (
     <div

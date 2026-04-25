@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import { resolveAuthorNote } from "@/lib/publish/author-note";
 import type { Story } from "@/lib/types";
@@ -56,5 +57,104 @@ describe("resolveAuthorNote", () => {
   it("treats undefined authorNote as enabled (default-on)", () => {
     const profile: PenNameProfile = { defaultMessageHtml: "<p>hi</p>" };
     expect(resolveAuthorNote(baseStory(), profile)).not.toBeNull();
+  });
+});
+
+import { buildAuthorNoteHtml, AUTHOR_NOTE_SANITIZE_OPTS } from "@/lib/publish/author-note";
+
+describe("buildAuthorNoteHtml", () => {
+  it("includes the heading and message wrapper", async () => {
+    const html = await buildAuthorNoteHtml({
+      messageHtml: "<p>Thanks for reading!</p>",
+    });
+    expect(html).toContain('class="author-note"');
+    expect(html).toContain("A note from the author");
+    expect(html).toMatch(/<p>Thanks for reading!<\/p>/);
+  });
+
+  it("renders email as a mailto link when provided", async () => {
+    const html = await buildAuthorNoteHtml({
+      messageHtml: "<p>x</p>",
+      email: "jane@example.com",
+    });
+    expect(html).toContain('href="mailto:jane@example.com"');
+    expect(html).toContain("jane@example.com</a>");
+  });
+
+  it("omits the email block when email is missing", async () => {
+    const html = await buildAuthorNoteHtml({ messageHtml: "<p>x</p>" });
+    expect(html).not.toContain("mailto:");
+  });
+
+  it("renders QR as <img src=data:image/png;base64,...> when mailingListUrl provided", async () => {
+    const html = await buildAuthorNoteHtml({
+      messageHtml: "<p>x</p>",
+      mailingListUrl: "https://list.example.com/jane",
+    });
+    expect(html).toMatch(/<img[^>]+src="data:image\/png;base64,[A-Za-z0-9+/=]+"[^>]*>/);
+    expect(html).toContain('alt="QR code linking to the mailing list"');
+    expect(html).toContain("https://list.example.com/jane</a>");
+  });
+
+  it("omits the QR + mailing-list block when mailingListUrl is missing", async () => {
+    const html = await buildAuthorNoteHtml({ messageHtml: "<p>x</p>" });
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain("Join the mailing list");
+  });
+
+  it("strips <script> injected via messageHtml", async () => {
+    const html = await buildAuthorNoteHtml({
+      messageHtml: '<p>hi</p><script>alert(1)</script>',
+    });
+    expect(html).not.toMatch(/<script\b/i);
+    expect(html).not.toContain("alert(1)");
+  });
+
+  it("strips javascript: URLs even if the message tries to forge an <a>", async () => {
+    const html = await buildAuthorNoteHtml({
+      messageHtml: '<a href="javascript:alert(1)">x</a>',
+    });
+    expect(html).not.toMatch(/javascript:/i);
+  });
+
+  it("strips data:text/html URLs", async () => {
+    const html = await buildAuthorNoteHtml({
+      messageHtml: '<a href="data:text/html,<script>x</script>">bad</a>',
+    });
+    expect(html).not.toMatch(/data:text\/html/i);
+  });
+
+  it("preserves the legitimate data:image/png;base64 QR src", async () => {
+    const html = await buildAuthorNoteHtml({
+      messageHtml: "<p>x</p>",
+      mailingListUrl: "https://list.example.com/jane",
+    });
+    expect(html).toMatch(/src="data:image\/png;base64,[A-Za-z0-9+/=]+"/);
+  });
+
+  it("strips data:image/svg+xml (SVG bypass — SVGs can carry scripts)", async () => {
+    const html = await buildAuthorNoteHtml({
+      messageHtml: '<img src="data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=" alt="x" />',
+    });
+    expect(html).not.toMatch(/data:image\/svg\+xml/i);
+  });
+
+  it("preserves bold/italic/links from a TipTap-style messageHtml", async () => {
+    const html = await buildAuthorNoteHtml({
+      messageHtml: '<p>Thanks for <strong>reading</strong>! <a href="https://example.com">More</a></p>',
+    });
+    expect(html).toContain("<strong>reading</strong>");
+    expect(html).toContain('href="https://example.com"');
+  });
+
+  it("AUTHOR_NOTE_SANITIZE_OPTS is exported and usable by SafeHtml", () => {
+    expect(AUTHOR_NOTE_SANITIZE_OPTS.ALLOWED_TAGS).toContain("a");
+    expect(AUTHOR_NOTE_SANITIZE_OPTS.ALLOWED_TAGS).toContain("img");
+    expect(AUTHOR_NOTE_SANITIZE_OPTS.ALLOWED_ATTR).toContain("href");
+    expect(AUTHOR_NOTE_SANITIZE_OPTS.ALLOWED_ATTR).toContain("src");
+    expect(AUTHOR_NOTE_SANITIZE_OPTS.ALLOWED_URI_REGEXP.test("mailto:x@y")).toBe(true);
+    expect(AUTHOR_NOTE_SANITIZE_OPTS.ALLOWED_URI_REGEXP.test("javascript:alert(1)")).toBe(false);
+    expect(AUTHOR_NOTE_SANITIZE_OPTS.ALLOWED_URI_REGEXP.test("data:image/png;base64,abc")).toBe(true);
+    expect(AUTHOR_NOTE_SANITIZE_OPTS.ALLOWED_URI_REGEXP.test("data:image/svg+xml;base64,abc")).toBe(false);
   });
 });
