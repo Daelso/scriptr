@@ -1,4 +1,13 @@
 import type { NextConfig } from "next";
+import { fileURLToPath } from "node:url";
+import { dirname } from "node:path";
+
+// Pin the workspace root to this project, regardless of any parent lockfiles.
+// Without this, when scriptr is checked out as a worktree under a parent repo
+// (e.g. .worktrees/<name>), Next.js walks up to the parent's package-lock.json
+// and nests `.next/standalone/<...full path...>/server.js` accordingly. We
+// need the standalone output flat so electron-builder can ship it.
+const projectRoot = dirname(fileURLToPath(import.meta.url));
 
 // When running under Electron with update checks enabled, the main process
 // passes SCRIPTR_UPDATES_CHECK=1. We include GitHub releases in connect-src
@@ -23,6 +32,7 @@ const cspDirectives = [
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   output: "standalone",
+  outputFileTracingRoot: projectRoot,
   async headers() {
     return [
       {
