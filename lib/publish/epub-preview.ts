@@ -47,6 +47,28 @@ div.scene-break {
   margin: 1em 0;
   letter-spacing: 0.3em;
 }
+.author-note {
+  margin-top: 3em;
+  border-top: 1px solid #888;
+  padding-top: 2em;
+}
+.author-note h2 {
+  text-align: center;
+  margin-bottom: 1.2em;
+}
+.author-note-message {
+  margin-bottom: 1.5em;
+}
+.author-note-footer {
+  text-align: center;
+  font-size: 0.95em;
+  color: #555;
+}
+.author-note-footer img {
+  display: block;
+  margin: 0.5em auto;
+  max-width: 200px;
+}
 `.trim();
 
 function escapeHtml(s: string): string {
