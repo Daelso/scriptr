@@ -4,6 +4,7 @@
 // because `crashReporter` is a named export of "electron" rather than its
 // own package — see Task 1.7's note.
 import { app, BrowserWindow, Menu, dialog, shell, session } from "electron";
+import type { RenderProcessGoneDetails } from "electron";
 import { join } from "node:path";
 import { resolveDataDir, StartupCancelledError } from "./migrate";
 import { startNextServer, type ServerHandle } from "./server";
@@ -91,6 +92,55 @@ async function handleFatalServerCrash(
     `scriptr's local server stopped unexpectedly. Please quit and reopen the app.\n\nCrash details written to:\n${crashesLog(dataDir)}`,
   );
   app.quit();
+}
+
+// In-memory crash counter for the reload-loop guard. Resets on relaunch
+// (intentional — a user who quits and reopens gets a fresh budget).
+const recentRendererCrashes: number[] = [];
+const CRASH_WINDOW_MS = 60_000;
+const CRASH_LIMIT = 3;
+
+async function handleRendererCrash(
+  window: BrowserWindow,
+  dataDir: string,
+  details: RenderProcessGoneDetails,
+): Promise<void> {
+  await logCrash(dataDir, {
+    kind: "renderer",
+    reason: details.reason,
+    exitCode: details.exitCode,
+  });
+
+  const now = Date.now();
+  recentRendererCrashes.push(now);
+  while (recentRendererCrashes.length > 0 && now - recentRendererCrashes[0] > CRASH_WINDOW_MS) {
+    recentRendererCrashes.shift();
+  }
+  const loopGuardTripped = recentRendererCrashes.length >= CRASH_LIMIT;
+
+  const buttons = loopGuardTripped ? ["Quit"] : ["Reload", "Quit"];
+  const message = loopGuardTripped
+    ? "scriptr's window keeps crashing."
+    : "scriptr's window crashed.";
+  const detail = loopGuardTripped
+    ? `Please quit and check ${crashesLog(dataDir)}.`
+    : `Reason: ${details.reason}. Crash details written to ${crashesLog(dataDir)}.`;
+
+  const { response } = await dialog.showMessageBox(window, {
+    type: "error",
+    message,
+    detail,
+    buttons,
+    defaultId: 0,
+    cancelId: buttons.length - 1,
+  });
+
+  if (loopGuardTripped || response === buttons.indexOf("Quit")) {
+    app.quit();
+    return;
+  }
+  // response === 0 → Reload
+  window.webContents.reload();
 }
 
 // ─── Main startup sequence ───────────────────────────────────────────────────
@@ -226,6 +276,13 @@ async function main(): Promise<void> {
   });
 
   mainWindow.once("ready-to-show", () => mainWindow?.show());
+
+  // Capture into a local so the closure doesn't have to deal with the
+  // module-scoped `mainWindow` going null between event registration and fire.
+  const win = mainWindow;
+  win.webContents.on("render-process-gone", (_event, details) => {
+    void handleRendererCrash(win, dataDir, details);
+  });
 
   const landing = needsOnboarding ? "/settings?onboarding=1" : "/";
   await mainWindow.loadURL(serverHandle.url + landing);
