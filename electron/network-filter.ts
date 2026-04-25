@@ -7,6 +7,12 @@ export type FilterOptions = {
   updatesEnabled: boolean;
 };
 
+// Loopback hostnames that all resolve to the local machine. We bind the
+// embedded Next server to 127.0.0.1, but renderer code or third-party deps
+// may construct URLs using `localhost` or `::1`; allowing all three keeps
+// the filter loopback-only without surprising failures.
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
+
 export function shouldAllow(url: URL, opts: FilterOptions): boolean {
   // Internal Electron schemes are always allowed
   if (url.protocol !== "http:" && url.protocol !== "https:") return true;
@@ -14,7 +20,7 @@ export function shouldAllow(url: URL, opts: FilterOptions): boolean {
   // Loopback to the embedded Next server
   if (
     url.protocol === "http:" &&
-    url.hostname === "127.0.0.1" &&
+    LOOPBACK_HOSTS.has(url.hostname) &&
     Number(url.port) === opts.loopbackPort
   ) {
     return true;

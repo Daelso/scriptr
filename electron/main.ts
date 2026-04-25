@@ -10,6 +10,7 @@ import { startNextServer, type ServerHandle } from "./server";
 import { installNetworkFilter } from "./network-filter";
 import { configureUpdater, isCheckEnabled } from "./update";
 import { buildAppMenu } from "./menu";
+import { GITHUB_REPO_PATH } from "./repo";
 import { loadConfig } from "../lib/config";
 import { blockedRequestsLog } from "../lib/storage/paths";
 
@@ -81,8 +82,15 @@ async function main(): Promise<void> {
   }
   process.env.SCRIPTR_DATA_DIR = dataDir;
 
-  // 2. Read update preferences — must happen before Next boots so CSP is correct
-  const updatesEnabled = await isCheckEnabled(dataDir);
+  // 2. Read config to decide CSP shape + onboarding posture. Both must be
+  //    settled BEFORE Next boots — Next reads SCRIPTR_UPDATES_CHECK at startup
+  //    to bake the connect-src directive.
+  //    During first-run onboarding (no API key) we force updates off so the
+  //    very first launch makes zero network calls until the user has
+  //    configured the app — even at the CSP layer.
+  const cfg = await loadConfig(dataDir);
+  const needsOnboarding = !cfg.apiKey;
+  const updatesEnabled = !needsOnboarding && (await isCheckEnabled(dataDir));
   if (updatesEnabled) process.env.SCRIPTR_UPDATES_CHECK = "1";
 
   // 3. Boot the Next.js server (Next standalone bundle) on an ephemeral port.
@@ -101,11 +109,7 @@ async function main(): Promise<void> {
     logPath: blockedRequestsLog(dataDir),
   });
 
-  // 5. Determine first-run onboarding (no API key configured)
-  const cfg = await loadConfig(dataDir);
-  const needsOnboarding = !cfg.apiKey;
-
-  // 6. Create the window — application menu set once for all platforms
+  // 5. Create the window — application menu set once for all platforms
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -126,7 +130,6 @@ async function main(): Promise<void> {
   // Tighter than just `endsWith(".x.ai")` — match exact host or an explicit
   // subdomain set, and require GitHub URLs to be under the scriptr repo.
   const xAiHosts = new Set(["x.ai", "console.x.ai", "api.x.ai"]);
-  const githubRepoPrefix = "/Daelso/scriptr"; // owner/repo from electron-builder.yml
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     try {
       const parsed = new URL(url);
@@ -134,7 +137,7 @@ async function main(): Promise<void> {
       const isScriptrRepo =
         parsed.protocol === "https:" &&
         parsed.hostname === "github.com" &&
-        parsed.pathname.startsWith(githubRepoPrefix);
+        parsed.pathname.startsWith(GITHUB_REPO_PATH);
       if (isXai || isScriptrRepo) void shell.openExternal(url);
     } catch {
       // ignore invalid URLs
@@ -147,10 +150,10 @@ async function main(): Promise<void> {
   const landing = needsOnboarding ? "/settings?onboarding=1" : "/";
   await mainWindow.loadURL(serverHandle.url + landing);
 
-  // 7. Updates: skip during onboarding (no network calls until the user has
-  //    configured the app) and gate behind did-finish-load so the check
-  //    doesn't compete with the first paint.
-  if (updatesEnabled && !needsOnboarding) {
+  // 6. Updates: gated behind did-finish-load so the check doesn't compete
+  //    with first paint. updatesEnabled is already false during onboarding
+  //    (set in step 2), so no extra check needed here.
+  if (updatesEnabled) {
     const runCheck = configureUpdater({
       dataDir,
       onUpdateReady: (version) => {

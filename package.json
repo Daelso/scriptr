@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "main": "dist/electron/main.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Daelso/scriptr.git"
+  },
   "scripts": {
     "dev": "next dev --webpack -H 127.0.0.1 -p 3000",
     "dev:lan": "next dev --webpack -H 0.0.0.0 -p 3000",

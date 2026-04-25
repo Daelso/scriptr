@@ -59,9 +59,9 @@ linux:
   category: Office
   maintainer: scriptr
 
-# Update feed — publish to GitHub Releases
+# Update feed — publish to GitHub Releases.
+# owner/repo are auto-detected from package.json#repository.url so we don't
+# duplicate the source-of-truth (also consumed by electron/repo.ts).
 publish:
   provider: github
-  owner: Daelso
-  repo: scriptr
   releaseType: draft

@@ -8,6 +8,14 @@ describe("network-filter — shouldAllow", () => {
     expect(shouldAllow(new URL("http://127.0.0.1:54321/api/stories"), base)).toBe(true);
   });
 
+  it("allows localhost as a loopback alias", () => {
+    expect(shouldAllow(new URL("http://localhost:54321/api/stories"), base)).toBe(true);
+  });
+
+  it("allows IPv6 loopback ::1 as a loopback alias", () => {
+    expect(shouldAllow(new URL("http://[::1]:54321/api/stories"), base)).toBe(true);
+  });
+
   it("blocks loopback on the wrong port", () => {
     expect(shouldAllow(new URL("http://127.0.0.1:9999/"), base)).toBe(false);
   });
