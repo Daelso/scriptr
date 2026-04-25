@@ -134,10 +134,14 @@ async function main(): Promise<void> {
     try {
       const parsed = new URL(url);
       const isXai = parsed.protocol === "https:" && xAiHosts.has(parsed.hostname);
+      // Path boundary check: `/Daelso/scriptr` must match the full path or
+      // be followed by `/`. Otherwise `/Daelso/scriptr-evil` would match
+      // because string.startsWith doesn't respect path segments.
       const isScriptrRepo =
         parsed.protocol === "https:" &&
         parsed.hostname === "github.com" &&
-        parsed.pathname.startsWith(GITHUB_REPO_PATH);
+        (parsed.pathname === GITHUB_REPO_PATH ||
+          parsed.pathname.startsWith(GITHUB_REPO_PATH + "/"));
       if (isXai || isScriptrRepo) void shell.openExternal(url);
     } catch {
       // ignore invalid URLs
