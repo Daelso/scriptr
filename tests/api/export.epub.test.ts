@@ -1,11 +1,26 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import JSZip from "jszip";
 import type { NextRequest } from "next/server";
-import { createStory } from "@/lib/storage/stories";
+import { createStory, updateStory } from "@/lib/storage/stories";
 import { createImportedChapter } from "@/lib/storage/chapters";
 import { epubPath } from "@/lib/storage/paths";
+import { saveConfig } from "@/lib/config";
+
+async function unzipXhtmls(bytes: Buffer | Uint8Array): Promise<Record<string, string>> {
+  const zip = await JSZip.loadAsync(bytes);
+  const out: Record<string, string> = {};
+  await Promise.all(
+    Object.keys(zip.files)
+      .filter((p) => p.endsWith(".xhtml"))
+      .map(async (p) => {
+        out[p] = await zip.file(p)!.async("string");
+      }),
+  );
+  return out;
+}
 
 describe("/api/stories/[slug]/export/epub POST", () => {
   const originalEnv = process.env;
@@ -120,5 +135,99 @@ describe("/api/stories/[slug]/export/epub POST", () => {
     expect(first.status).toBe(200);
     const second = await callPost(story.slug, { version: 3 });
     expect(second.status).toBe(200);
+  });
+
+  it("includes the author note when story's pen-name has a profile and authorNote is enabled", async () => {
+    const story = await createStory(tmpDir, { title: "T", authorPenName: "Jane Doe" });
+    await createImportedChapter(tmpDir, story.slug, {
+      title: "One",
+      sectionContents: ["Hello, world."],
+    });
+    await saveConfig(tmpDir, {
+      penNameProfiles: {
+        "Jane Doe": {
+          email: "jane@example.com",
+          mailingListUrl: "https://list.example.com/jane",
+          defaultMessageHtml: "<p>Thanks!</p>",
+        },
+      },
+    });
+    const res = await callPost(story.slug);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    const bytes = await readFile(body.data.path);
+    const xhtmls = await unzipXhtmls(bytes);
+    const noteEntry = Object.entries(xhtmls).find(([, html]) =>
+      html.includes('class="author-note"'),
+    );
+    expect(noteEntry, "expected an XHTML containing the author-note div").toBeDefined();
+    const [, noteHtml] = noteEntry!;
+    expect(noteHtml).toContain("A note from the author");
+    expect(noteHtml).toContain("mailto:jane@example.com");
+  });
+
+  it("omits the author note when no profile exists", async () => {
+    const story = await createStory(tmpDir, { title: "T", authorPenName: "Nobody" });
+    await createImportedChapter(tmpDir, story.slug, {
+      title: "One",
+      sectionContents: ["Hello, world."],
+    });
+    // No saveConfig — no penNameProfiles for "Nobody".
+    const res = await callPost(story.slug);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    const bytes = await readFile(body.data.path);
+    const xhtmls = await unzipXhtmls(bytes);
+    for (const text of Object.values(xhtmls)) {
+      expect(text).not.toContain("A note from the author");
+    }
+  });
+
+  it("omits the author note when authorNote.enabled === false", async () => {
+    const story = await createStory(tmpDir, { title: "T", authorPenName: "Jane Doe" });
+    await createImportedChapter(tmpDir, story.slug, {
+      title: "One",
+      sectionContents: ["Hello, world."],
+    });
+    await saveConfig(tmpDir, {
+      penNameProfiles: {
+        "Jane Doe": {
+          email: "jane@example.com",
+          defaultMessageHtml: "<p>Thanks!</p>",
+        },
+      },
+    });
+    await updateStory(tmpDir, story.slug, { authorNote: { enabled: false } });
+    const res = await callPost(story.slug);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    const bytes = await readFile(body.data.path);
+    const xhtmls = await unzipXhtmls(bytes);
+    for (const text of Object.values(xhtmls)) {
+      expect(text).not.toContain("A note from the author");
+    }
+  });
+
+  it("returns 400 when mailing list URL is too long for a QR code", async () => {
+    const story = await createStory(tmpDir, { title: "T", authorPenName: "Jane Doe" });
+    await createImportedChapter(tmpDir, story.slug, {
+      title: "One",
+      sectionContents: ["Hello, world."],
+    });
+    const huge = "https://example.com/" + "x".repeat(5000);
+    await saveConfig(tmpDir, {
+      penNameProfiles: {
+        "Jane Doe": {
+          email: "jane@example.com",
+          mailingListUrl: huge,
+          defaultMessageHtml: "<p>Thanks!</p>",
+        },
+      },
+    });
+    const res = await callPost(story.slug);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/mailing list URL is too long/i);
   });
 });
