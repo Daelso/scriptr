@@ -7,7 +7,7 @@ import { app, BrowserWindow, Menu, dialog, shell, session } from "electron";
 import type { RenderProcessGoneDetails } from "electron";
 import { join } from "node:path";
 import { resolveDataDir, StartupCancelledError } from "./migrate";
-import { startNextServer, type ServerHandle } from "./server";
+import { startNextServer, type ServerHandle, type ServerExitInfo } from "./server";
 import { installNetworkFilter } from "./network-filter";
 import { configureUpdater, isCheckEnabled } from "./update";
 import { buildAppMenu } from "./menu";
@@ -15,7 +15,6 @@ import { GITHUB_REPO_PATH } from "./repo";
 import { loadConfig } from "../lib/config";
 import { blockedRequestsLog, crashesLog } from "../lib/storage/paths";
 import { logCrash } from "./crash-log";
-import type { ServerExitInfo } from "./server";
 
 const isDev = !app.isPackaged;
 let serverHandle: ServerHandle | null = null;
