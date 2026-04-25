@@ -64,3 +64,6 @@ exports/
 /playwright-report/
 /blob-report/
 /playwright/.cache/
+
+# Electron main-process compile output
+/dist/
