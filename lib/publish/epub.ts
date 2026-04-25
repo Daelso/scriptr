@@ -13,6 +13,7 @@
 import { pathToFileURL } from "node:url";
 import type { Chapter, Story } from "@/lib/types";
 import type { EpubVersion } from "@/lib/storage/paths";
+import { buildAuthorNoteHtml, type ResolvedAuthorNote } from "@/lib/publish/author-note";
 
 export {
   EPUB_STYLESHEET,
@@ -28,6 +29,8 @@ export type EpubInput = {
   coverPath?: string;
   /** EPUB package version. Defaults to 3. EPUB3 = Kindle/KDP. EPUB2 = Smashwords (which rejects EPUB3). */
   version?: EpubVersion;
+  /** When provided, append a final "A note from the author" content entry. */
+  authorNote?: ResolvedAuthorNote;
 };
 
 type EpubGenFn = (
@@ -69,6 +72,13 @@ export async function buildEpubBytes(input: EpubInput): Promise<Uint8Array> {
       content: stripped,
     };
   });
+
+  if (input.authorNote) {
+    content.push({
+      title: "A note from the author",
+      content: await buildAuthorNoteHtml(input.authorNote),
+    });
+  }
 
   const generator = getGenerator();
   const buffer = await generator(
