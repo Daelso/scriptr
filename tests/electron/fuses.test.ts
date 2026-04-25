@@ -29,8 +29,15 @@ describe("electron/afterPack.cjs — FUSE_VALUES", () => {
     expect(afterPack.FUSE_VALUES[key]).toBe(value);
   });
 
-  it("re-signs the macOS binary after flipping (resetAdHocDarwinSignature)", () => {
-    expect(afterPack.FUSE_VALUES.resetAdHocDarwinSignature).toBe(true);
+  // resetAdHocDarwinSignature is only set true on macOS hosts because
+  // flipFuses() shells out to `codesign` for the resign, and codesign
+  // only exists on macOS. On CI's macos-latest runner this evaluates
+  // true (so the .app gets resigned post-flip and arm64 doesn't reject
+  // it). On Linux/Windows runners building for their own platforms,
+  // .app paths never appear so it doesn't matter; on cross-builds, this
+  // gate prevents flipFuses from crashing on a missing codesign.
+  it("gates resetAdHocDarwinSignature on the build host being macOS", () => {
+    expect(afterPack.FUSE_VALUES.resetAdHocDarwinSignature).toBe(process.platform === "darwin");
   });
 });
 
