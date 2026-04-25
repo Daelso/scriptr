@@ -118,6 +118,12 @@ export function buildChildEnv(parent: NodeJS.ProcessEnv, port: number): Record<s
   out.PORT = String(port);
   out.HOSTNAME = "127.0.0.1";
   out.NODE_ENV = "production";
+  // CRITICAL: process.execPath is the Electron binary. By default it
+  // launches a full Electron app and tries to interpret server.js as the
+  // entry point. We need it to behave as a plain Node interpreter so it
+  // can run Next's standalone bootstrapper. ELECTRON_RUN_AS_NODE=1 is
+  // exactly that switch.
+  out.ELECTRON_RUN_AS_NODE = "1";
   return out;
 }
 

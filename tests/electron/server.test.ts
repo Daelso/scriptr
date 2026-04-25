@@ -83,6 +83,11 @@ describe("server — buildChildEnv", () => {
     expect(env.NODE_ENV).toBe("production");
   });
 
+  it("sets ELECTRON_RUN_AS_NODE=1 — without this the spawned Electron binary tries to load server.js as an app", () => {
+    const env = buildChildEnv(parent as unknown as NodeJS.ProcessEnv, 41234);
+    expect(env.ELECTRON_RUN_AS_NODE).toBe("1");
+  });
+
   it("does not include undefined parent values", () => {
     const env = buildChildEnv(
       { PATH: undefined, HOME: "/h" } as unknown as NodeJS.ProcessEnv,
