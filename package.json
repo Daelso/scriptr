@@ -2,6 +2,7 @@
   "name": "scriptr",
   "version": "0.1.0",
   "private": true,
+  "main": "dist/electron/main.js",
   "scripts": {
     "dev": "next dev --webpack -H 127.0.0.1 -p 3000",
     "dev:lan": "next dev --webpack -H 0.0.0.0 -p 3000",
@@ -12,7 +13,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e": "playwright test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:electron": "tsc -p electron/tsconfig.json",
+    "package:electron": "npm run build && npm run build:electron && electron-builder",
+    "dev:electron": "npm run build:electron && electron ."
   },
   "dependencies": {
     "@base-ui/react": "^1.4.0",
