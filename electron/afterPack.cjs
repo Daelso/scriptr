@@ -25,8 +25,12 @@ const FUSE_VALUES = {
   // resetAdHocDarwinSignature toggles re-signing of the binary after the
   // fuse bytes change. Required on macOS arm64 — the OS rejects an
   // ad-hoc-signed binary whose code-page hashes no longer match the
-  // signature. A no-op on Linux/Windows/x64 macOS.
-  resetAdHocDarwinSignature: true,
+  // signature. flipFuses shells out to `codesign`, which only exists on
+  // macOS, so we gate this on the build host. On CI's macos-latest
+  // runner this evaluates true and the resign happens. Cross-builds from
+  // Linux/Windows skip it (the resulting .app wouldn't run on macOS
+  // anyway without further signing).
+  resetAdHocDarwinSignature: process.platform === "darwin",
 
   // MUST stay true. electron/server.ts spawns process.execPath with
   // ELECTRON_RUN_AS_NODE=1 to run Next's standalone server.js. Flipping
