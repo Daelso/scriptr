@@ -9,7 +9,9 @@ import { SummaryField } from "@/components/editor/SummaryField";
 import { BeatList } from "@/components/editor/BeatList";
 import { PromptField } from "@/components/editor/PromptField";
 import { RecapField } from "@/components/editor/RecapField";
-import type { Chapter } from "@/lib/types";
+import { AuthorNoteCard } from "@/components/editor/AuthorNoteCard";
+import type { Chapter, Story } from "@/lib/types";
+import type { PenNameProfile } from "@/lib/config";
 
 // ─── Fetcher ──────────────────────────────────────────────────────────────────
 
@@ -19,6 +21,19 @@ const fetcher = async (url: string): Promise<Chapter> => {
   if (!json.ok) throw new Error(json.error ?? "request failed");
   return json.data!;
 };
+
+// Generic fetcher for the story + settings endpoints used by the
+// Author Note container below.
+const jsonFetcher = async <T,>(url: string): Promise<T> => {
+  const res = await fetch(url);
+  const json = (await res.json()) as { ok: boolean; data?: T; error?: string };
+  if (!json.ok) throw new Error(json.error ?? "request failed");
+  return json.data as T;
+};
+
+interface SettingsLite {
+  penNameProfiles?: Record<string, PenNameProfile>;
+}
 
 // ─── Word count header ────────────────────────────────────────────────────────
 
@@ -87,6 +102,89 @@ function WordCountHeader({
   );
 }
 
+// ─── Author Note container ────────────────────────────────────────────────────
+
+/**
+ * Story-level Author Note card — sits inside the per-chapter MetadataPane but
+ * fetches its own story + settings data via SWR so its lifecycle is decoupled
+ * from chapter switches.
+ *
+ * Save flow: local `authorNote` state → useAutoSave → PATCH /api/stories/[slug]
+ * with `{ authorNote }` → SWR revalidate. Mirrors the autosave pattern in the
+ * peer cards (SummaryField, RecapField).
+ */
+function AuthorNoteContainer({ slug }: { slug: string }) {
+  const storyKey = `/api/stories/${slug}`;
+  const { data: story, mutate: mutateStory } = useSWR<Story>(
+    storyKey,
+    jsonFetcher,
+    { revalidateOnFocus: false },
+  );
+  const { data: settings } = useSWR<SettingsLite>(
+    "/api/settings",
+    jsonFetcher,
+    { revalidateOnFocus: false },
+  );
+
+  if (!story || !settings) return null;
+
+  const profile = settings.penNameProfiles?.[story.authorPenName];
+  return (
+    <AuthorNoteEditor
+      slug={slug}
+      story={story}
+      profile={profile}
+      mutateStory={mutateStory}
+    />
+  );
+}
+
+/**
+ * Inner editor: only mounts once the story has loaded so the local mirror's
+ * initial value is the real server-side authorNote, not a placeholder. This
+ * avoids the seeding round-trip that would otherwise cause useAutoSave to
+ * fire a redundant PATCH right after the initial fetch.
+ */
+function AuthorNoteEditor({
+  slug,
+  story,
+  profile,
+  mutateStory,
+}: {
+  slug: string;
+  story: Story;
+  profile: PenNameProfile | undefined;
+  mutateStory: () => Promise<unknown>;
+}) {
+  const [local, setLocal] = useState<Story["authorNote"]>(story.authorNote);
+
+  const save = useCallback(
+    async (value: Story["authorNote"]) => {
+      const res = await fetch(`/api/stories/${slug}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ authorNote: value }),
+      });
+      const json = (await res.json()) as { ok: boolean; error?: string };
+      if (!json.ok) throw new Error(json.error ?? "save failed");
+      await mutateStory();
+    },
+    [slug, mutateStory],
+  );
+
+  useAutoSave(local, save);
+
+  const effectiveStory: Story = { ...story, authorNote: local };
+
+  return (
+    <AuthorNoteCard
+      story={effectiveStory}
+      profile={profile}
+      onChange={(next) => setLocal(next)}
+    />
+  );
+}
+
 // ─── Inner pane (rendered only when data is available) ────────────────────────
 
 interface InnerPaneProps {
@@ -147,6 +245,13 @@ function InnerPane({ slug, chapterId, data, mutate, mutateList }: InnerPaneProps
           mutate={mutate}
           mutateList={mutateList}
         />
+
+        {/*
+          Story-level card — does NOT remount on chapter switch. The container
+          owns its own SWR+autosave; the chapter-keyed cards above are
+          unaffected.
+        */}
+        <AuthorNoteContainer slug={slug} />
       </div>
     </div>
   );
