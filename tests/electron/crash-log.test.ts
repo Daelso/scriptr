@@ -59,4 +59,46 @@ describe("crash-log — formatCrashEntry", () => {
     });
     expect(line).toContain("stderr=line1↵line2↵line3");
   });
+
+  it("redacts xAI API keys from stderr before writing", () => {
+    const line = formatCrashEntry(at, {
+      kind: "server",
+      code: null,
+      signal: null,
+      stderrTail:
+        "APIError: 401 from https://api.x.ai using key xai-A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6 — request failed",
+    });
+    expect(line).not.toContain("xai-A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6");
+    expect(line).toContain("[REDACTED-KEY]");
+  });
+
+  it("redacts multiple keys in one stderr buffer", () => {
+    const line = formatCrashEntry(at, {
+      kind: "server",
+      code: null,
+      signal: null,
+      stderrTail:
+        "first xai-AAAAAAAAAAAAAAAAAAAA then xai-BBBBBBBBBBBBBBBBBBBB end",
+    });
+    expect(line).not.toContain("xai-A");
+    expect(line).not.toContain("xai-B");
+    expect((line.match(/\[REDACTED-KEY\]/g) ?? []).length).toBe(2);
+  });
+
+  it("redacts keys before truncation so a key spanning the boundary is not partially leaked", () => {
+    // Place the key so its tail is past the 512-char truncation boundary.
+    // If we truncated FIRST and redacted SECOND, the leading `xai-` would
+    // appear in the truncated output. Redacting first ensures no key
+    // characters survive, even if the [REDACTED-KEY] marker itself ends
+    // up partially truncated.
+    const padding = "x".repeat(500);
+    const line = formatCrashEntry(at, {
+      kind: "server",
+      code: null,
+      signal: null,
+      stderrTail: padding + "xai-ABCDEFGHIJKLMNOPQRST end of trace",
+    });
+    expect(line).not.toContain("xai-A");
+    expect(line).not.toContain("xai-");
+  });
 });
