@@ -110,6 +110,26 @@ async function handleRendererCrash(
     exitCode: details.exitCode,
   });
 
+  // "integrity-failure" means Chromium detected the asar archive was
+  // tampered with. This isn't a crash — it's evidence of compromise.
+  // Reloading would re-execute tampered code. Force-quit with a distinct
+  // warning instead. (Note: enableEmbeddedAsarIntegrityValidation is OFF
+  // for unsigned builds, but Chromium can still raise this for other
+  // integrity checks, and the value is hardcoded so a future fuse flip
+  // works without code changes.)
+  if (details.reason === "integrity-failure") {
+    await dialog.showMessageBox({
+      type: "error",
+      message: "scriptr detected a tampered installation.",
+      detail: `The application's integrity check failed. Please reinstall scriptr from a trusted source.\n\nCrash details written to:\n${crashesLog(dataDir)}`,
+      buttons: ["Quit"],
+      defaultId: 0,
+      cancelId: 0,
+    });
+    app.quit();
+    return;
+  }
+
   const now = Date.now();
   recentRendererCrashes.push(now);
   while (recentRendererCrashes.length > 0 && now - recentRendererCrashes[0] > CRASH_WINDOW_MS) {
@@ -125,7 +145,11 @@ async function handleRendererCrash(
     ? `Please quit and check ${crashesLog(dataDir)}.`
     : `Reason: ${details.reason}. Crash details written to ${crashesLog(dataDir)}.`;
 
-  const { response } = await dialog.showMessageBox(window, {
+  // No parent window: passing `window` here would attach the dialog as a
+  // SHEET on macOS, which the user could dismiss via the window's close
+  // button without choosing Reload or Quit — leaving the app in a zombie
+  // state (alive main process, dead renderer, no recovery path).
+  const { response } = await dialog.showMessageBox({
     type: "error",
     message,
     detail,
