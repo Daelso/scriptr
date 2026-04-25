@@ -72,6 +72,34 @@ Open `http://127.0.0.1:3000`.
 
 ---
 
+## Desktop install
+
+scriptr ships as an unsigned desktop app for Windows, macOS, and Linux. Download the latest installer from the [Releases page](https://github.com/Daelso/scriptr/releases).
+
+### Windows
+
+Run the installer. Windows SmartScreen will show "Windows protected your PC" — click **More info**, then **Run anyway**. This happens because the installer is unsigned. The app installs per-user by default; no admin rights needed.
+
+### macOS
+
+Open the `.dmg`, drag scriptr to Applications. On first launch, macOS will refuse to open it — right-click scriptr in Applications and choose **Open**, then confirm. Gatekeeper remembers the exception; future launches don't prompt.
+
+### Linux
+
+Download the AppImage and make it executable: `chmod +x scriptr-*.AppImage`. Run from a terminal (`./scriptr-*.AppImage`) or, if your distro's file manager is configured to launch executable AppImages, double-click. Some distros require installing FUSE first (`sudo apt install libfuse2` on Debian/Ubuntu). On Debian/Ubuntu the `.deb` is available as an alternative — install with `sudo dpkg -i scriptr_*.deb`.
+
+### Data location
+
+Stories, chapters, bible, and config live in:
+
+- **Windows:** `%APPDATA%\scriptr\data`
+- **macOS:** `~/Library/Application Support/scriptr/data`
+- **Linux:** `~/.config/scriptr/data` (or `$XDG_CONFIG_HOME/scriptr/data` if set)
+
+From the app: **File → Reveal Data Folder** opens it. Back up this folder to preserve your work.
+
+---
+
 ## Running on LAN
 
 ```
