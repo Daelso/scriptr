@@ -12,11 +12,19 @@ import { configureUpdater, isCheckEnabled } from "./update";
 import { buildAppMenu } from "./menu";
 import { GITHUB_REPO_PATH } from "./repo";
 import { loadConfig } from "../lib/config";
-import { blockedRequestsLog } from "../lib/storage/paths";
+import { blockedRequestsLog, crashesLog } from "../lib/storage/paths";
+import { logCrash } from "./crash-log";
+import type { ServerExitInfo } from "./server";
 
 const isDev = !app.isPackaged;
 let serverHandle: ServerHandle | null = null;
 let mainWindow: BrowserWindow | null = null;
+// Set true once we've decided to quit on purpose. The `serverHandle.onExit`
+// listener checks this synchronously to distinguish "user quit → child
+// killed cleanly" from "child died on its own". Ordering matters: we set
+// this BEFORE calling `serverHandle.close()` so the resulting `exit` event
+// (which can fire in the same tick) sees `wantedExit === true`.
+let wantedExit = false;
 
 // ─── Single-instance lock ────────────────────────────────────────────────────
 // Two concurrent Electron processes against the same userData would race on
@@ -50,6 +58,7 @@ app.on("activate", () => {
 });
 
 app.on("will-quit", async (e) => {
+  wantedExit = true;
   if (serverHandle) {
     e.preventDefault();
     try {
@@ -67,6 +76,22 @@ app.on("will-quit", async (e) => {
 app.on("web-contents-created", (_, contents) => {
   contents.setWindowOpenHandler(() => ({ action: "deny" }));
 });
+
+// ─── Crash handlers ─────────────────────────────────────────────────────────
+
+async function handleFatalServerCrash(
+  dataDir: string,
+  info: ServerExitInfo,
+): Promise<void> {
+  await logCrash(dataDir, { kind: "server", ...info });
+  // showErrorBox is intentional: the only forward path is "quit and reopen"
+  // — there's nothing to choose between, so a single OK button is honest.
+  dialog.showErrorBox(
+    "scriptr",
+    `scriptr's local server stopped unexpectedly. Please quit and reopen the app.\n\nCrash details written to:\n${crashesLog(dataDir)}`,
+  );
+  app.quit();
+}
 
 // ─── Main startup sequence ───────────────────────────────────────────────────
 
@@ -105,6 +130,10 @@ async function main(): Promise<void> {
     ? join(process.cwd(), ".next", "standalone")
     : join(process.resourcesPath, "app");
   serverHandle = await startNextServer(standaloneDir);
+  serverHandle.onExit((info) => {
+    if (wantedExit) return;
+    void handleFatalServerCrash(dataDir, info);
+  });
 
   // 4. Install the main-process network filter
   installNetworkFilter(session.defaultSession, {
