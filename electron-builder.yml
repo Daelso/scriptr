@@ -1,0 +1,67 @@
+appId: com.scriptr.app
+productName: scriptr
+copyright: Copyright © 2026 scriptr
+
+# Files bundled into the asar inside the installer.
+# We let electron-builder do its normal "copy production deps" pass — the
+# main process needs `electron-updater` and its transitive deps at runtime.
+# `dist/` (compiled main process) is the entry point; `package.json#main`
+# points there.
+files:
+  - "dist/electron/**/*"
+  - "dist/lib/**/*"
+  - "package.json"
+  - "!**/*.map"
+  - "!**/__tests__/**"
+  - "!**/*.test.*"
+
+# Next.js standalone output — copied into resources/app, where main.ts
+# expects it under process.resourcesPath/app.
+extraResources:
+  - from: ".next/standalone"
+    to: "app"
+  - from: ".next/static"
+    to: "app/.next/static"
+  - from: "public"
+    to: "app/public"
+
+directories:
+  output: "release"
+
+# Don't sign anything for v1 — design decision, flagged in README.
+forceCodeSigning: false
+
+mac:
+  identity: null
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  category: public.app-category.productivity
+
+win:
+  signAndEditExecutable: false
+  target:
+    - target: nsis
+      arch: [x64]
+  publisherName: scriptr
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Office
+  maintainer: scriptr
+
+# Update feed — publish to GitHub Releases
+publish:
+  provider: github
+  owner: Daelso
+  repo: scriptr
+  releaseType: draft
