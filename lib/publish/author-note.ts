@@ -2,18 +2,17 @@ import QRCode from "qrcode";
 import type { Story } from "@/lib/types";
 import type { PenNameProfile } from "@/lib/config";
 import { sanitizeWith } from "@/lib/publish/sanitize-html";
+import {
+  AUTHOR_NOTE_SANITIZE_OPTS,
+  type ResolvedAuthorNote,
+} from "@/lib/publish/author-note-shared";
 
-export type ResolvedAuthorNote = {
-  messageHtml: string;
-  email?: string;
-  mailingListUrl?: string;
-};
-
-export const AUTHOR_NOTE_SANITIZE_OPTS = {
-  ALLOWED_TAGS: ["div", "p", "br", "strong", "em", "h2", "a", "img"],
-  ALLOWED_ATTR: ["class", "href", "src", "alt", "width", "height"],
-  ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|data:image\/png;base64,)/i,
-};
+// Re-export so existing server-side imports (`@/lib/publish/author-note`)
+// continue to work. Client components must import from
+// `@/lib/publish/author-note-shared` directly to avoid pulling `qrcode`
+// into client bundles.
+export { AUTHOR_NOTE_SANITIZE_OPTS };
+export type { ResolvedAuthorNote };
 
 const HTML_ESCAPES: Record<string, string> = {
   "&": "&amp;", "<": "&lt;", ">": "&gt;",
