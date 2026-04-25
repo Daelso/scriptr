@@ -1,5 +1,8 @@
-import { describe, it, expect } from "vitest";
-import { buildChildEnv } from "@/electron/server";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { buildChildEnv, startNextServer } from "@/electron/server";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 describe("server — buildChildEnv", () => {
   // Cast through Record so we don't have to satisfy Next.js's ambient ProcessEnv
@@ -34,8 +37,12 @@ describe("server — buildChildEnv", () => {
     expect(env.XAI_API_KEY).toBe("xai-secret");
     expect(env.SCRIPTR_DATA_DIR).toBe("/data");
     expect(env.SCRIPTR_UPDATES_CHECK).toBe("1");
-    expect(env.NODE_OPTIONS).toBe("--max-old-space-size=4096");
     expect(env.LANG).toBe("en_US.UTF-8");
+  });
+
+  it("blocks NODE_OPTIONS — pairs with the enableNodeOptionsEnvironmentVariable fuse to close the debugger-attach attack", () => {
+    const env = buildChildEnv(parent as unknown as NodeJS.ProcessEnv, 41234);
+    expect(env.NODE_OPTIONS).toBeUndefined();
   });
 
   it("propagates Windows-critical variables (SYSTEMROOT etc.) — Node crypto fails without these", () => {
@@ -96,4 +103,63 @@ describe("server — buildChildEnv", () => {
     expect(Object.keys(env)).not.toContain("PATH");
     expect(env.HOME).toBe("/h");
   });
+});
+
+describe("server — startNextServer onExit", () => {
+  // Build a tiny standalone-shaped directory whose `server.js` listens on
+  // PORT, then exits ~500ms later with a non-zero code after writing to
+  // stderr. This exercises the full onExit code path without needing real Next.
+  // 500ms (not 50ms) gives waitForReady's 100ms polling loop time to detect
+  // the server before the child exits.
+  let tmp: string;
+
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), "scriptr-server-test-"));
+    await writeFile(
+      join(tmp, "server.js"),
+      `
+      const http = require("http");
+      const port = parseInt(process.env.PORT, 10);
+      const srv = http.createServer((_, res) => res.end("ok"));
+      srv.listen(port, "127.0.0.1", () => {
+        setTimeout(() => {
+          process.stderr.write("simulated boom\\n");
+          process.exit(7);
+        }, 500);
+      });
+      `,
+      "utf-8",
+    );
+  });
+
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  it("fires onExit with code, signal, and stderrTail after the child dies", async () => {
+    const handle = await startNextServer(tmp);
+    const info = await new Promise<{
+      code: number | null;
+      signal: NodeJS.Signals | null;
+      stderrTail: string;
+    }>((resolve) => {
+      handle.onExit(resolve);
+    });
+    expect(info.code).toBe(7);
+    expect(info.signal).toBeNull();
+    expect(info.stderrTail).toContain("simulated boom");
+  }, 10_000);
+
+  it("re-registering onExit replaces the previous listener", async () => {
+    const handle = await startNextServer(tmp);
+    let firstCalled = false;
+    handle.onExit(() => {
+      firstCalled = true;
+    });
+    const second = new Promise<void>((resolve) => {
+      handle.onExit(() => resolve());
+    });
+    await second;
+    expect(firstCalled).toBe(false);
+  }, 10_000);
 });

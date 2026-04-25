@@ -2,10 +2,28 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createServer as createNetServer, connect as netConnect } from "node:net";
 import { once } from "node:events";
 
+export type ServerExitInfo = {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  /** Last ~4096 bytes of child stderr — useful for crash diagnosis. */
+  stderrTail: string;
+};
+
+/** A single listener; re-registering replaces. */
+export type ServerExitListener = (info: ServerExitInfo) => void;
+
 export type ServerHandle = {
   url: string;
   port: number;
   close: () => Promise<void>;
+  /**
+   * Register a listener for post-ready child exits. Single-listener:
+   * calling `onExit` a second time replaces the previous listener.
+   * Listeners registered AFTER the child has already exited will not
+   * fire — main.ts always registers synchronously after `await
+   * startNextServer`, so this is intentional.
+   */
+  onExit: (listener: ServerExitListener) => void;
 };
 
 /**
@@ -40,6 +58,9 @@ export async function startNextServer(standaloneDir: string): Promise<ServerHand
     // ProcessEnv types make NODE_ENV a const-typed required field.
     env: childEnv as NodeJS.ProcessEnv,
     stdio: ["ignore", "pipe", "pipe"],
+    // Suppress the brief CMD console window that Windows would otherwise
+    // flash when spawning a child of a GUI process. No-op on POSIX.
+    windowsHide: true,
   });
 
   // Capture stderr so a failed startup gives a useful error message.
@@ -54,6 +75,11 @@ export async function startNextServer(standaloneDir: string): Promise<ServerHand
     throw err;
   });
 
+  let exitListener: ServerExitListener | null = null;
+  child.once("exit", (code, signal) => {
+    exitListener?.({ code, signal, stderrTail: stderrBuf });
+  });
+
   return {
     port,
     url: `http://127.0.0.1:${port}`,
@@ -61,6 +87,9 @@ export async function startNextServer(standaloneDir: string): Promise<ServerHand
       if (child.exitCode !== null) return;
       child.kill("SIGTERM");
       await once(child, "exit");
+    },
+    onExit: (listener) => {
+      exitListener = listener;
     },
   };
 }
@@ -103,8 +132,14 @@ const ENV_PASSTHROUGH = new Set([
   "SCRIPTR_DATA_DIR",
   "SCRIPTR_UPDATES_CHECK",
   "SCRIPTR_DEFAULT_MODEL",
-  // Node tuning:
-  "NODE_OPTIONS",
+  // NOTE: NODE_OPTIONS is intentionally NOT passed through. The
+  // `enableNodeOptionsEnvironmentVariable: false` fuse blocks it on the
+  // main Electron process, but the spawned child runs the same binary
+  // under ELECTRON_RUN_AS_NODE=1 and would otherwise honor whatever
+  // NODE_OPTIONS the user's shell exports — including --inspect=...
+  // (debugger attach, exfiltrate the in-memory xAI key) or --require
+  // (arbitrary preload). The fuse must be paired with this allowlist
+  // gate to actually close the attack vector.
 ]);
 
 // Use a plain Record instead of NodeJS.ProcessEnv — Next.js's ambient types

@@ -4,19 +4,27 @@
 // because `crashReporter` is a named export of "electron" rather than its
 // own package — see Task 1.7's note.
 import { app, BrowserWindow, Menu, dialog, shell, session } from "electron";
+import type { RenderProcessGoneDetails } from "electron";
 import { join } from "node:path";
 import { resolveDataDir, StartupCancelledError } from "./migrate";
-import { startNextServer, type ServerHandle } from "./server";
+import { startNextServer, type ServerHandle, type ServerExitInfo } from "./server";
 import { installNetworkFilter } from "./network-filter";
 import { configureUpdater, isCheckEnabled } from "./update";
 import { buildAppMenu } from "./menu";
 import { GITHUB_REPO_PATH } from "./repo";
 import { loadConfig } from "../lib/config";
-import { blockedRequestsLog } from "../lib/storage/paths";
+import { blockedRequestsLog, crashesLog } from "../lib/storage/paths";
+import { logCrash } from "./crash-log";
 
 const isDev = !app.isPackaged;
 let serverHandle: ServerHandle | null = null;
 let mainWindow: BrowserWindow | null = null;
+// Set true once we've decided to quit on purpose. The `serverHandle.onExit`
+// listener checks this synchronously to distinguish "user quit → child
+// killed cleanly" from "child died on its own". Ordering matters: we set
+// this BEFORE calling `serverHandle.close()` so the resulting `exit` event
+// (which can fire in the same tick) sees `wantedExit === true`.
+let wantedExit = false;
 
 // ─── Single-instance lock ────────────────────────────────────────────────────
 // Two concurrent Electron processes against the same userData would race on
@@ -50,6 +58,7 @@ app.on("activate", () => {
 });
 
 app.on("will-quit", async (e) => {
+  wantedExit = true;
   if (serverHandle) {
     e.preventDefault();
     try {
@@ -67,6 +76,95 @@ app.on("will-quit", async (e) => {
 app.on("web-contents-created", (_, contents) => {
   contents.setWindowOpenHandler(() => ({ action: "deny" }));
 });
+
+// ─── Crash handlers ─────────────────────────────────────────────────────────
+
+async function handleFatalServerCrash(
+  dataDir: string,
+  info: ServerExitInfo,
+): Promise<void> {
+  await logCrash(dataDir, { kind: "server", ...info });
+  // showErrorBox is intentional: the only forward path is "quit and reopen"
+  // — there's nothing to choose between, so a single OK button is honest.
+  dialog.showErrorBox(
+    "scriptr",
+    `scriptr's local server stopped unexpectedly. Please quit and reopen the app.\n\nCrash details written to:\n${crashesLog(dataDir)}`,
+  );
+  app.quit();
+}
+
+// In-memory crash counter for the reload-loop guard. Resets on relaunch
+// (intentional — a user who quits and reopens gets a fresh budget).
+const recentRendererCrashes: number[] = [];
+const CRASH_WINDOW_MS = 60_000;
+const CRASH_LIMIT = 3;
+
+async function handleRendererCrash(
+  window: BrowserWindow,
+  dataDir: string,
+  details: RenderProcessGoneDetails,
+): Promise<void> {
+  await logCrash(dataDir, {
+    kind: "renderer",
+    reason: details.reason,
+    exitCode: details.exitCode,
+  });
+
+  // "integrity-failure" means Chromium detected the asar archive was
+  // tampered with. This isn't a crash — it's evidence of compromise.
+  // Reloading would re-execute tampered code. Force-quit with a distinct
+  // warning instead. (Note: enableEmbeddedAsarIntegrityValidation is OFF
+  // for unsigned builds, but Chromium can still raise this for other
+  // integrity checks, and the value is hardcoded so a future fuse flip
+  // works without code changes.)
+  if (details.reason === "integrity-failure") {
+    await dialog.showMessageBox({
+      type: "error",
+      message: "scriptr detected a tampered installation.",
+      detail: `The application's integrity check failed. Please reinstall scriptr from a trusted source.\n\nCrash details written to:\n${crashesLog(dataDir)}`,
+      buttons: ["Quit"],
+      defaultId: 0,
+      cancelId: 0,
+    });
+    app.quit();
+    return;
+  }
+
+  const now = Date.now();
+  recentRendererCrashes.push(now);
+  while (recentRendererCrashes.length > 0 && now - recentRendererCrashes[0] > CRASH_WINDOW_MS) {
+    recentRendererCrashes.shift();
+  }
+  const loopGuardTripped = recentRendererCrashes.length >= CRASH_LIMIT;
+
+  const buttons = loopGuardTripped ? ["Quit"] : ["Reload", "Quit"];
+  const message = loopGuardTripped
+    ? "scriptr's window keeps crashing."
+    : "scriptr's window crashed.";
+  const detail = loopGuardTripped
+    ? `Please quit and check ${crashesLog(dataDir)}.`
+    : `Reason: ${details.reason}. Crash details written to ${crashesLog(dataDir)}.`;
+
+  // No parent window: passing `window` here would attach the dialog as a
+  // SHEET on macOS, which the user could dismiss via the window's close
+  // button without choosing Reload or Quit — leaving the app in a zombie
+  // state (alive main process, dead renderer, no recovery path).
+  const { response } = await dialog.showMessageBox({
+    type: "error",
+    message,
+    detail,
+    buttons,
+    defaultId: 0,
+    cancelId: buttons.length - 1,
+  });
+
+  if (loopGuardTripped || response === buttons.indexOf("Quit")) {
+    app.quit();
+    return;
+  }
+  // response === 0 → Reload
+  window.webContents.reload();
+}
 
 // ─── Main startup sequence ───────────────────────────────────────────────────
 
@@ -105,6 +203,10 @@ async function main(): Promise<void> {
     ? join(process.cwd(), ".next", "standalone")
     : join(process.resourcesPath, "app");
   serverHandle = await startNextServer(standaloneDir);
+  serverHandle.onExit((info) => {
+    if (wantedExit) return;
+    void handleFatalServerCrash(dataDir, info);
+  });
 
   // 4. Install the main-process network filter
   installNetworkFilter(session.defaultSession, {
@@ -197,6 +299,13 @@ async function main(): Promise<void> {
   });
 
   mainWindow.once("ready-to-show", () => mainWindow?.show());
+
+  // Capture into a local so the closure doesn't have to deal with the
+  // module-scoped `mainWindow` going null between event registration and fire.
+  const win = mainWindow;
+  win.webContents.on("render-process-gone", (_event, details) => {
+    void handleRendererCrash(win, dataDir, details);
+  });
 
   const landing = needsOnboarding ? "/settings?onboarding=1" : "/";
   await mainWindow.loadURL(serverHandle.url + landing);
