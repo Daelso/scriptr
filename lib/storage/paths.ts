@@ -31,3 +31,9 @@ export function coverPath(dataDir: string, storySlug: string) {
 export function lastPayloadFile(dataDir: string, storySlug: string) {
   return join(storyDir(dataDir, storySlug), ".last-payload.json");
 }
+export function logsDir(dataDir: string) {
+  return join(dataDir, "logs");
+}
+export function blockedRequestsLog(dataDir: string) {
+  return join(logsDir(dataDir), "blocked-requests.log");
+}
