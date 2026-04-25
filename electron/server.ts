@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { createServer as createNetServer } from "node:net";
+import { createServer as createNetServer, connect as netConnect } from "node:net";
 import { once } from "node:events";
 
 export type ServerHandle = {
@@ -23,23 +23,36 @@ export type ServerHandle = {
  * 2. Spawning gives a clean process boundary. If the server crashes, we
  *    learn via `exit`. On Electron quit, we kill it.
  * 3. We pre-resolve a free TCP port ourselves and pass it via PORT env,
- *    so we don't have to parse the "ready on http://..." log line.
+ *    then poll TCP connect to detect "ready" — no fragile log parsing.
  */
 export async function startNextServer(standaloneDir: string): Promise<ServerHandle> {
   const port = await pickFreePort();
 
-  const child = spawn(process.execPath, ["server.js"], {
+  // Minimal env passed to the child. Spreading parent process.env would leak
+  // SSH_AUTH_SOCK, NPM_TOKEN, GITHUB_TOKEN, AWS_*, GPG_AGENT_INFO, etc. into
+  // a network-talking process running OpenAI SDK code. We pass only what
+  // Node, Next, and scriptr's own config layer need to function.
+  const childEnv = buildChildEnv(process.env, port);
+
+  const child: ChildProcess = spawn(process.execPath, ["server.js"], {
     cwd: standaloneDir,
-    env: {
-      ...process.env,
-      PORT: String(port),
-      HOSTNAME: "127.0.0.1",
-      NODE_ENV: "production",
-    },
+    // Cast — buildChildEnv returns a plain Record because Next.js's ambient
+    // ProcessEnv types make NODE_ENV a const-typed required field.
+    env: childEnv as NodeJS.ProcessEnv,
     stdio: ["ignore", "pipe", "pipe"],
   });
 
-  await waitForReady(child, port);
+  // Capture stderr so a failed startup gives a useful error message.
+  let stderrBuf = "";
+  child.stderr?.on("data", (b: Buffer) => {
+    stderrBuf += b.toString();
+    if (stderrBuf.length > 4096) stderrBuf = stderrBuf.slice(-4096);
+  });
+
+  await waitForReady(child, port).catch((err: Error) => {
+    if (stderrBuf) err.message += `\n--- next stderr ---\n${stderrBuf.trim()}`;
+    throw err;
+  });
 
   return {
     port,
@@ -51,6 +64,45 @@ export async function startNextServer(standaloneDir: string): Promise<ServerHand
     },
   };
 }
+
+// ─── Env allowlist ───────────────────────────────────────────────────────────
+
+const ENV_PASSTHROUGH = new Set([
+  "PATH",
+  "HOME",
+  "USERPROFILE", // Windows
+  "APPDATA", // Windows
+  "LOCALAPPDATA", // Windows
+  "TMPDIR",
+  "TEMP", // Windows
+  "TMP", // Windows
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  // scriptr-specific:
+  "XAI_API_KEY", // honored by lib/config.ts as an apiKey override
+  "SCRIPTR_DATA_DIR",
+  "SCRIPTR_UPDATES_CHECK",
+  "SCRIPTR_DEFAULT_MODEL",
+  // Node tuning:
+  "NODE_OPTIONS",
+]);
+
+// Use a plain Record instead of NodeJS.ProcessEnv — Next.js's ambient types
+// make NODE_ENV a const-typed required field, which doesn't fit "build me a
+// fresh env from scratch."
+export function buildChildEnv(parent: NodeJS.ProcessEnv, port: number): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(parent)) {
+    if (v !== undefined && ENV_PASSTHROUGH.has(k)) out[k] = v;
+  }
+  out.PORT = String(port);
+  out.HOSTNAME = "127.0.0.1";
+  out.NODE_ENV = "production";
+  return out;
+}
+
+// ─── Port + readiness ────────────────────────────────────────────────────────
 
 async function pickFreePort(): Promise<number> {
   return new Promise<number>((resolve, reject) => {
@@ -71,32 +123,35 @@ async function pickFreePort(): Promise<number> {
 }
 
 async function waitForReady(child: ChildProcess, port: number): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    const READY_RE = new RegExp(`http://127\\.0\\.0\\.1:${port}\\b`);
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error("Next.js server did not report ready within 30s"));
-    }, 30_000);
-
-    const onData = (buf: Buffer) => {
-      if (READY_RE.test(buf.toString())) {
-        cleanup();
-        resolve();
-      }
-    };
-    const onExit = (code: number | null) => {
-      cleanup();
-      reject(new Error(`Next.js server exited before ready (code ${code})`));
-    };
-    const cleanup = () => {
-      clearTimeout(timer);
-      child.stdout?.off("data", onData);
-      child.stderr?.off("data", onData);
-      child.off("exit", onExit);
-    };
-
-    child.stdout?.on("data", onData);
-    child.stderr?.on("data", onData);
-    child.on("exit", onExit);
+  // Poll TCP connect until the server accepts. Doesn't depend on any specific
+  // log format — version-proof against Next.js startup-message changes.
+  const deadline = Date.now() + 30_000;
+  let earlyExit: Error | null = null;
+  child.once("exit", (code) => {
+    earlyExit = new Error(`Next.js server exited before ready (code ${code})`);
   });
+
+  while (Date.now() < deadline) {
+    if (earlyExit) throw earlyExit;
+    if (await canConnect(port, 250)) return;
+    await delay(100);
+  }
+  throw new Error("Next.js server did not accept connections within 30s");
+}
+
+function canConnect(port: number, timeoutMs: number): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const sock = netConnect({ host: "127.0.0.1", port });
+    const done = (ok: boolean) => {
+      sock.destroy();
+      resolve(ok);
+    };
+    sock.setTimeout(timeoutMs, () => done(false));
+    sock.once("connect", () => done(true));
+    sock.once("error", () => done(false));
+  });
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
 }

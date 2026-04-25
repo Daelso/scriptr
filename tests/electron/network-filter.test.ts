@@ -32,12 +32,17 @@ describe("network-filter — shouldAllow", () => {
     expect(shouldAllow(new URL("http://api.x.ai/v1/chat"), base)).toBe(false);
   });
 
-  it("blocks api.github.com when updates disabled", () => {
+  it("blocks update hosts when updates disabled", () => {
     expect(shouldAllow(new URL("https://api.github.com/repos/x/y/releases/latest"), base)).toBe(false);
+    expect(shouldAllow(new URL("https://github.com/Daelso/scriptr/releases/download/v1/latest.yml"), base)).toBe(false);
+    expect(shouldAllow(new URL("https://objects.githubusercontent.com/abc/def"), base)).toBe(false);
   });
 
-  it("allows api.github.com when updates enabled", () => {
-    expect(shouldAllow(new URL("https://api.github.com/repos/x/y/releases/latest"), { ...base, updatesEnabled: true })).toBe(true);
+  it("allows update hosts (api.github.com, github.com, objects.githubusercontent.com) when updates enabled", () => {
+    const on = { ...base, updatesEnabled: true };
+    expect(shouldAllow(new URL("https://api.github.com/repos/x/y/releases/latest"), on)).toBe(true);
+    expect(shouldAllow(new URL("https://github.com/Daelso/scriptr/releases/download/v1/latest.yml"), on)).toBe(true);
+    expect(shouldAllow(new URL("https://objects.githubusercontent.com/abc/def"), on)).toBe(true);
   });
 
   it("blocks arbitrary hosts", () => {
@@ -45,8 +50,33 @@ describe("network-filter — shouldAllow", () => {
     expect(shouldAllow(new URL("https://www.google-analytics.com/collect"), { ...base, updatesEnabled: true })).toBe(false);
   });
 
-  it("allows devtools:// and file:// (internal Electron schemes)", () => {
+  it("allows internal Electron/Chromium schemes (devtools, chrome, chrome-extension)", () => {
     expect(shouldAllow(new URL("devtools://foo/"), base)).toBe(true);
-    expect(shouldAllow(new URL("file:///some/path"), base)).toBe(true);
+    expect(shouldAllow(new URL("chrome://settings/"), base)).toBe(true);
+    expect(shouldAllow(new URL("chrome-extension://abc/popup.html"), base)).toBe(true);
+  });
+
+  // Privacy boundary: schemes that look "internal" but can be used for
+  // exfiltration or local-file disclosure must NOT slip through. These were
+  // previously allowed because the filter was "anything not http(s) is fine".
+  it("blocks websocket schemes (ws, wss) — primary exfil vector for compromised renderer", () => {
+    expect(shouldAllow(new URL("wss://evil.example/exfil"), base)).toBe(false);
+    expect(shouldAllow(new URL("ws://evil.example/exfil"), base)).toBe(false);
+    // Even loopback websockets are blocked — we don't use them.
+    expect(shouldAllow(new URL("ws://127.0.0.1:54321/"), base)).toBe(false);
+  });
+
+  it("blocks file:// (local file disclosure)", () => {
+    expect(shouldAllow(new URL("file:///etc/passwd"), base)).toBe(false);
+    expect(shouldAllow(new URL("file:///C:/Users/x/.ssh/id_rsa"), base)).toBe(false);
+  });
+
+  it("blocks data: and blob: schemes", () => {
+    expect(shouldAllow(new URL("data:text/html,<script>fetch('//evil')</script>"), base)).toBe(false);
+    expect(shouldAllow(new URL("blob:http://127.0.0.1:54321/abc"), base)).toBe(false);
+  });
+
+  it("blocks ftp: and other unusual schemes", () => {
+    expect(shouldAllow(new URL("ftp://evil.example/file"), base)).toBe(false);
   });
 });

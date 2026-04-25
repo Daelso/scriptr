@@ -13,11 +13,30 @@ export type FilterOptions = {
 // the filter loopback-only without surprising failures.
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
 
-export function shouldAllow(url: URL, opts: FilterOptions): boolean {
-  // Internal Electron schemes are always allowed
-  if (url.protocol !== "http:" && url.protocol !== "https:") return true;
+// Internal Electron / Chromium schemes the renderer legitimately needs.
+// We explicitly allowlist these instead of blanket-allowing every non-http
+// scheme — that would let `wss:`, `file:`, `data:`, `blob:`, `ftp:` bypass
+// the network policy.
+const ALLOWED_INTERNAL_SCHEMES = new Set([
+  "devtools:",
+  "chrome:",
+  "chrome-extension:",
+]);
 
-  // Loopback to the embedded Next server
+// GitHub destinations electron-updater touches when checking + downloading
+// updates. We only allow these when updates are enabled.
+const UPDATE_HOSTS = new Set([
+  "api.github.com", // release metadata JSON
+  "github.com", // release YAML feed + redirect target
+  "objects.githubusercontent.com", // CDN where artifacts actually download from
+]);
+
+export function shouldAllow(url: URL, opts: FilterOptions): boolean {
+  // Default-deny model: every branch below is an explicit allow.
+
+  if (ALLOWED_INTERNAL_SCHEMES.has(url.protocol)) return true;
+
+  // Loopback to the embedded Next server (http only)
   if (
     url.protocol === "http:" &&
     LOOPBACK_HOSTS.has(url.hostname) &&
@@ -29,11 +48,11 @@ export function shouldAllow(url: URL, opts: FilterOptions): boolean {
   // xAI API — only over https
   if (url.protocol === "https:" && url.hostname === "api.x.ai") return true;
 
-  // GitHub releases — only when updates enabled, only over https
+  // GitHub update flow — only when updates enabled, only over https
   if (
     opts.updatesEnabled &&
     url.protocol === "https:" &&
-    url.hostname === "api.github.com"
+    UPDATE_HOSTS.has(url.hostname)
   ) {
     return true;
   }
