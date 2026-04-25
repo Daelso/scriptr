@@ -73,10 +73,8 @@ export async function startNextServer(standaloneDir: string): Promise<ServerHand
   });
 
   let exitListener: ServerExitListener | null = null;
-  let exitedInfo: ServerExitInfo | null = null;
   child.once("exit", (code, signal) => {
-    exitedInfo = { code, signal, stderrTail: stderrBuf };
-    exitListener?.(exitedInfo);
+    exitListener?.({ code, signal, stderrTail: stderrBuf });
   });
 
   return {
