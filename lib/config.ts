@@ -2,6 +2,11 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { StyleRules } from "@/lib/style";
 
+export type UpdatesConfig = {
+  checkOnLaunch: boolean;
+  lastCheckedAt?: string; // ISO timestamp
+};
+
 export type Config = {
   apiKey?: string;
   defaultModel: string;
@@ -11,6 +16,7 @@ export type Config = {
   autoRecap: boolean;
   includeLastChapterFullText: boolean;
   styleDefaults?: StyleRules;
+  updates?: UpdatesConfig;
 };
 
 export const DEFAULT_CONFIG: Config = {
@@ -20,6 +26,7 @@ export const DEFAULT_CONFIG: Config = {
   theme: "system",
   autoRecap: true,
   includeLastChapterFullText: false,
+  updates: { checkOnLaunch: true },
 };
 
 export async function loadConfig(dataDir: string): Promise<Config> {
