@@ -54,6 +54,9 @@
  *   POST /api/import/novelai/commit  (new-story mode)
  *   POST /api/import/novelai/parse
  *   POST /api/import/novelai/commit  (existing-story, reuses seeded slug)
+ *   POST /api/stories/[slug]/export/epub  (with author-note configured —
+ *     exercises the QR encoder + buildAuthorNoteHtml + epub-gen-memory path
+ *     to assert the EPUB pipeline never phones home)
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -62,7 +65,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { NextRequest } from "next/server";
 import { createStory } from "@/lib/storage/stories";
-import { createChapter } from "@/lib/storage/chapters";
+import { createChapter, updateChapter } from "@/lib/storage/chapters";
+import { saveConfig } from "@/lib/config";
 
 // ─── Fetch recorder ──────────────────────────────────────────────────────────
 
@@ -163,6 +167,25 @@ describe("no external egress from API routes", () => {
 
     const ch1 = await createChapter(tmpDir, slug, { title: "Chapter One" });
     const ch2 = await createChapter(tmpDir, slug, { title: "Chapter Two" });
+
+    // Give chapter one some prose so the EPUB exporter has content to render
+    // when this test exercises the export route below.
+    await updateChapter(tmpDir, slug, ch1.id, {
+      sections: [{ id: "egress-sec-1", content: "Once upon a time." }],
+    });
+
+    // Configure a pen-name profile so the EPUB export step below resolves a
+    // non-undefined author-note. This exercises buildAuthorNoteHtml (QR
+    // encoder + sanitizer + temp-file rewrite) — purely local, no fetch.
+    await saveConfig(tmpDir, {
+      penNameProfiles: {
+        [story.authorPenName]: {
+          email: "test@example.com",
+          mailingListUrl: "https://list.example.com/test",
+          defaultMessageHtml: "<p>Thanks for reading!</p>",
+        },
+      },
+    });
 
     // Clear any recordings from the seed helpers (there shouldn't be any,
     // but be defensive).
@@ -373,6 +396,27 @@ describe("no external egress from API routes", () => {
         }),
       });
       const res = await POST(req);
+      expect(res.status).toBe(200);
+    }
+
+    // ── POST /api/stories/[slug]/export/epub (with author-note) ────────────
+    // This exercises the full EPUB pipeline — QR encoder, buildAuthorNoteHtml,
+    // epub-gen-memory, and the temp-file QR rewrite — to assert that
+    // generating an EPUB with an author-note configured does NOT phone home.
+    {
+      const { POST } = await import(
+        "@/app/api/stories/[slug]/export/epub/route"
+      );
+      const req = makeReq(
+        `http://localhost/api/stories/${slug}/export/epub`,
+        {
+          method: "POST",
+          body: JSON.stringify({ version: 3 }),
+          headers: { "content-type": "application/json" },
+        },
+      );
+      const ctx = { params: Promise.resolve({ slug }) };
+      const res = await POST(req, ctx);
       expect(res.status).toBe(200);
     }
 
