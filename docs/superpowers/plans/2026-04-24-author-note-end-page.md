@@ -12,6 +12,18 @@
 
 ---
 
+## State-of-repo notes (2026-04-25)
+
+Since this plan was first drafted, the following changes landed on `main` and the plan compensates for them:
+
+- **`Config.updates: UpdatesConfig`** is now a real field ([lib/config.ts:5-8](../../../lib/config.ts#L5)). Task 1.2 still adds `penNameProfiles` to `Config` — the implementer just appends the new field to the existing extended type (alongside `updates`), not the original snapshot in this plan. No test conflict.
+- **Settings route allowlist** ([app/api/settings/route.ts:29-31](../../../app/api/settings/route.ts#L29)) already contains `"updates"`. Task 3.1 Step 3's instruction is now: append `"penNameProfiles"` to the allowlist (which has 7 entries today, not 6). GET already returns `updates` and `isElectron`; the plan's "add penNameProfiles to the GET object" still applies as a single-line addition.
+- **Electron desktop packaging** is shipped — the app runs in both browser and Electron contexts. The plan's server-side resolver / builder code is identical in both. No code branches needed for `process.versions.electron`.
+- **`jszip`** is already a direct devDependency — Tasks 4.1, 4.3, and 7.2 import it directly, no install step needed.
+- **CLAUDE.md** gained Import + Publish + Planning subsystem pointers — informational, no plan impact.
+
+If anything else has shifted between this section being written and execution, the implementer should re-check the touched files (`git log -- <path>`) before the corresponding chunk's task.
+
 ## Conventions
 
 - Every test step shows the exact `npx vitest run …` (or Playwright) command and the expected pass/fail.
