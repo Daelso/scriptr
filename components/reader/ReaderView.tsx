@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import type { Story, Chapter } from "@/lib/types";
 import { SafeHtml } from "@/lib/publish/safe-html";
-import { AUTHOR_NOTE_SANITIZE_OPTS } from "@/lib/publish/author-note";
+import { AUTHOR_NOTE_SANITIZE_OPTS } from "@/lib/publish/author-note-shared";
 
 interface ReaderViewProps {
   story: Story;
