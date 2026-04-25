@@ -20,6 +20,7 @@ export async function GET() {
     includeLastChapterFullText: cfg.includeLastChapterFullText,
     styleDefaults: cfg.styleDefaults,
     updates: cfg.updates,
+    penNameProfiles: cfg.penNameProfiles,
     isElectron: Boolean(process.versions.electron),
   });
 }
@@ -27,7 +28,7 @@ export async function GET() {
 export async function PUT(req: NextRequest) {
   const body = await readJson<Partial<Config>>(req);
   const allowed: (keyof Config)[] = [
-    "apiKey", "defaultModel", "theme", "autoRecap", "includeLastChapterFullText", "styleDefaults", "updates",
+    "apiKey", "defaultModel", "theme", "autoRecap", "includeLastChapterFullText", "styleDefaults", "updates", "penNameProfiles",
   ];
   const patch: Partial<Config> = {};
   for (const k of allowed) if (k in body) (patch as Record<keyof Config, Config[keyof Config]>)[k] = body[k] as Config[keyof Config];
