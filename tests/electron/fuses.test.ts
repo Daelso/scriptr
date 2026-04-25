@@ -2,26 +2,46 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { load } from "js-yaml";
+import { FuseV1Options, FuseVersion } from "@electron/fuses";
 
-describe("electron-builder.yml — electronFuses", () => {
-  // Parse from the repo root. process.cwd() during vitest is the repo root,
-  // matching how every other test reads project files.
-  const config = load(
-    readFileSync(join(process.cwd(), "electron-builder.yml"), "utf-8"),
-  ) as { electronFuses?: Record<string, boolean> };
+// Load the afterPack hook to inspect the FUSE_VALUES it will apply at
+// packaging time. require() goes through Node's CommonJS loader, which is
+// what electron-builder uses to invoke the hook in CI — so we're testing
+// the same module path that runs in production.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const afterPack = require(join(process.cwd(), "electron/afterPack.cjs")) as {
+  FUSE_VALUES: Record<string | number, boolean | FuseVersion>;
+};
 
-  it("declares an electronFuses block", () => {
-    expect(config.electronFuses).toBeDefined();
+describe("electron/afterPack.cjs — FUSE_VALUES", () => {
+  it("targets fuse wire V1", () => {
+    expect(afterPack.FUSE_VALUES.version).toBe(FuseVersion.V1);
   });
 
   it.each([
-    ["runAsNode", true],
-    ["onlyLoadAppFromAsar", true],
-    ["enableNodeCliInspectArguments", false],
-    ["enableNodeOptionsEnvironmentVariable", false],
-    ["enableCookieEncryption", true],
-    ["loadBrowserProcessSpecificV8Snapshot", true],
-  ] as const)("sets %s to %s", (key, value) => {
-    expect(config.electronFuses?.[key]).toBe(value);
+    [FuseV1Options.RunAsNode, "RunAsNode", true],
+    [FuseV1Options.OnlyLoadAppFromAsar, "OnlyLoadAppFromAsar", true],
+    [FuseV1Options.EnableNodeCliInspectArguments, "EnableNodeCliInspectArguments", false],
+    [FuseV1Options.EnableNodeOptionsEnvironmentVariable, "EnableNodeOptionsEnvironmentVariable", false],
+    [FuseV1Options.EnableCookieEncryption, "EnableCookieEncryption", true],
+    [FuseV1Options.LoadBrowserProcessSpecificV8Snapshot, "LoadBrowserProcessSpecificV8Snapshot", true],
+  ] as const)("sets FuseV1Options.%s (key=%s) to %s", (key, _label, value) => {
+    expect(afterPack.FUSE_VALUES[key]).toBe(value);
+  });
+
+  it("re-signs the macOS binary after flipping (resetAdHocDarwinSignature)", () => {
+    expect(afterPack.FUSE_VALUES.resetAdHocDarwinSignature).toBe(true);
+  });
+});
+
+describe("electron-builder.yml — afterPack hook", () => {
+  // Confirm the YAML actually points at the .cjs file we tested above —
+  // a renamed/moved hook would silently bypass the fuse step.
+  const config = load(
+    readFileSync(join(process.cwd(), "electron-builder.yml"), "utf-8"),
+  ) as { afterPack?: string };
+
+  it("references electron/afterPack.cjs", () => {
+    expect(config.afterPack).toBe("./electron/afterPack.cjs");
   });
 });
