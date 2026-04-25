@@ -18,6 +18,8 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Electron main-process compile output — emitted by `npm run build:electron`
     "dist/**",
+    // electron-builder output — emitted by `npx electron-builder`
+    "release/**",
   ]),
   {
     plugins: {
