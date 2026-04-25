@@ -14,7 +14,7 @@
     "test:watch": "vitest",
     "e2e": "playwright test",
     "typecheck": "tsc --noEmit",
-    "build:electron": "tsc -p electron/tsconfig.json",
+    "build:electron": "tsc -p electron/tsconfig.json && tsc-alias -p electron/tsconfig.json",
     "package:electron": "npm run build && npm run build:electron && electron-builder",
     "dev:electron": "npm run build:electron && electron ."
   },
@@ -62,6 +62,7 @@
     "jsdom": "^29.0.2",
     "jszip": "^3.10.1",
     "tailwindcss": "^4",
+    "tsc-alias": "^1.8.16",
     "typescript": "^5",
     "vitest": "^4.1.4"
   }
