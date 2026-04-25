@@ -4,10 +4,13 @@ import Link from "next/link";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import type { Story, Chapter } from "@/lib/types";
+import { SafeHtml } from "@/lib/publish/safe-html";
+import { AUTHOR_NOTE_SANITIZE_OPTS } from "@/lib/publish/author-note";
 
 interface ReaderViewProps {
   story: Story;
   chapters: Chapter[];
+  authorNoteHtml?: string;
 }
 
 /**
@@ -62,7 +65,7 @@ function buildPlainText(story: Story, chapters: Chapter[]): string {
   return parts.join("\n");
 }
 
-export function ReaderView({ story, chapters }: ReaderViewProps) {
+export function ReaderView({ story, chapters, authorNoteHtml }: ReaderViewProps) {
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(buildPlainText(story, chapters));
@@ -156,6 +159,10 @@ export function ReaderView({ story, chapters }: ReaderViewProps) {
             </section>
           ))
         )}
+
+        {authorNoteHtml ? (
+          <SafeHtml html={authorNoteHtml} extra={AUTHOR_NOTE_SANITIZE_OPTS} />
+        ) : null}
 
         <footer className="mt-8 pt-6 border-t border-border">
           <p className="text-muted-foreground" style={{ fontSize: "0.9rem" }}>
