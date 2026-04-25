@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { NextRequest } from "next/server";
 import { GET, PUT } from "@/app/api/settings/route";
+import { loadConfig } from "@/lib/config";
 
 describe("/api/settings", () => {
   const originalEnv = process.env;
@@ -155,5 +156,52 @@ describe("/api/settings", () => {
     const putRes = await PUT(req);
     const putJson = await putRes.json();
     expect(putJson.ok).toBe(true);
+  });
+
+  it("PUT accepts penNameProfiles and GET returns them", async () => {
+    const profile = {
+      "Jane Doe": {
+        email: "jane@example.com",
+        mailingListUrl: "https://list.example.com/jane",
+        defaultMessageHtml: "<p>Default</p>",
+      },
+    };
+    const req = new Request("http://localhost/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({ penNameProfiles: profile }),
+      headers: { "content-type": "application/json" },
+    }) as unknown as NextRequest;
+
+    const putRes = await PUT(req);
+    expect(putRes.status).toBe(200);
+    expect((await putRes.json()).ok).toBe(true);
+
+    const getRes = await GET();
+    const body = await getRes.json();
+    expect(body.ok).toBe(true);
+    expect(body.data.penNameProfiles).toEqual(profile);
+  });
+
+  it("PUT ignores unknown fields not in the allowlist (penNameProfiles round-trip)", async () => {
+    const profile = {
+      "Pen One": { email: "one@example.com" },
+    };
+    const req = new Request("http://localhost/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({
+        penNameProfiles: profile,
+        somethingElse: "should be dropped",
+      }),
+      headers: { "content-type": "application/json" },
+    }) as unknown as NextRequest;
+
+    const putRes = await PUT(req);
+    expect(putRes.status).toBe(200);
+    expect((await putRes.json()).ok).toBe(true);
+
+    // Inspect persisted config directly to ensure unknown field never reached disk.
+    const cfg = await loadConfig(tmpDir);
+    expect(cfg.penNameProfiles).toEqual(profile);
+    expect((cfg as Record<string, unknown>).somethingElse).toBeUndefined();
   });
 });
