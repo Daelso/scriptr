@@ -67,3 +67,6 @@ exports/
 
 # Electron main-process compile output
 /dist/
+
+# electron-builder packaging output
+/release/
