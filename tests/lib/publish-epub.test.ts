@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   renderChapterPreviewHtml,
   EPUB_STYLESHEET,
-  type EpubInput,
 } from "@/lib/publish/epub";
 import type { Chapter } from "@/lib/types";
 
