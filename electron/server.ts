@@ -2,10 +2,28 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createServer as createNetServer, connect as netConnect } from "node:net";
 import { once } from "node:events";
 
+export type ServerExitInfo = {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  /** Last ~4096 bytes of child stderr — useful for crash diagnosis. */
+  stderrTail: string;
+};
+
+/** A single listener; re-registering replaces. */
+export type ServerExitListener = (info: ServerExitInfo) => void;
+
 export type ServerHandle = {
   url: string;
   port: number;
   close: () => Promise<void>;
+  /**
+   * Register a listener for post-ready child exits. Single-listener:
+   * calling `onExit` a second time replaces the previous listener.
+   * Listeners registered AFTER the child has already exited will not
+   * fire — main.ts always registers synchronously after `await
+   * startNextServer`, so this is intentional.
+   */
+  onExit: (listener: ServerExitListener) => void;
 };
 
 /**
@@ -54,6 +72,13 @@ export async function startNextServer(standaloneDir: string): Promise<ServerHand
     throw err;
   });
 
+  let exitListener: ServerExitListener | null = null;
+  let exitedInfo: ServerExitInfo | null = null;
+  child.once("exit", (code, signal) => {
+    exitedInfo = { code, signal, stderrTail: stderrBuf };
+    exitListener?.(exitedInfo);
+  });
+
   return {
     port,
     url: `http://127.0.0.1:${port}`,
@@ -61,6 +86,9 @@ export async function startNextServer(standaloneDir: string): Promise<ServerHand
       if (child.exitCode !== null) return;
       child.kill("SIGTERM");
       await once(child, "exit");
+    },
+    onExit: (listener) => {
+      exitListener = listener;
     },
   };
 }
