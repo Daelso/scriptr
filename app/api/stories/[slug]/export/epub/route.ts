@@ -58,7 +58,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     bytes = await buildEpubBytes({ story, chapters, coverPath, version, authorNote });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (/code length overflow|data does not fit|too big/i.test(msg)) {
+    if (/too big to be stored in a QR/i.test(msg)) {
       return fail("mailing list URL is too long to encode as a QR code", 400);
     }
     throw err;
