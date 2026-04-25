@@ -21,7 +21,19 @@ const BASE_ATTR = ["class"];
 // built-in DATA_URI_TAGS (img/audio/video/source/image/track) regardless of
 // `ALLOWED_URI_REGEXP`, so when callers opt in to a strict regex we enforce
 // it ourselves via a temporary `uponSanitizeAttribute` hook.
-const URI_ATTRS = new Set(["src", "href", "xlink:href"]);
+const URI_ATTRS = new Set([
+  "src",
+  "href",
+  "xlink:href",
+  "srcset",
+  "poster",
+  "cite",
+  "formaction",
+  "action",
+  "background",
+  "longdesc",
+  "usemap",
+]);
 
 /**
  * Render trusted HTML through DOMPurify as a defense-in-depth layer. The
@@ -65,7 +77,6 @@ export function SafeHtml({ html, className, extra }: Props) {
   return (
     <div
       className={className}
-      // eslint-disable-next-line react/no-danger
       dangerouslySetInnerHTML={{ __html: clean }}
     />
   );
