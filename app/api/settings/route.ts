@@ -19,13 +19,15 @@ export async function GET() {
     autoRecap: cfg.autoRecap,
     includeLastChapterFullText: cfg.includeLastChapterFullText,
     styleDefaults: cfg.styleDefaults,
+    updates: cfg.updates,
+    isElectron: Boolean(process.versions.electron),
   });
 }
 
 export async function PUT(req: NextRequest) {
   const body = await readJson<Partial<Config>>(req);
   const allowed: (keyof Config)[] = [
-    "apiKey", "defaultModel", "theme", "autoRecap", "includeLastChapterFullText", "styleDefaults",
+    "apiKey", "defaultModel", "theme", "autoRecap", "includeLastChapterFullText", "styleDefaults", "updates",
   ];
   const patch: Partial<Config> = {};
   for (const k of allowed) if (k in body) (patch as Record<keyof Config, Config[keyof Config]>)[k] = body[k] as Config[keyof Config];
