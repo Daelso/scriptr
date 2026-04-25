@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
@@ -31,6 +32,8 @@ interface SettingsData {
   autoRecap: boolean;
   includeLastChapterFullText: boolean;
   styleDefaults?: StyleRules;
+  updates?: { checkOnLaunch: boolean; lastCheckedAt?: string };
+  isElectron?: boolean;
 }
 
 interface FormState {
@@ -41,6 +44,7 @@ interface FormState {
   autoRecap: boolean;
   includeLastChapter: boolean;
   style: Required<StyleRules>;
+  updateCheckOnLaunch: boolean;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -59,6 +63,7 @@ const DEFAULT_FORM: FormState = {
   autoRecap: true,
   includeLastChapter: false,
   style: { ...DEFAULT_STYLE },
+  updateCheckOnLaunch: true,
 };
 
 function formFromData(data: SettingsData): FormState {
@@ -70,6 +75,7 @@ function formFromData(data: SettingsData): FormState {
     autoRecap: data.autoRecap,
     includeLastChapter: data.includeLastChapterFullText,
     style: { ...DEFAULT_STYLE, ...(data.styleDefaults ?? {}) },
+    updateCheckOnLaunch: data.updates?.checkOnLaunch !== false, // default true
   };
 }
 
@@ -115,6 +121,9 @@ export function SettingsForm() {
     revalidateOnFocus: false,
   });
 
+  const search = useSearchParams();
+  const onboarding = search.get("onboarding") === "1";
+
   function patch(partial: Partial<FormState>) {
     setForm((prev) => ({ ...prev, ...partial }));
   }
@@ -133,6 +142,15 @@ export function SettingsForm() {
         includeLastChapterFullText: form.includeLastChapter,
         styleDefaults: diffAgainstDefault(form.style),
       };
+
+      // Only send the updates patch when running under Electron, to keep the web
+      // build's behavior identical.
+      if (data?.isElectron) {
+        body.updates = {
+          ...(data.updates ?? { checkOnLaunch: true }),
+          checkOnLaunch: form.updateCheckOnLaunch,
+        };
+      }
 
       // Only include apiKey when the user typed something
       if (form.apiKey !== "") {
@@ -168,6 +186,23 @@ export function SettingsForm() {
 
   return (
     <div className="flex flex-col gap-8">
+
+      {onboarding && (
+        <div className="rounded-md border border-blue-500/30 bg-blue-500/5 p-4">
+          <h2 className="text-sm font-semibold">Welcome to scriptr</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Paste your xAI API key below to get started.{" "}
+            <a
+              href="https://console.x.ai"
+              target="_blank"
+              rel="noreferrer"
+              className="underline"
+            >
+              Get a key →
+            </a>
+          </p>
+        </div>
+      )}
 
       {/* ── API Key ─────────────────────────────────────────────────── */}
       <section className="flex flex-col gap-4">
@@ -507,6 +542,34 @@ export function SettingsForm() {
       </section>
 
       <Separator />
+
+      {data.isElectron && (
+        <>
+          <Separator />
+          <section className="flex flex-col gap-4">
+            <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+              Updates
+            </h2>
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex flex-col gap-0.5">
+                <Label htmlFor="update-check-on-launch">Check for updates on launch</Label>
+                <p className="text-xs text-muted-foreground">
+                  Queries GitHub Releases when the app starts. Disable to make zero
+                  network calls outside of generation.
+                </p>
+              </div>
+              <Switch
+                id="update-check-on-launch"
+                checked={form.updateCheckOnLaunch}
+                onCheckedChange={(v) => patch({ updateCheckOnLaunch: v })}
+              />
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Last checked: {data.updates?.lastCheckedAt ?? "never"}
+            </div>
+          </section>
+        </>
+      )}
 
       {/* ── Appearance ──────────────────────────────────────────────── */}
       <section className="flex flex-col gap-4">
