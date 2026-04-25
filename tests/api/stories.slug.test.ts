@@ -194,4 +194,32 @@ describe("/api/stories/[slug]", () => {
     expect(body.ok).toBe(false);
     expect(body.error).toBe("story not found");
   });
+
+  // 9. PATCH authorNote round-trips via GET
+  it("PATCH accepts authorNote and round-trips it via GET", async () => {
+    const story = await seedStory("Test");
+    const patchRes = await callPatch(story.slug, {
+      authorNote: { enabled: true, messageHtml: "<p>hi</p>" },
+    });
+    expect(patchRes.status).toBe(200);
+    expect((await patchRes.json()).ok).toBe(true);
+
+    const getRes = await callGet(story.slug);
+    const body = await getRes.json();
+    expect(body.data.authorNote).toEqual({ enabled: true, messageHtml: "<p>hi</p>" });
+  });
+
+  // 10. PATCH authorNote with enabled=false alone persists
+  it("PATCH accepts authorNote.enabled=false alone and persists it", async () => {
+    const story = await seedStory("Test 2");
+    const res = await callPatch(story.slug, {
+      authorNote: { enabled: false },
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).ok).toBe(true);
+
+    const getRes = await callGet(story.slug);
+    const body = await getRes.json();
+    expect(body.data.authorNote).toEqual({ enabled: false });
+  });
 });

@@ -19,7 +19,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
   const allowed: (keyof Story)[] = [
     "title", "authorPenName", "subtitle", "description",
     "copyrightYear", "language", "bisacCategory", "keywords",
-    "isbn", "modelOverride",
+    "isbn", "modelOverride", "authorNote",
   ];
   const patch: Partial<Story> = {};
   for (const k of allowed) if (k in body) (patch as Record<string, unknown>)[k] = body[k];
