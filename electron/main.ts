@@ -136,6 +136,13 @@ async function main(): Promise<void> {
       sandbox: true,
       webSecurity: true,
       devTools: isDev,
+      // Default-true. When enabled, Chromium fetches hunspell dictionaries
+      // from redirector.gvt1.com (Google CDN) on first text-input focus.
+      // The network filter blocks the requests, but they still spam
+      // blocked-requests.log with Google URLs and contradict the
+      // privacy panel's "Allowed destinations" claim. We rely on OS-level
+      // spellcheck if the user wants it.
+      spellcheck: false,
     },
   });
   Menu.setApplicationMenu(buildAppMenu(dataDir, isDev));
@@ -161,6 +168,32 @@ async function main(): Promise<void> {
       // ignore invalid URLs
     }
     return { action: "deny" };
+  });
+
+  // Block in-place navigation away from the embedded Next server. Without
+  // this, a renderer-side `location.href = "https://github.com/..."` would
+  // navigate the main window. The network filter would block the actual
+  // fetch, but the user could still be stranded on a blank/error page.
+  // We only allow navigation within the loopback origin we booted.
+  const loopbackOrigin = serverHandle.url; // http://127.0.0.1:<port>
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (!url.startsWith(loopbackOrigin + "/") && url !== loopbackOrigin) {
+      event.preventDefault();
+      // If it looks like an external link, route through the same allowlist
+      // as the window-open handler so users still get useful behavior.
+      try {
+        const parsed = new URL(url);
+        const isXai = parsed.protocol === "https:" && xAiHosts.has(parsed.hostname);
+        const isScriptrRepo =
+          parsed.protocol === "https:" &&
+          parsed.hostname === "github.com" &&
+          (parsed.pathname === GITHUB_REPO_PATH ||
+            parsed.pathname.startsWith(GITHUB_REPO_PATH + "/"));
+        if (isXai || isScriptrRepo) void shell.openExternal(url);
+      } catch {
+        // ignore
+      }
+    }
   });
 
   mainWindow.once("ready-to-show", () => mainWindow?.show());

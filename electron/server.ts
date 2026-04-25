@@ -67,18 +67,37 @@ export async function startNextServer(standaloneDir: string): Promise<ServerHand
 
 // ─── Env allowlist ───────────────────────────────────────────────────────────
 
+// What we let through into the spawned Next process. Anything not on this
+// list is dropped — see buildChildEnv. The Windows entries are NOT optional:
+// without SYSTEMROOT, Node's crypto module can't locate bcryptprimitives.dll
+// and the process crashes on the first randomBytes() call (Next does this
+// during startup). The CI release matrix builds artifacts but doesn't run
+// them, so this had to be added by hand rather than caught by green CI.
 const ENV_PASSTHROUGH = new Set([
+  // POSIX:
   "PATH",
   "HOME",
-  "USERPROFILE", // Windows
-  "APPDATA", // Windows
-  "LOCALAPPDATA", // Windows
   "TMPDIR",
-  "TEMP", // Windows
-  "TMP", // Windows
   "LANG",
   "LC_ALL",
   "LC_CTYPE",
+  // Windows (load-bearing for crypto + native modules + child spawn):
+  "SYSTEMROOT", // bcryptprimitives.dll lives here — required for crypto
+  "WINDIR", // some libs probe this instead of SYSTEMROOT
+  "USERPROFILE",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "PROGRAMDATA",
+  "PROGRAMFILES",
+  "PROGRAMFILES(X86)",
+  "COMSPEC",
+  "PATHEXT",
+  "TEMP",
+  "TMP",
+  "HOMEDRIVE",
+  "HOMEPATH",
+  "OS",
+  "NUMBER_OF_PROCESSORS",
   // scriptr-specific:
   "XAI_API_KEY", // honored by lib/config.ts as an apiKey override
   "SCRIPTR_DATA_DIR",
@@ -127,16 +146,24 @@ async function waitForReady(child: ChildProcess, port: number): Promise<void> {
   // log format — version-proof against Next.js startup-message changes.
   const deadline = Date.now() + 30_000;
   let earlyExit: Error | null = null;
-  child.once("exit", (code) => {
+  const onEarlyExit = (code: number | null) => {
     earlyExit = new Error(`Next.js server exited before ready (code ${code})`);
-  });
+  };
+  child.once("exit", onEarlyExit);
 
-  while (Date.now() < deadline) {
-    if (earlyExit) throw earlyExit;
-    if (await canConnect(port, 250)) return;
-    await delay(100);
+  try {
+    while (Date.now() < deadline) {
+      if (earlyExit) throw earlyExit;
+      if (await canConnect(port, 250)) return;
+      await delay(100);
+    }
+    throw new Error("Next.js server did not accept connections within 30s");
+  } finally {
+    // Detach the early-exit listener once the wait resolves either way —
+    // future graceful shutdowns shouldn't run this closure (it'd set
+    // earlyExit on a now-out-of-scope variable, harmless but wasteful).
+    child.off("exit", onEarlyExit);
   }
-  throw new Error("Next.js server did not accept connections within 30s");
 }
 
 function canConnect(port: number, timeoutMs: number): Promise<boolean> {

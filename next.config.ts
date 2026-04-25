@@ -39,6 +39,12 @@ const cspDirectives = [
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",
+  // worker-src defaults to script-src — which permits 'unsafe-inline' here.
+  // Pin it tighter so a compromised renderer can't `new Worker(blobUrl)`
+  // and inherit looser script policy.
+  "worker-src 'self'",
+  // object-src 'none' kills <object>/<embed>/<applet> as plugin sinks.
+  "object-src 'none'",
 ].join("; ");
 
 const nextConfig: NextConfig = {
