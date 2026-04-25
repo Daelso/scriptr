@@ -2,8 +2,9 @@ import type { NextRequest } from "next/server";
 import { ok, fail, readJson } from "@/lib/api";
 import { getStory } from "@/lib/storage/stories";
 import { listChapters } from "@/lib/storage/chapters";
-import { effectiveDataDir } from "@/lib/config";
+import { effectiveDataDir, loadConfig } from "@/lib/config";
 import { buildEpubBytes, validateEpub } from "@/lib/publish/epub";
+import { resolveAuthorNote } from "@/lib/publish/author-note";
 import { ensureCoverOrFallback, writeEpub } from "@/lib/publish/epub-storage";
 import type { EpubVersion } from "@/lib/storage/paths";
 
@@ -43,7 +44,25 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     author: story.authorPenName,
   });
 
-  const bytes = await buildEpubBytes({ story, chapters, coverPath, version });
+  const cfg = await loadConfig(dataDir);
+  const profile = cfg.penNameProfiles?.[story.authorPenName];
+  const authorNote = resolveAuthorNote(story, profile) ?? undefined;
+
+  // Wrap buildEpubBytes to intercept QR-encoder overflow errors. The qrcode
+  // library throws "The amount of data is too big to be stored in a QR Code"
+  // when a mailing-list URL exceeds QR capacity (~2953 chars alphanumeric).
+  // Surface those as a clean 400 instead of letting them 500. Other errors
+  // rethrow so unrelated bugs surface normally.
+  let bytes: Uint8Array;
+  try {
+    bytes = await buildEpubBytes({ story, chapters, coverPath, version, authorNote });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/code length overflow|data does not fit|too big/i.test(msg)) {
+      return fail("mailing list URL is too long to encode as a QR code", 400);
+    }
+    throw err;
+  }
   const { warnings: validationWarnings } = await validateEpub(bytes);
   const path = await writeEpub(dataDir, slug, version, bytes);
 
