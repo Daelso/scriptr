@@ -28,6 +28,14 @@ export function PrivacyPanel() {
 
   const { data: stories } = useSWR<Story[]>("/api/stories", fetcher);
 
+  // Match SettingsForm's revalidation policy — settings don't change without
+  // user action, so refetching on focus just doubles the request cost when
+  // both components mount on the settings page.
+  const { data: settings } = useSWR<{
+    isElectron?: boolean;
+    updates?: { checkOnLaunch: boolean; lastCheckedAt?: string };
+  }>("/api/settings", fetcher, { revalidateOnFocus: false });
+
   const {
     data: payload,
     error: payloadError,
@@ -46,6 +54,31 @@ export function PrivacyPanel() {
       <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
         Privacy
       </h2>
+
+      {settings?.isElectron && (() => {
+        // checkOnLaunch defaults to true — only `false` should render as "disabled".
+        const updatesOn = settings.updates?.checkOnLaunch !== false;
+        return (
+          <div className="rounded-md border border-border/60 bg-muted/30 p-4">
+            <h3 className="mb-2 text-sm font-medium">Desktop app network activity</h3>
+            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+              <dt className="text-muted-foreground">Allowed destinations</dt>
+              <dd>
+                <code>https://api.x.ai</code> (generation)
+                {updatesOn && (
+                  <>
+                    , <code>github.com</code> + <code>objects.githubusercontent.com</code> (update check &amp; downloads)
+                  </>
+                )}
+              </dd>
+              <dt className="text-muted-foreground">Update check on launch</dt>
+              <dd>{updatesOn ? "enabled" : "disabled"}</dd>
+              <dt className="text-muted-foreground">Last check</dt>
+              <dd>{settings.updates?.lastCheckedAt ?? "never"}</dd>
+            </dl>
+          </div>
+        );
+      })()}
 
       {storyList.length === 0 ? (
         <p className="text-sm text-muted-foreground">

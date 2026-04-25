@@ -43,6 +43,12 @@ const BLOCKED = [
   "umami-analytics", // Umami tracker
   "matomo-tracker", // Matomo
   "@matomo/", // Matomo scoped
+  // Electron-specific telemetry packages (note: `crashReporter` from "electron"
+  // is enforced by code review — see comment in electron/main.ts)
+  "electron-log",                  // popular remote-logging package; can phone home
+  "@electron/remote",              // not telemetry per se but enables main-process access from renderer; ban out of caution
+  "electron-google-analytics",
+  "electron-fiddle-telemetry",
 ];
 
 function isBlocked(name) {
