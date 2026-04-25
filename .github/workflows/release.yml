@@ -1,9 +1,21 @@
 name: Release
 
+# Triggers:
+# - Tag push (v*.*.*) → real release: builds + publishes artifacts to a
+#   draft GitHub Release.
+# - Manual workflow_dispatch → smoke build: builds artifacts on each OS
+#   and uploads them as workflow artifacts (downloadable from the run page).
+#   No GitHub Release is created. Use this to test installers before tagging.
 on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: "Which OSes to build (comma list of: linux,windows,macos)"
+        type: string
+        default: "linux,windows,macos"
 
 # electron-builder needs to upload artifacts to the GitHub Release, which
 # requires write access to the repo's contents. The default GITHUB_TOKEN
@@ -35,6 +47,16 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    # Filter the matrix on workflow_dispatch by inspecting the input. Tag
+    # pushes always run all three.
+    if: |
+      github.event_name == 'push' || (
+        github.event_name == 'workflow_dispatch' && (
+          (matrix.os == 'ubuntu-latest'  && contains(github.event.inputs.platforms, 'linux'))   ||
+          (matrix.os == 'windows-latest' && contains(github.event.inputs.platforms, 'windows')) ||
+          (matrix.os == 'macos-latest'   && contains(github.event.inputs.platforms, 'macos'))
+        )
+      )
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -51,7 +73,30 @@ jobs:
       - name: Compile Electron main process
         run: npm run build:electron
 
-      - name: Package with electron-builder
+      # On tag push: publish to GitHub Releases. Otherwise: just build.
+      - name: Package with electron-builder (tag push — publish to release)
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --publish always
+
+      - name: Package with electron-builder (manual run — build only)
+        if: github.event_name == 'workflow_dispatch'
+        run: npx electron-builder --publish never
+
+      # Upload installers as workflow artifacts so manual runs are useful.
+      # On tag push these are duplicated by the GitHub Release upload; harmless.
+      - name: Upload installers as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: scriptr-${{ matrix.os }}
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.zip
+            release/*.AppImage
+            release/*.deb
+            release/*.yml
+            release/*.blockmap
+          if-no-files-found: warn
+          retention-days: 14
