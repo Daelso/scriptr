@@ -58,6 +58,9 @@ export async function startNextServer(standaloneDir: string): Promise<ServerHand
     // ProcessEnv types make NODE_ENV a const-typed required field.
     env: childEnv as NodeJS.ProcessEnv,
     stdio: ["ignore", "pipe", "pipe"],
+    // Suppress the brief CMD console window that Windows would otherwise
+    // flash when spawning a child of a GUI process. No-op on POSIX.
+    windowsHide: true,
   });
 
   // Capture stderr so a failed startup gives a useful error message.
@@ -129,8 +132,14 @@ const ENV_PASSTHROUGH = new Set([
   "SCRIPTR_DATA_DIR",
   "SCRIPTR_UPDATES_CHECK",
   "SCRIPTR_DEFAULT_MODEL",
-  // Node tuning:
-  "NODE_OPTIONS",
+  // NOTE: NODE_OPTIONS is intentionally NOT passed through. The
+  // `enableNodeOptionsEnvironmentVariable: false` fuse blocks it on the
+  // main Electron process, but the spawned child runs the same binary
+  // under ELECTRON_RUN_AS_NODE=1 and would otherwise honor whatever
+  // NODE_OPTIONS the user's shell exports — including --inspect=...
+  // (debugger attach, exfiltrate the in-memory xAI key) or --require
+  // (arbitrary preload). The fuse must be paired with this allowlist
+  // gate to actually close the attack vector.
 ]);
 
 // Use a plain Record instead of NodeJS.ProcessEnv — Next.js's ambient types

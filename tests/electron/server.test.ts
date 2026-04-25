@@ -37,8 +37,12 @@ describe("server — buildChildEnv", () => {
     expect(env.XAI_API_KEY).toBe("xai-secret");
     expect(env.SCRIPTR_DATA_DIR).toBe("/data");
     expect(env.SCRIPTR_UPDATES_CHECK).toBe("1");
-    expect(env.NODE_OPTIONS).toBe("--max-old-space-size=4096");
     expect(env.LANG).toBe("en_US.UTF-8");
+  });
+
+  it("blocks NODE_OPTIONS — pairs with the enableNodeOptionsEnvironmentVariable fuse to close the debugger-attach attack", () => {
+    const env = buildChildEnv(parent as unknown as NodeJS.ProcessEnv, 41234);
+    expect(env.NODE_OPTIONS).toBeUndefined();
   });
 
   it("propagates Windows-critical variables (SYSTEMROOT etc.) — Node crypto fails without these", () => {
