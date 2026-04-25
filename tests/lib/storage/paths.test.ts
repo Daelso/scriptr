@@ -10,6 +10,7 @@ import {
   lastPayloadFile,
   logsDir,
   blockedRequestsLog,
+  crashesLog,
 } from "@/lib/storage/paths";
 
 describe("storage paths", () => {
@@ -35,6 +36,10 @@ describe("storage paths", () => {
     expect(exportsDir(dataDir, "x")).toBe("/tmp/fakedata/stories/x/exports");
     expect(coverPath(dataDir, "x")).toBe("/tmp/fakedata/stories/x/cover.jpg");
     expect(lastPayloadFile(dataDir, "x")).toBe("/tmp/fakedata/stories/x/.last-payload.json");
+  });
+
+  it("builds the crashes log path under <dataDir>/logs/", () => {
+    expect(crashesLog(dataDir)).toBe("/tmp/fakedata/logs/crashes.log");
   });
 });
 
