@@ -7,6 +7,12 @@ export type UpdatesConfig = {
   lastCheckedAt?: string; // ISO timestamp
 };
 
+export type PenNameProfile = {
+  email?: string;
+  mailingListUrl?: string;
+  defaultMessageHtml?: string;
+};
+
 export type Config = {
   apiKey?: string;
   defaultModel: string;
@@ -17,6 +23,7 @@ export type Config = {
   includeLastChapterFullText: boolean;
   styleDefaults?: StyleRules;
   updates?: UpdatesConfig;
+  penNameProfiles?: Record<string, PenNameProfile>;
 };
 
 export const DEFAULT_CONFIG: Config = {

@@ -107,4 +107,29 @@ describe("config — updates settings", () => {
     const loaded = await loadConfig(dir);
     expect(loaded.updates?.lastCheckedAt).toBe(ts);
   });
+
+  it("round-trips penNameProfiles through saveConfig/loadConfig", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "scriptr-config-"));
+    try {
+      await saveConfig(dir, {
+        penNameProfiles: {
+          "Jane Doe": {
+            email: "jane@example.com",
+            mailingListUrl: "https://list.example.com/jane",
+            defaultMessageHtml: "<p>Thanks!</p>",
+          },
+        },
+      });
+      const loaded = await loadConfig(dir);
+      expect(loaded.penNameProfiles).toEqual({
+        "Jane Doe": {
+          email: "jane@example.com",
+          mailingListUrl: "https://list.example.com/jane",
+          defaultMessageHtml: "<p>Thanks!</p>",
+        },
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
