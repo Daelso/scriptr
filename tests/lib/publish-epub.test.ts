@@ -443,6 +443,27 @@ describe("buildEpubBytes author-note integration", () => {
     // images/ directory + at least one image file
     const imageFiles = imageEntries.filter((p) => !p.endsWith("/"));
     expect(imageFiles.length).toBeGreaterThan(0);
+
+    // Regression guard: epub-gen-memory's data-URL handling silently produces
+    // 0-byte image entries with no extension and an empty media-type. Assert
+    // the embedded image actually has PNG bytes and a real media-type.
+    const pngFile = Object.keys(zip.files).find((p) =>
+      /^OEBPS\/images\/.+\.png$/i.test(p),
+    );
+    expect(pngFile, "expected a .png entry under OEBPS/images/").toBeDefined();
+    const imgBuf = await zip.file(pngFile!)!.async("uint8array");
+    expect(imgBuf.length).toBeGreaterThan(100);
+    // PNG magic bytes: 89 50 4E 47
+    expect(Array.from(imgBuf.slice(0, 4))).toEqual([0x89, 0x50, 0x4e, 0x47]);
+
+    // OPF manifest must declare image/png for the embedded QR.
+    const opfFile = Object.keys(zip.files).find((p) => p.endsWith(".opf"))!;
+    const opf = await zip.file(opfFile)!.async("string");
+    const imageItem = opf.match(
+      /<item[^>]*href="images\/[^"]+\.png"[^>]*media-type="([^"]+)"/,
+    );
+    expect(imageItem).not.toBeNull();
+    expect(imageItem![1]).toBe("image/png");
   });
 
   it("omits the author note entry when input.authorNote is undefined", async () => {
