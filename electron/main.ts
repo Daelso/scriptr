@@ -85,11 +85,14 @@ async function main(): Promise<void> {
   const updatesEnabled = await isCheckEnabled(dataDir);
   if (updatesEnabled) process.env.SCRIPTR_UPDATES_CHECK = "1";
 
-  // 3. Boot the Next.js server on an ephemeral loopback port
-  const appDir = isDev
-    ? process.cwd()
-    : join(process.resourcesPath, "app"); // electron-builder places standalone here
-  serverHandle = await startNextServer(appDir);
+  // 3. Boot the Next.js server (Next standalone bundle) on an ephemeral port.
+  //    In dev the standalone bundle lives at <cwd>/.next/standalone after
+  //    `npm run build`. In packaged builds, electron-builder's extraResources
+  //    copies .next/standalone to <resources>/app, so app IS the standalone dir.
+  const standaloneDir = isDev
+    ? join(process.cwd(), ".next", "standalone")
+    : join(process.resourcesPath, "app");
+  serverHandle = await startNextServer(standaloneDir);
 
   // 4. Install the main-process network filter
   installNetworkFilter(session.defaultSession, {
