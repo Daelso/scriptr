@@ -10,6 +10,10 @@
  * `lib/publish/epub-preview.ts` directly. This file re-exports the same
  * symbols for convenience of server callers and the existing unit tests.
  */
+import { randomBytes } from "node:crypto";
+import { writeFile, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Chapter, Story } from "@/lib/types";
 import type { EpubVersion } from "@/lib/storage/paths";
@@ -58,6 +62,63 @@ function getGenerator(): EpubGenFn {
   return (mod.default ?? mod) as EpubGenFn;
 }
 
+/**
+ * Rewrites any `<img src="data:image/png;base64,...">` occurrences in the
+ * given HTML by decoding the payload, writing it to a temp PNG, and replacing
+ * the src with the file's `file://` URL.
+ *
+ * Why: `epub-gen-memory` cannot embed `data:` URLs. It pipes the src through
+ * `node-fetch` (which doesn't support data URLs) and then derives the manifest
+ * extension from `mime.getType(url)` (which returns null for data URLs). With
+ * `ignoreFailedDownloads: true` set for the cover-path workaround, the failed
+ * fetch silently produces a 0-byte file with no extension and an empty
+ * media-type — observed for the QR image embedded by `buildAuthorNoteHtml`.
+ *
+ * The fix mirrors the cover-image workaround above: hand the library a
+ * `file://` URL so it goes through the on-disk-read path instead.
+ *
+ * Returns the rewritten HTML and a list of temp file paths the caller must
+ * unlink after the EPUB has been built.
+ */
+async function externalizeDataPngImages(
+  html: string,
+): Promise<{ html: string; tempPaths: string[] }> {
+  const tempPaths: string[] = [];
+  // Match <img ... src="data:image/png;base64,XXXX" ...> with single or double
+  // quotes. Capture the surrounding attributes so we can preserve them.
+  const re = /<img\b([^>]*?)\bsrc=(["'])data:image\/png;base64,([A-Za-z0-9+/=]+)\2([^>]*)>/gi;
+  const matches: Array<{ start: number; end: number; pre: string; payload: string; post: string }> = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    matches.push({
+      start: m.index,
+      end: m.index + m[0].length,
+      pre: m[1] ?? "",
+      payload: m[3] ?? "",
+      post: m[4] ?? "",
+    });
+  }
+
+  if (matches.length === 0) return { html, tempPaths };
+
+  // Rebuild the HTML in order, replacing each match with the rewritten <img>.
+  const out: string[] = [];
+  let cursor = 0;
+  for (const match of matches) {
+    out.push(html.slice(cursor, match.start));
+    const bytes = Buffer.from(match.payload, "base64");
+    const filename = `scriptr-qr-${randomBytes(8).toString("hex")}.png`;
+    const tmpPath = join(tmpdir(), filename);
+    await writeFile(tmpPath, bytes);
+    tempPaths.push(tmpPath);
+    const fileUrl = pathToFileURL(tmpPath).href;
+    out.push(`<img${match.pre} src="${fileUrl}"${match.post}>`);
+    cursor = match.end;
+  }
+  out.push(html.slice(cursor));
+  return { html: out.join(""), tempPaths };
+}
+
 export async function buildEpubBytes(input: EpubInput): Promise<Uint8Array> {
   const { story, chapters, coverPath, version = 3 } = input;
 
@@ -73,36 +134,51 @@ export async function buildEpubBytes(input: EpubInput): Promise<Uint8Array> {
     };
   });
 
+  // Track temp PNG files written for the QR data-URL workaround so we can
+  // clean them up regardless of whether the generator throws.
+  const tempImagePaths: string[] = [];
+
   if (input.authorNote) {
+    const noteHtml = await buildAuthorNoteHtml(input.authorNote);
+    const { html: rewritten, tempPaths } = await externalizeDataPngImages(noteHtml);
+    tempImagePaths.push(...tempPaths);
     content.push({
       title: "A note from the author",
-      content: await buildAuthorNoteHtml(input.authorNote),
+      content: rewritten,
     });
   }
 
-  const generator = getGenerator();
-  const buffer = await generator(
-    {
-      title: story.title,
-      author: story.authorPenName,
-      description: story.description,
-      lang: story.language || "en",
-      // epub-gen-memory treats a plain string `cover` as a URL: strings
-      // starting with `file://` are read from disk via fs.readFile; anything
-      // else is fetched over HTTP. A bare absolute path fails the HTTP fetch
-      // and (with ignoreFailedDownloads: true) silently writes a 0-byte
-      // cover.jpeg into the archive — which Smashwords and other strict
-      // EPUBCheck validators reject as a corrupted image. Convert to a
-      // proper file:// URL so the library reads the bytes off disk.
-      cover: coverPath ? pathToFileURL(coverPath).href : undefined,
-      ignoreFailedDownloads: true,
-      css: EPUB_STYLESHEET,
-    },
-    content,
-    version
-  );
+  try {
+    const generator = getGenerator();
+    const buffer = await generator(
+      {
+        title: story.title,
+        author: story.authorPenName,
+        description: story.description,
+        lang: story.language || "en",
+        // epub-gen-memory treats a plain string `cover` as a URL: strings
+        // starting with `file://` are read from disk via fs.readFile; anything
+        // else is fetched over HTTP. A bare absolute path fails the HTTP fetch
+        // and (with ignoreFailedDownloads: true) silently writes a 0-byte
+        // cover.jpeg into the archive — which Smashwords and other strict
+        // EPUBCheck validators reject as a corrupted image. Convert to a
+        // proper file:// URL so the library reads the bytes off disk.
+        cover: coverPath ? pathToFileURL(coverPath).href : undefined,
+        ignoreFailedDownloads: true,
+        css: EPUB_STYLESHEET,
+      },
+      content,
+      version,
+    );
 
-  return new Uint8Array(buffer);
+    return new Uint8Array(buffer);
+  } finally {
+    // Best-effort cleanup of temp QR files. Swallow ENOENT etc. — leaving a
+    // stray temp PNG is preferable to masking a real generator error.
+    await Promise.all(
+      tempImagePaths.map((p) => unlink(p).catch(() => {})),
+    );
+  }
 }
 
 // EPUB validation. The plan named `epubcheck-wasm` but that package does not
