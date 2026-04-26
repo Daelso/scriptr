@@ -1,0 +1,73 @@
+name: CI
+
+# Runs on every PR and every push to main. The Release workflow only
+# fires on tag push or manual dispatch — by then a bad change has
+# already merged. CI is the gate that blocks the merge.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel in-flight runs when a newer commit lands on the same ref.
+# Saves minutes and gives faster feedback on the latest revision.
+# github.ref is GitHub-controlled (refs/heads/<branch> or
+# refs/pull/<n>/merge), not user input — safe to interpolate here.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Linux job: lint + typecheck + electron compile + Next build + tests.
+  # Comprehensive on the cheapest runner. This is the required check.
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck (Next/app tsconfig)
+        run: npm run typecheck
+
+      # Catches DOM/browser-type usage in lib/ that pollutes Electron's
+      # no-DOM tsconfig. The Release workflow's per-OS build job runs
+      # this too, but only on tag push or manual dispatch — by which
+      # time the bad code has already merged. Run it here on every PR.
+      - name: Compile Electron main process
+        run: npm run build:electron
+
+      - name: Next.js build
+        run: npm run build
+
+      - name: Tests
+        run: npm test
+
+  # Cross-platform typecheck + Electron compile. Lint/build/test don't
+  # vary by OS so they stay Linux-only above. This matrix exists to
+  # surface case-sensitivity bugs (ext4 hides them; APFS/NTFS surface
+  # them), path-separator regressions, and OS-specific tsc behavior
+  # before Release runs the heavyweight per-OS packaging job.
+  cross-platform:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Typecheck (Next/app tsconfig)
+        run: npm run typecheck
+      - name: Compile Electron main process
+        run: npm run build:electron
