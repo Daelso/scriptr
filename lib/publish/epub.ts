@@ -25,7 +25,11 @@ export {
   renderChapterPreviewHtml,
   type PreviewOpts,
 } from "@/lib/publish/epub-preview";
-import { renderChapterPreviewHtml, EPUB_STYLESHEET } from "@/lib/publish/epub-preview";
+import {
+  renderChapterPreviewHtml,
+  EPUB_STYLESHEET,
+  stripPreviewWrapper,
+} from "@/lib/publish/epub-preview";
 
 export type EpubInput = {
   story: Story;
@@ -160,14 +164,11 @@ export async function buildEpubBytes(input: EpubInput): Promise<Uint8Array> {
   const { story, chapters, coverPath, version = 3 } = input;
 
   const content = chapters.map((chapter, idx) => {
-    const inner = renderChapterPreviewHtml(chapter, { chapterNumber: idx + 1 });
-    // Strip the outer .epub-preview wrapper — not meaningful in the package XHTML.
-    const stripped = inner
-      .replace(/^<div class="epub-preview">/, "")
-      .replace(/<\/div>$/, "");
     return {
       title: chapter.title || `Chapter ${idx + 1}`,
-      content: stripped,
+      content: stripPreviewWrapper(
+        renderChapterPreviewHtml(chapter, { chapterNumber: idx + 1 })
+      ),
     };
   });
 
