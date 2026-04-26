@@ -101,9 +101,12 @@ export function renderStoryTitlePageHtml(title: string, description?: string): s
 }
 
 export function stripPreviewWrapper(html: string): string {
-  return html
-    .replace(/^<div class="epub-preview">/, "")
-    .replace(/<\/div>$/, "");
+  const prefix = '<div class="epub-preview">';
+  const suffix = "</div>";
+  if (html.startsWith(prefix) && html.endsWith(suffix)) {
+    return html.slice(prefix.length, html.length - suffix.length);
+  }
+  return html;
 }
 
 export function renderSectionHtml(content: string): string {
