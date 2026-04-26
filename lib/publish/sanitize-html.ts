@@ -2,11 +2,19 @@ import DOMPurify from "isomorphic-dompurify";
 import type { Config as DOMPurifyConfig } from "dompurify";
 
 /**
- * Attributes that carry URIs and must therefore be re-checked against
- * `ALLOWED_URI_REGEXP`. DOMPurify lets `data:` URIs through on its built-in
- * DATA_URI_TAGS (img/audio/video/source/image/track) regardless of
- * `ALLOWED_URI_REGEXP`, so we enforce it ourselves via a temporary
- * `uponSanitizeAttribute` hook.
+ * URI-bearing attributes that DOMPurify lets through on tags currently in
+ * `AUTHOR_NOTE_SANITIZE_OPTS.ALLOWED_TAGS`. The `uponSanitizeAttribute` hook
+ * re-checks these against `ALLOWED_URI_REGEXP` because DOMPurify's built-in
+ * DATA_URI_TAGS allowlist (img/audio/video/source/image/track) would
+ * otherwise let `data:` URIs through regardless of the regex.
+ *
+ * IMPORTANT: this set is scoped to URI-bearing attributes that the CURRENT
+ * allowlists (`AUTHOR_NOTE_SANITIZE_OPTS.ALLOWED_TAGS`) can produce. It is
+ * NOT an exhaustive list of every URI-bearing HTML attribute. When widening
+ * `ALLOWED_TAGS` (e.g. to include `<source>`, `<video>`, `<form>`,
+ * `<object>`, `<embed>`, `<iframe>`, ...), audit this set against the new
+ * tags' URI-bearing attributes (`srcset`, `poster`, `formaction`, `action`,
+ * `data`, `archive`, ...) and add anything missing.
  */
 export const URI_ATTRS = new Set([
   "src",

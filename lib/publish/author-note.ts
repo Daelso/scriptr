@@ -70,13 +70,14 @@ export async function buildAuthorNoteHtml(opts: {
   // reader) receive already-safe HTML. The reader's SafeHtml will sanitize
   // again on the client (defense in depth, idempotent); the EPUB build
   // path has no sanitizer of its own.
+  // Forward the full sanitize-opts object — including ALLOW_DATA_ATTR /
+  // ALLOW_ARIA_ATTR — so the server-side build matches what the reader's
+  // SafeHtml applies on the client. Spreading rather than cherry-picking
+  // keeps the two paths in lockstep when new defense-in-depth flags are
+  // added to AUTHOR_NOTE_SANITIZE_OPTS.
   return sanitizeWith(
     parts.join(""),
-    {
-      ALLOWED_TAGS: AUTHOR_NOTE_SANITIZE_OPTS.ALLOWED_TAGS,
-      ALLOWED_ATTR: AUTHOR_NOTE_SANITIZE_OPTS.ALLOWED_ATTR,
-      ALLOWED_URI_REGEXP: AUTHOR_NOTE_SANITIZE_OPTS.ALLOWED_URI_REGEXP,
-    },
+    { ...AUTHOR_NOTE_SANITIZE_OPTS },
     AUTHOR_NOTE_SANITIZE_OPTS.ALLOWED_URI_REGEXP,
   );
 }
