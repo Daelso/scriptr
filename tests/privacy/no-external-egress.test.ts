@@ -62,6 +62,8 @@
  *   GET  /api/bundles/[slug]
  *   PATCH /api/bundles/[slug]
  *   DELETE /api/bundles/[slug]
+ *   PUT  /api/bundles/[slug]/cover
+ *   DELETE /api/bundles/[slug]/cover
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -599,6 +601,44 @@ describe("no external egress from API routes", () => {
       const req = makeReq(`http://localhost/api/bundles/${bundleSlug}`);
       const res = await DELETE(req, ctx);
       expect(res.status).toBe(200);
+    }
+
+    // ── /api/bundles/[slug]/cover PUT + DELETE ─────────────────────────────
+    {
+      // Re-create a bundle for this exercise
+      const { POST: createBundleRoute } = await import("@/app/api/bundles/route");
+      const createRes = await createBundleRoute(
+        makeReq("http://localhost/api/bundles", {
+          method: "POST",
+          body: JSON.stringify({ title: "Cover Egress" }),
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      const coverSlug = (await createRes.json()).data.slug as string;
+      const ctx = { params: Promise.resolve({ slug: coverSlug }) };
+
+      const sharp = (await import("sharp")).default;
+      const jpegBytes = await sharp({
+        create: { width: 1600, height: 2560, channels: 3, background: { r: 80, g: 80, b: 80 } },
+      })
+        .jpeg({ quality: 85 })
+        .toBuffer();
+
+      const { PUT, DELETE } = await import("@/app/api/bundles/[slug]/cover/route");
+      const fd = new FormData();
+      fd.append("cover", new Blob([new Uint8Array(jpegBytes)], { type: "image/jpeg" }), "cover.jpg");
+      const putReq = new Request(`http://localhost/api/bundles/${coverSlug}/cover`, {
+        method: "PUT",
+        body: fd,
+      }) as unknown as NextRequest;
+      const putRes = await PUT(putReq, ctx);
+      expect(putRes.status).toBe(200);
+
+      const delReq = new Request(`http://localhost/api/bundles/${coverSlug}/cover`, {
+        method: "DELETE",
+      }) as unknown as NextRequest;
+      const delRes = await DELETE(delReq, ctx);
+      expect(delRes.status).toBe(200);
     }
 
     // ── The load-bearing assertion ─────────────────────────────────────────
