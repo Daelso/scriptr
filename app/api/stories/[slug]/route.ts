@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { ok, fail, readJson } from "@/lib/api";
+import { ok, fail, readJson, JsonParseError } from "@/lib/api";
 import {
   getStory,
   updateStory,
@@ -128,9 +128,17 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
 
 export async function PATCH(req: NextRequest, ctx: Ctx) {
   const { slug } = await ctx.params;
-  const body = await readJson<unknown>(req);
+  let body: unknown;
+  try {
+    body = await readJson<unknown>(req);
+  } catch (err) {
+    if (err instanceof JsonParseError) return fail(err.message, 400);
+    throw err;
+  }
+
   const parsed = parseStoryPatch(body);
   if (!parsed.ok) return fail(parsed.error, 400);
+
   try {
     const updated = await updateStory(effectiveDataDir(), slug, parsed.patch);
     return ok(updated);

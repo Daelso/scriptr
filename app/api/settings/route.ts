@@ -1,5 +1,5 @@
 import { type NextRequest } from "next/server";
-import { ok, readJson } from "@/lib/api";
+import { fail, JsonParseError, ok, readJson } from "@/lib/api";
 import {
   loadConfig,
   saveConfig,
@@ -72,9 +72,7 @@ const STYLE_BOOL_KEYS: StyleBooleanKey[] = [
   "onePOVPerScene",
 ];
 
-type ParseOk<T> = { ok: true; value: T };
-type ParseErr = { ok: false; error: string };
-type ParseResult<T> = ParseOk<T> | ParseErr;
+type ParseResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
 function parseStyleDefaults(value: unknown): ParseResult<StyleRules | undefined> {
   if (value === null) return { ok: true, value: undefined };
@@ -82,47 +80,49 @@ function parseStyleDefaults(value: unknown): ParseResult<StyleRules | undefined>
     return { ok: false, error: "styleDefaults must be an object" };
   }
   const out: StyleRules = {};
-  for (const key of STYLE_BOOL_KEYS) {
-    if (!hasOwn(value, key)) continue;
-    if (typeof value[key] !== "boolean") {
-      return { ok: false, error: `styleDefaults.${String(key)} must be a boolean` };
+  for (const [key, raw] of Object.entries(value)) {
+    if ((STYLE_BOOL_KEYS as string[]).includes(key)) {
+      if (typeof raw !== "boolean") {
+        return { ok: false, error: `styleDefaults.${key} must be a boolean` };
+      }
+      (out as Record<string, unknown>)[key] = raw;
+      continue;
     }
-    out[key] = value[key];
-  }
-  if (hasOwn(value, "tense")) {
-    if (value.tense !== "past" && value.tense !== "present") {
-      return { ok: false, error: "styleDefaults.tense must be 'past' or 'present'" };
+    if (key === "tense") {
+      if (raw !== "past" && raw !== "present") {
+        return { ok: false, error: "styleDefaults.tense must be 'past' or 'present'" };
+      }
+      out.tense = raw;
+      continue;
     }
-    out.tense = value.tense;
-  }
-  if (hasOwn(value, "explicitness")) {
-    if (
-      value.explicitness !== "fade"
-      && value.explicitness !== "suggestive"
-      && value.explicitness !== "explicit"
-      && value.explicitness !== "graphic"
-    ) {
-      return {
-        ok: false,
-        error: "styleDefaults.explicitness must be one of fade/suggestive/explicit/graphic",
-      };
+    if (key === "explicitness") {
+      if (raw !== "fade" && raw !== "suggestive" && raw !== "explicit" && raw !== "graphic") {
+        return {
+          ok: false,
+          error: "styleDefaults.explicitness must be one of fade/suggestive/explicit/graphic",
+        };
+      }
+      out.explicitness = raw;
+      continue;
     }
-    out.explicitness = value.explicitness;
-  }
-  if (hasOwn(value, "dialogueTags")) {
-    if (value.dialogueTags !== "prefer-said" && value.dialogueTags !== "vary") {
-      return { ok: false, error: "styleDefaults.dialogueTags must be 'prefer-said' or 'vary'" };
+    if (key === "dialogueTags") {
+      if (raw !== "prefer-said" && raw !== "vary") {
+        return { ok: false, error: "styleDefaults.dialogueTags must be 'prefer-said' or 'vary'" };
+      }
+      out.dialogueTags = raw;
+      continue;
     }
-    out.dialogueTags = value.dialogueTags;
-  }
-  if (hasOwn(value, "customRules")) {
-    if (value.customRules === null || value.customRules === undefined) {
-      // explicit null/undefined clears customRules
-    } else if (typeof value.customRules === "string") {
-      out.customRules = value.customRules;
-    } else {
-      return { ok: false, error: "styleDefaults.customRules must be a string" };
+    if (key === "customRules") {
+      if (raw === null || raw === undefined) {
+        continue;
+      }
+      if (typeof raw !== "string") {
+        return { ok: false, error: "styleDefaults.customRules must be a string" };
+      }
+      out.customRules = raw;
+      continue;
     }
+    return { ok: false, error: `styleDefaults contains unknown field: ${key}` };
   }
   return { ok: true, value: out };
 }
@@ -130,20 +130,32 @@ function parseStyleDefaults(value: unknown): ParseResult<StyleRules | undefined>
 function parseUpdates(value: unknown): ParseResult<UpdatesConfig | undefined> {
   if (value === null) return { ok: true, value: undefined };
   if (!isPlainObject(value)) return { ok: false, error: "updates must be an object" };
-  if (!hasOwn(value, "checkOnLaunch") || typeof value.checkOnLaunch !== "boolean") {
-    return { ok: false, error: "updates.checkOnLaunch must be a boolean" };
-  }
-  const out: UpdatesConfig = { checkOnLaunch: value.checkOnLaunch };
-  if (hasOwn(value, "lastCheckedAt")) {
-    if (value.lastCheckedAt === null || value.lastCheckedAt === undefined) {
-      // explicit clear
-    } else if (typeof value.lastCheckedAt === "string") {
-      out.lastCheckedAt = value.lastCheckedAt;
-    } else {
-      return { ok: false, error: "updates.lastCheckedAt must be a string" };
+  let checkOnLaunch: boolean | undefined;
+  let lastCheckedAt: string | undefined;
+  for (const [key, raw] of Object.entries(value)) {
+    if (key === "checkOnLaunch") {
+      if (typeof raw !== "boolean") {
+        return { ok: false, error: "updates.checkOnLaunch must be a boolean" };
+      }
+      checkOnLaunch = raw;
+      continue;
     }
+    if (key === "lastCheckedAt") {
+      if (raw === null || raw === undefined) {
+        continue;
+      }
+      if (typeof raw !== "string") {
+        return { ok: false, error: "updates.lastCheckedAt must be a string" };
+      }
+      lastCheckedAt = raw;
+      continue;
+    }
+    return { ok: false, error: `updates contains unknown field: ${key}` };
   }
-  return { ok: true, value: out };
+  if (checkOnLaunch === undefined) {
+    return { ok: false, error: "updates.checkOnLaunch is required when updates is provided" };
+  }
+  return { ok: true, value: { checkOnLaunch, lastCheckedAt } };
 }
 
 function parsePenNameProfiles(
@@ -171,6 +183,7 @@ function parsePenNameProfiles(
         return { ok: false, error: `penNameProfiles.${penName}.email must be a string` };
       }
     }
+
     if (hasOwn(raw, "mailingListUrl")) {
       if (raw.mailingListUrl === null || raw.mailingListUrl === undefined) {
         // clear
@@ -183,6 +196,7 @@ function parsePenNameProfiles(
         };
       }
     }
+
     if (hasOwn(raw, "defaultMessageHtml")) {
       if (raw.defaultMessageHtml === null || raw.defaultMessageHtml === undefined) {
         // clear
@@ -195,6 +209,7 @@ function parsePenNameProfiles(
         };
       }
     }
+
     out[penName] = profile;
   }
   return { ok: true, value: out };
@@ -218,64 +233,76 @@ export async function GET() {
 }
 
 export async function PUT(req: NextRequest) {
-  const body = await readJson<unknown>(req);
-  if (!isPlainObject(body)) {
-    return Response.json({ ok: false, error: "invalid settings payload" }, { status: 400 });
+  let body: unknown;
+  try {
+    body = await readJson<unknown>(req);
+  } catch (err) {
+    if (err instanceof JsonParseError) return fail(err.message, 400);
+    throw err;
   }
+
+  if (!isPlainObject(body)) {
+    return fail("request body must be an object", 400);
+  }
+
   const patch: Partial<Config> = {};
+
   if (hasOwn(body, "apiKey")) {
     if (body.apiKey === null || body.apiKey === "") {
       patch.apiKey = undefined;
     } else if (typeof body.apiKey === "string") {
       patch.apiKey = body.apiKey;
     } else {
-      return Response.json({ ok: false, error: "apiKey must be a string" }, { status: 400 });
+      return fail("apiKey must be a string", 400);
     }
   }
+
   if (hasOwn(body, "defaultModel")) {
-    if (typeof body.defaultModel !== "string") {
-      return Response.json({ ok: false, error: "defaultModel must be a string" }, { status: 400 });
+    if (typeof body.defaultModel !== "string" || body.defaultModel.trim() === "") {
+      return fail("defaultModel must be a non-empty string", 400);
     }
-    patch.defaultModel = body.defaultModel;
+    patch.defaultModel = body.defaultModel.trim();
   }
+
   if (hasOwn(body, "theme")) {
     if (body.theme !== "light" && body.theme !== "dark" && body.theme !== "system") {
-      return Response.json({ ok: false, error: "theme must be light/dark/system" }, { status: 400 });
+      return fail("theme must be 'light', 'dark', or 'system'", 400);
     }
     patch.theme = body.theme;
   }
+
   if (hasOwn(body, "autoRecap")) {
     if (typeof body.autoRecap !== "boolean") {
-      return Response.json({ ok: false, error: "autoRecap must be a boolean" }, { status: 400 });
+      return fail("autoRecap must be a boolean", 400);
     }
     patch.autoRecap = body.autoRecap;
   }
+
   if (hasOwn(body, "includeLastChapterFullText")) {
     if (typeof body.includeLastChapterFullText !== "boolean") {
-      return Response.json(
-        { ok: false, error: "includeLastChapterFullText must be a boolean" },
-        { status: 400 },
-      );
+      return fail("includeLastChapterFullText must be a boolean", 400);
     }
     patch.includeLastChapterFullText = body.includeLastChapterFullText;
   }
+
   if (hasOwn(body, "styleDefaults")) {
     const parsed = parseStyleDefaults(body.styleDefaults);
-    if (!parsed.ok) return Response.json(parsed, { status: 400 });
+    if (!parsed.ok) return fail(parsed.error, 400);
     patch.styleDefaults = parsed.value;
   }
+
   if (hasOwn(body, "updates")) {
     const parsed = parseUpdates(body.updates);
-    if (!parsed.ok) return Response.json(parsed, { status: 400 });
+    if (!parsed.ok) return fail(parsed.error, 400);
     patch.updates = parsed.value;
   }
+
   if (hasOwn(body, "penNameProfiles")) {
     const parsed = parsePenNameProfiles(body.penNameProfiles);
-    if (!parsed.ok) return Response.json(parsed, { status: 400 });
+    if (!parsed.ok) return fail(parsed.error, 400);
     patch.penNameProfiles = parsed.value;
   }
-  // Empty-string apiKey means clear
-  if (patch.apiKey === "") patch.apiKey = undefined;
+
   const next = await saveConfig(effectiveDataDir(), patch);
   return ok({ hasKey: Boolean(next.apiKey), keyPreview: mask(next.apiKey) });
 }

@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { ok, fail, readJson } from "@/lib/api";
+import { ok, fail, readJson, JsonParseError } from "@/lib/api";
 import { effectiveDataDir } from "@/lib/config";
 import {
   createStory,
@@ -7,7 +7,7 @@ import {
   deleteStory,
   getStory,
 } from "@/lib/storage/stories";
-import { createImportedChapter } from "@/lib/storage/chapters";
+import { createImportedChapter, deleteChapter } from "@/lib/storage/chapters";
 import { saveBible, validateBible } from "@/lib/storage/bible";
 import { cleanPaste, type CleanupOptions } from "@/lib/publish/cleanup";
 import type { Bible } from "@/lib/types";
@@ -52,7 +52,18 @@ type CommitRequest =
     };
 
 export async function POST(req: NextRequest) {
-  const body = await readJson<CommitRequest>(req);
+  let parsed: unknown;
+  try {
+    parsed = await readJson<unknown>(req);
+  } catch (err) {
+    if (err instanceof JsonParseError) return fail(err.message, 400);
+    throw err;
+  }
+
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return fail("request body must be an object", 400);
+  }
+  const body = parsed as CommitRequest;
 
   if (body.target === "new-story") {
     return handleNewStory(body);
@@ -165,6 +176,10 @@ async function handleExistingStory(
       chapterIds.push(created.id);
     }
   } catch (err) {
+    // Rollback: best-effort delete any chapters created in this request.
+    await Promise.allSettled(
+      chapterIds.map((id) => deleteChapter(dataDir, body.slug, id))
+    );
     const msg = err instanceof Error ? err.message : String(err);
     return fail(`Failed to write chapter files: ${msg}`, 500);
   }

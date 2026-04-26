@@ -18,7 +18,6 @@ export type Config = {
   apiKey?: string;
   defaultModel: string;
   bindHost: "127.0.0.1" | "0.0.0.0";
-  bindPort: number;
   theme: "light" | "dark" | "system";
   autoRecap: boolean;
   includeLastChapterFullText: boolean;
@@ -30,7 +29,6 @@ export type Config = {
 export const DEFAULT_CONFIG: Config = {
   defaultModel: process.env.SCRIPTR_DEFAULT_MODEL ?? "grok-4-latest",
   bindHost: "127.0.0.1",
-  bindPort: 3000,
   theme: "system",
   autoRecap: true,
   includeLastChapterFullText: false,
@@ -172,9 +170,6 @@ function normalizeConfigFromFile(value: unknown): Partial<Config> {
   if (value.bindHost === "127.0.0.1" || value.bindHost === "0.0.0.0") {
     out.bindHost = value.bindHost;
   }
-  if (typeof value.bindPort === "number" && Number.isInteger(value.bindPort) && value.bindPort > 0 && value.bindPort <= 65535) {
-    out.bindPort = value.bindPort;
-  }
   if (value.theme === "light" || value.theme === "dark" || value.theme === "system") {
     out.theme = value.theme;
   }
@@ -195,34 +190,34 @@ function normalizeConfigFromFile(value: unknown): Partial<Config> {
   return out;
 }
 
-export async function loadConfig(dataDir: string): Promise<Config> {
-  let parsed: unknown = {};
+async function readConfigFile(dataDir: string): Promise<Partial<Config>> {
   try {
     const raw = await readFile(join(dataDir, "config.json"), "utf8");
-    parsed = JSON.parse(raw);
+    const parsed = JSON.parse(raw) as unknown;
+    return normalizeConfigFromFile(parsed);
   } catch (err) {
-    // Missing or malformed config should not crash the app; fall back to defaults.
     const code = (err as NodeJS.ErrnoException).code;
     if (code !== "ENOENT" && !(err instanceof SyntaxError)) {
       throw err;
     }
+    return {};
   }
-  const fromFile = normalizeConfigFromFile(parsed);
+}
+
+function withEnvOverrides(cfg: Config): Config {
+  if (process.env.XAI_API_KEY) {
+    return { ...cfg, apiKey: process.env.XAI_API_KEY };
+  }
+  return cfg;
+}
+
+export async function loadConfig(dataDir: string): Promise<Config> {
+  const fromFile = await readConfigFile(dataDir);
   const merged: Config = {
-    defaultModel: fromFile.defaultModel ?? DEFAULT_CONFIG.defaultModel,
-    bindHost: fromFile.bindHost ?? DEFAULT_CONFIG.bindHost,
-    bindPort: fromFile.bindPort ?? DEFAULT_CONFIG.bindPort,
-    theme: fromFile.theme ?? DEFAULT_CONFIG.theme,
-    autoRecap: fromFile.autoRecap ?? DEFAULT_CONFIG.autoRecap,
-    includeLastChapterFullText:
-      fromFile.includeLastChapterFullText ?? DEFAULT_CONFIG.includeLastChapterFullText,
-    updates: fromFile.updates ?? DEFAULT_CONFIG.updates,
+    ...DEFAULT_CONFIG,
+    ...fromFile,
   };
-  if (fromFile.apiKey !== undefined) merged.apiKey = fromFile.apiKey;
-  if (fromFile.styleDefaults !== undefined) merged.styleDefaults = fromFile.styleDefaults;
-  if (fromFile.penNameProfiles !== undefined) merged.penNameProfiles = fromFile.penNameProfiles;
-  if (process.env.XAI_API_KEY) merged.apiKey = process.env.XAI_API_KEY;
-  return merged;
+  return withEnvOverrides(merged);
 }
 
 function mergeConfig(current: Config, partial: Partial<Config>): Config {
@@ -233,9 +228,6 @@ function mergeConfig(current: Config, partial: Partial<Config>): Config {
   }
   if (hasOwn(partial, "bindHost") && partial.bindHost !== undefined) {
     next.bindHost = partial.bindHost;
-  }
-  if (hasOwn(partial, "bindPort") && partial.bindPort !== undefined) {
-    next.bindPort = partial.bindPort;
   }
   if (hasOwn(partial, "theme") && partial.theme !== undefined) {
     next.theme = partial.theme;
@@ -265,10 +257,13 @@ export async function saveConfig(dataDir: string, partial: Partial<Config>): Pro
   await mkdir(dataDir, { recursive: true });
   const configPath = join(dataDir, "config.json");
   return withPathLock(configPath, async () => {
-    const current = await loadConfig(dataDir);
+    // Read file-backed config directly (without env overlays) so we never
+    // accidentally persist env-only secrets (e.g. XAI_API_KEY) to disk.
+    const currentFromFile = await readConfigFile(dataDir);
+    const current: Config = { ...DEFAULT_CONFIG, ...currentFromFile };
     const next = mergeConfig(current, partial);
     await writeJsonAtomic(configPath, next);
-    return next;
+    return withEnvOverrides(next);
   });
 }
 
