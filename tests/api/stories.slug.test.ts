@@ -194,4 +194,66 @@ describe("/api/stories/[slug]", () => {
     expect(body.ok).toBe(false);
     expect(body.error).toBe("story not found");
   });
+
+  // 9. PATCH authorNote round-trips via GET
+  it("PATCH accepts authorNote and round-trips it via GET", async () => {
+    const story = await seedStory("Test");
+    const patchRes = await callPatch(story.slug, {
+      authorNote: { enabled: true, messageHtml: "<p>hi</p>" },
+    });
+    expect(patchRes.status).toBe(200);
+    expect((await patchRes.json()).ok).toBe(true);
+
+    const getRes = await callGet(story.slug);
+    const body = await getRes.json();
+    expect(body.data.authorNote).toEqual({ enabled: true, messageHtml: "<p>hi</p>" });
+  });
+
+  // 10. PATCH authorNote with enabled=false alone persists
+  it("PATCH accepts authorNote.enabled=false alone and persists it", async () => {
+    const story = await seedStory("Test 2");
+    const res = await callPatch(story.slug, {
+      authorNote: { enabled: false },
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).ok).toBe(true);
+
+    const getRes = await callGet(story.slug);
+    const body = await getRes.json();
+    expect(body.data.authorNote).toEqual({ enabled: false });
+  });
+
+  it("PATCH rejects authorNote.enabled with non-boolean values", async () => {
+    const story = await seedStory("Invalid Author Note");
+    const res = await callPatch(story.slug, {
+      authorNote: { enabled: "yes" },
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/enabled must be a boolean/i);
+  });
+
+  it("PATCH rejects authorNote.messageHtml when not a string", async () => {
+    const story = await seedStory("Invalid Message");
+    const res = await callPatch(story.slug, {
+      authorNote: { enabled: true, messageHtml: 42 },
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/messageHtml must be a string/i);
+  });
+
+  it("PATCH accepts authorNote: null to clear an existing note override", async () => {
+    const story = await seedStory("Clear Author Note");
+    await callPatch(story.slug, {
+      authorNote: { enabled: true, messageHtml: "<p>hi</p>" },
+    });
+    const clearRes = await callPatch(story.slug, { authorNote: null });
+    expect(clearRes.status).toBe(200);
+    const getRes = await callGet(story.slug);
+    const body = await getRes.json();
+    expect(body.data.authorNote).toBeUndefined();
+  });
 });

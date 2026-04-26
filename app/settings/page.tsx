@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { SettingsForm } from "@/components/settings/SettingsForm";
 import { PrivacyPanel } from "@/components/settings/PrivacyPanel";
+import { PenNameProfilesContainer } from "@/components/settings/PenNameProfilesContainer";
 import { Separator } from "@/components/ui/separator";
 
 export const metadata = {
@@ -15,6 +16,10 @@ export default function SettingsPage() {
       <Suspense fallback={null}>
         <SettingsForm />
       </Suspense>
+      <div className="my-10">
+        <Separator />
+      </div>
+      <PenNameProfilesContainer />
       <div className="my-10">
         <Separator />
       </div>

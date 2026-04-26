@@ -119,4 +119,47 @@ describe("config — updates settings", () => {
     const loaded = await loadConfig(dir);
     expect(loaded.updates?.lastCheckedAt).toBe(ts);
   });
+
+  it("round-trips penNameProfiles through saveConfig/loadConfig", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "scriptr-config-"));
+    try {
+      await saveConfig(dir, {
+        penNameProfiles: {
+          "Jane Doe": {
+            email: "jane@example.com",
+            mailingListUrl: "https://list.example.com/jane",
+            defaultMessageHtml: "<p>Thanks!</p>",
+          },
+        },
+      });
+      const loaded = await loadConfig(dir);
+      expect(loaded.penNameProfiles).toEqual({
+        "Jane Doe": {
+          email: "jane@example.com",
+          mailingListUrl: "https://list.example.com/jane",
+          defaultMessageHtml: "<p>Thanks!</p>",
+        },
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("serializes concurrent saveConfig calls so fields are not lost", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "scriptr-config-race-"));
+    try {
+      for (let i = 0; i < 20; i += 1) {
+        await saveConfig(dir, { theme: "system", defaultModel: "grok-4-latest" });
+        await Promise.all([
+          saveConfig(dir, { theme: "dark" }),
+          saveConfig(dir, { defaultModel: `grok-4-fast-${i}` }),
+        ]);
+        const loaded = await loadConfig(dir);
+        expect(loaded.theme).toBe("dark");
+        expect(loaded.defaultModel).toBe(`grok-4-fast-${i}`);
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });

@@ -13,6 +13,7 @@ export type Story = {
   updatedAt: string;
   chapterOrder: string[];
   modelOverride?: string;
+  authorNote?: { enabled: boolean; messageHtml?: string };
 };
 
 export type Character = {

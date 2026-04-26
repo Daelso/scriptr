@@ -151,3 +151,37 @@
   outline-offset: 4px;
   border-radius: 2px;
 }
+
+/* Author note (web reader).
+ *
+ * The note HTML is built by `buildAuthorNoteHtml` and rendered into the
+ * reader page via the SafeHtml component (DOMPurify-sanitized). The EPUB
+ * build has its own stylesheet (lib/publish/epub-preview.ts::EPUB_STYLESHEET)
+ * with hex literals — EPUB readers control their own theming so we keep that
+ * file's hex values. On the web we use the shadcn tokens so dark mode works.
+ */
+.author-note {
+  margin-top: 3em;
+  border-top: 1px solid var(--border);
+  padding-top: 2em;
+}
+.author-note h2 {
+  text-align: center;
+  margin-bottom: 1.2em;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+.author-note-message {
+  margin-bottom: 1.5em;
+}
+.author-note-footer {
+  text-align: center;
+  font-size: 0.95em;
+  color: var(--muted-foreground);
+}
+.author-note-footer img {
+  display: block;
+  margin: 0.5em auto;
+  max-width: 100%;
+  height: auto;
+}
