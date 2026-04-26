@@ -105,6 +105,10 @@ A `BundleStoryRef` whose `storySlug` no longer exists in `data/stories/` is trea
 - The build pipeline drops the entry and emits a build-time warning (surfaced in the success envelope alongside EPUBcheck warnings).
 - Deleting a story does **not** cascade-delete refs from bundles. The bundle owner decides whether to remove or replace.
 
+**Write-time validation:** `POST /api/bundles` and `PATCH /api/bundles/[slug]` do **not** verify that referenced story slugs exist. Validation happens only at build time. This keeps the storage layer pure and matches the design that a story can disappear and reappear (e.g., user temporarily moves `data/stories/`) without breaking bundle JSON.
+
+**`BundleSummary.storyCount`** counts **all refs**, including currently-missing ones. The UI separately badges missing rows so the user sees both the configured count and the currently-resolvable count.
+
 ## Build pipeline
 
 New module [lib/publish/epub-bundle.ts](../../lib/publish/epub-bundle.ts), sibling to [lib/publish/epub.ts](../../lib/publish/epub.ts).
@@ -152,8 +156,8 @@ Then the same `epub-gen-memory` call shape as `buildEpubBytes` in [lib/publish/e
 
 ### New helpers in `lib/publish/epub-preview.ts`
 
-- `renderStoryTitlePageHtml(title: string, description?: string): string` — returns a `<section class="story-title-page">` with centered `<h1>` and optional `<p>` description block. Description is omitted entirely when neither override nor source provides one.
-- `stripPreviewWrapper(html: string): string` — pulls out the `<div class="epub-preview">` wrapper. Used by both the single-story builder and the bundle builder; replace the inline `.replace()` calls in `buildEpubBytes` with a call to this helper to dedupe.
+- `renderStoryTitlePageHtml(title: string, description?: string): string` — returns a `<section class="story-title-page">` with centered `<h1>` and optional `<p>` description block. The description block is rendered **only when the trimmed description is non-empty** — `Story.description` is typed `string` (not optional), so empty-string and whitespace-only must be treated as "absent" or the title page renders an empty paragraph.
+- `stripPreviewWrapper(html: string): string` — pulls out the `<div class="epub-preview">` wrapper. Used by both the single-story builder and the bundle builder; replace the inline `.replace()` calls in `buildEpubBytes` with a call to this helper to dedupe. After this dedup, run the existing single-story EPUB tests to confirm parity.
 
 `EPUB_STYLESHEET` gains a rule for `.story-title-page { page-break-before: always; text-align: center; }` and styling for the inner `<h1>` / `<p>` to give the title page a clean visual treatment in supporting readers.
 
@@ -178,7 +182,7 @@ All under [app/api/bundles/](../../app/api/bundles/). Each is a thin adapter fol
 | `/api/bundles/[slug]` | `DELETE` | Recursive remove of `data/bundles/<slug>/`. |
 | `/api/bundles/[slug]/cover` | `PUT` | Multipart upload, mirrors `/api/stories/[slug]/cover`. |
 | `/api/bundles/[slug]/cover` | `DELETE` | Remove cover. |
-| `/api/bundles/[slug]/preview` | `GET` | Returns `{ stories: Array<{ storySlug, displayTitle, titlePageHtml, chapters: Array<{ title, html }>, missing?: true }> }` for the TOC outline preview. |
+| `/api/bundles/[slug]/preview` | `GET` | Returns `{ bundle: { title, authorPenName, description }, stories: Array<{ storySlug, displayTitle, titlePageHtml, chapters: Array<{ title, html }>, missing?: true }> }` for the TOC outline preview. The root `bundle` block is consumed only by the tree's root label — there is no bundle-level title page in the EPUB itself; bundle metadata lives in the EPUB's package metadata. |
 | `/api/bundles/[slug]/export/epub?version=2\|3` | `POST` | Build, validate, write to `exports/`, return `{ path, bytes, warnings, version }`. Mirrors `/api/stories/[slug]/export/epub`. |
 
 ### Error envelopes
@@ -202,7 +206,7 @@ Two-column layout.
 **Left column — bundle config + story list:**
 
 - Bundle metadata fields (title, author pen name, description, language) using the same blur-to-save pattern as [components/publish/ExportPage.tsx](../../components/publish/ExportPage.tsx).
-- Cover upload (reuses the same component shape as story cover; calls `/api/bundles/[slug]/cover`).
+- Cover upload — same UI pattern as story cover in [components/publish/ExportPage.tsx](../../components/publish/ExportPage.tsx) (inline `<input type="file" ref>`, button-triggered, multipart PUT). Not a shared React component; just the same shape duplicated. Calls `/api/bundles/[slug]/cover`.
 - Story list: ordered, drag-to-reorder. Each row shows the source story's title (or its `titleOverride`), a "missing story" badge if the slug doesn't resolve, an inline edit toggle for `titleOverride` / `descriptionOverride`, and a remove button.
 - "Add story…" button opens a dialog listing all stories not already in the bundle, with multi-select.
 - EPUB version toggle (3 / 2) and Build button — same component pattern as `ExportPage`'s `onToggleKeyDown` keyboard handling and `lastBuildByVersion` state.
