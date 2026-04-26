@@ -4,6 +4,7 @@ import { ok, fail } from "@/lib/api";
 import { getBundle } from "@/lib/storage/bundles";
 import { getStory } from "@/lib/storage/stories";
 import { listChapters } from "@/lib/storage/chapters";
+import { isValidSlugSegment } from "@/lib/slug";
 import { effectiveDataDir, loadConfig } from "@/lib/config";
 import { buildBundleEpubBytes, type ResolvedStory } from "@/lib/publish/epub-bundle";
 import { validateEpub } from "@/lib/publish/epub";
@@ -16,6 +17,12 @@ import {
 } from "@/lib/storage/paths";
 
 type Ctx = { params: Promise<{ slug: string }> };
+
+type StoryResolutionResult =
+  | { kind: "invalid-slug"; storySlug: string }
+  | { kind: "missing-story"; storySlug: string }
+  | { kind: "no-chapters"; storySlug: string }
+  | { kind: "ok"; storySlug: string; resolved: ResolvedStory };
 
 export async function POST(req: NextRequest, ctx: Ctx) {
   const { slug } = await ctx.params;
@@ -49,16 +56,46 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     return fail("bundle has no stories", 400);
   }
 
+  const resolutionResults = await Promise.all(
+    bundle.stories.map(async (ref): Promise<StoryResolutionResult> => {
+      if (!isValidSlugSegment(ref.storySlug)) {
+        return { kind: "invalid-slug", storySlug: ref.storySlug };
+      }
+
+      const story = await getStory(dataDir, ref.storySlug);
+      if (!story) {
+        return { kind: "missing-story", storySlug: ref.storySlug };
+      }
+
+      const chapters = await listChapters(dataDir, ref.storySlug);
+      if (chapters.length === 0) {
+        return { kind: "no-chapters", storySlug: ref.storySlug };
+      }
+
+      return {
+        kind: "ok",
+        storySlug: ref.storySlug,
+        resolved: { story, chapters },
+      };
+    }),
+  );
+
   const resolved = new Map<string, ResolvedStory>();
   const warnings: string[] = [];
-  for (const ref of bundle.stories) {
-    const story = await getStory(dataDir, ref.storySlug);
-    if (!story) {
-      warnings.push(`Missing story: ${ref.storySlug} (omitted from build)`);
+  for (const result of resolutionResults) {
+    if (result.kind === "ok") {
+      resolved.set(result.storySlug, result.resolved);
       continue;
     }
-    const chapters = await listChapters(dataDir, ref.storySlug);
-    resolved.set(ref.storySlug, { story, chapters });
+    if (result.kind === "invalid-slug") {
+      warnings.push(`Invalid story slug: ${result.storySlug} (omitted from build)`);
+      continue;
+    }
+    if (result.kind === "missing-story") {
+      warnings.push(`Missing story: ${result.storySlug} (omitted from build)`);
+      continue;
+    }
+    warnings.push(`Story has no chapters: ${result.storySlug} (omitted from build)`);
   }
 
   if (resolved.size === 0) {

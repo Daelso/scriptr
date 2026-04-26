@@ -3,6 +3,7 @@ import { ok, fail } from "@/lib/api";
 import { getBundle } from "@/lib/storage/bundles";
 import { getStory } from "@/lib/storage/stories";
 import { listChapters } from "@/lib/storage/chapters";
+import { isValidSlugSegment } from "@/lib/slug";
 import {
   renderStoryTitlePageHtml,
   renderChapterPreviewHtml,
@@ -27,29 +28,34 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
   const bundle = await getBundle(dataDir, slug);
   if (!bundle) return fail("bundle not found", 404);
 
-  const stories: PreviewStory[] = [];
-  for (const ref of bundle.stories) {
-    const story = await getStory(dataDir, ref.storySlug);
-    if (!story) {
-      stories.push({ storySlug: ref.storySlug, missing: true });
-      continue;
-    }
-    const chapters = await listChapters(dataDir, ref.storySlug);
-    const displayTitle = ref.titleOverride ?? story.title;
-    const displayDescription = ref.descriptionOverride ?? story.description;
-    stories.push({
-      storySlug: ref.storySlug,
-      displayTitle,
-      titlePageHtml: renderStoryTitlePageHtml(displayTitle, displayDescription),
-      chapters: chapters.map((chapter, idx) => ({
-        id: chapter.id,
-        title: chapter.title || `Chapter ${idx + 1}`,
-        html: stripPreviewWrapper(
-          renderChapterPreviewHtml(chapter, { chapterNumber: idx + 1 }),
-        ),
-      })),
-    });
-  }
+  const stories = await Promise.all(
+    bundle.stories.map(async (ref): Promise<PreviewStory> => {
+      if (!isValidSlugSegment(ref.storySlug)) {
+        return { storySlug: ref.storySlug, missing: true };
+      }
+
+      const story = await getStory(dataDir, ref.storySlug);
+      if (!story) {
+        return { storySlug: ref.storySlug, missing: true };
+      }
+
+      const chapters = await listChapters(dataDir, ref.storySlug);
+      const displayTitle = ref.titleOverride ?? story.title;
+      const displayDescription = ref.descriptionOverride ?? story.description;
+      return {
+        storySlug: ref.storySlug,
+        displayTitle,
+        titlePageHtml: renderStoryTitlePageHtml(displayTitle, displayDescription),
+        chapters: chapters.map((chapter, idx) => ({
+          id: chapter.id,
+          title: chapter.title || `Chapter ${idx + 1}`,
+          html: stripPreviewWrapper(
+            renderChapterPreviewHtml(chapter, { chapterNumber: idx + 1 }),
+          ),
+        })),
+      };
+    }),
+  );
 
   return ok({
     bundle: {

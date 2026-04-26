@@ -109,6 +109,62 @@ describe("POST /api/bundles/[slug]/export/epub", () => {
     expect(warnings.some((w) => w.includes("ghost-2"))).toBe(true);
   });
 
+  it("omits zero-chapter refs from the build and emits a warning", async () => {
+    const emptyStory = await createStory(tmpDir, { title: "Empty Story" });
+    const realStory = await createStory(tmpDir, { title: "Real Story" });
+    await createImportedChapter(tmpDir, realStory.slug, {
+      title: "C1",
+      sectionContents: ["chapter body"],
+    });
+
+    const b = await createBundle(tmpDir, { title: "Mixed chapters" });
+    await updateBundle(tmpDir, b.slug, {
+      stories: [{ storySlug: emptyStory.slug }, { storySlug: realStory.slug }],
+    });
+
+    const res = await callPost(b.slug);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const warnings = body.data.warnings as string[];
+    expect(warnings.some((w) => w.includes(`Story has no chapters: ${emptyStory.slug}`))).toBe(
+      true,
+    );
+  });
+
+  it("400s when all resolvable refs have zero chapters", async () => {
+    const emptyStory = await createStory(tmpDir, { title: "No Chapters Yet" });
+    const b = await createBundle(tmpDir, { title: "Only empty refs" });
+    await updateBundle(tmpDir, b.slug, {
+      stories: [{ storySlug: emptyStory.slug }],
+    });
+
+    const res = await callPost(b.slug);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("bundle has no resolvable stories");
+  });
+
+  it("omits invalid storySlug refs (path traversal) and emits a warning", async () => {
+    const realStory = await createStory(tmpDir, { title: "Real Story" });
+    await createImportedChapter(tmpDir, realStory.slug, {
+      title: "C1",
+      sectionContents: ["chapter body"],
+    });
+
+    const b = await createBundle(tmpDir, { title: "Traversal guard" });
+    // Intentionally bypass API validation to simulate a legacy/malformed
+    // bundle.json already on disk.
+    await updateBundle(tmpDir, b.slug, {
+      stories: [{ storySlug: "../etc" }, { storySlug: realStory.slug }],
+    });
+
+    const res = await callPost(b.slug);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const warnings = body.data.warnings as string[];
+    expect(warnings.some((w) => w.includes("Invalid story slug: ../etc"))).toBe(true);
+  });
+
   it("400 on invalid version value", async () => {
     const b = await createBundle(tmpDir, { title: "X" });
     const res = await callPost(b.slug, { version: 5 });

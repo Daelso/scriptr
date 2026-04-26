@@ -28,6 +28,7 @@ export async function buildBundleEpubBytes(input: BundleEpubInput): Promise<Uint
   for (const ref of bundle.stories) {
     const resolved = stories.get(ref.storySlug);
     if (!resolved) continue;
+    if (resolved.chapters.length === 0) continue;
 
     const displayTitle = ref.titleOverride ?? resolved.story.title;
     const displayDescription = ref.descriptionOverride ?? resolved.story.description;

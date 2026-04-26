@@ -93,4 +93,20 @@ describe("GET /api/bundles/[slug]/preview", () => {
     const body = await res.json();
     expect(body.data.stories[0]).toEqual({ storySlug: "ghost-story", missing: true });
   });
+
+  it("marks invalid storySlug refs as missing without filesystem traversal", async () => {
+    const b = await createBundle(tmpDir, { title: "B" });
+    // Intentionally bypass API validation to simulate legacy malformed data.
+    await updateBundle(tmpDir, b.slug, {
+      stories: [{ storySlug: "../etc" }],
+    });
+
+    const { GET } = await import("@/app/api/bundles/[slug]/preview/route");
+    const req = new Request(`http://localhost/api/bundles/${b.slug}/preview`) as unknown as NextRequest;
+    const ctx = { params: Promise.resolve({ slug: b.slug }) };
+    const res = await GET(req, ctx);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.stories[0]).toEqual({ storySlug: "../etc", missing: true });
+  });
 });

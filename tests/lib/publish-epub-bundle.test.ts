@@ -177,6 +177,20 @@ describe("buildBundleEpubBytes", () => {
     expect(text).not.toContain("missing-story");
   });
 
+  it("skips refs that resolve to zero chapters (no orphan title page)", async () => {
+    const stories = new Map([
+      ["story-a", { story: story("story-a", "Zero"), chapters: [] }],
+      ["story-b", { story: story("story-b", "Real"), chapters: [chapter("c1", "x")] }],
+    ]);
+    const bytes = await buildBundleEpubBytes({
+      bundle: bundle([{ storySlug: "story-a" }, { storySlug: "story-b" }]),
+      stories,
+    });
+    const text = await readAllText(bytes);
+    expect(text).toContain("Real");
+    expect(text).not.toContain(">Zero<");
+  });
+
   it("handles missing coverPath without crashing", async () => {
     const stories = new Map([
       ["story-a", { story: story("story-a", "X"), chapters: [chapter("c1", "y")] }],

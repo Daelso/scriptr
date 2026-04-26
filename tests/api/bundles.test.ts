@@ -148,6 +148,23 @@ describe("/api/bundles/[slug]", () => {
     expect(body.data.stories[0].titleOverride).toBe("Book One");
   });
 
+  it("PATCH rejects invalid storySlug values", async () => {
+    const created = await createBundle(process.env.SCRIPTR_DATA_DIR!, { title: "Pat" });
+    const { PATCH } = await import("@/app/api/bundles/[slug]/route");
+    const req = makeReq(`http://localhost/api/bundles/${created.slug}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        stories: [{ storySlug: "../etc/passwd" }],
+      }),
+      headers: { "content-type": "application/json" },
+    });
+    const ctx = { params: Promise.resolve({ slug: created.slug }) };
+    const res = await PATCH(req, ctx);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("storySlug is invalid");
+  });
+
   it("PATCH ignores unknown fields", async () => {
     const created = await createBundle(process.env.SCRIPTR_DATA_DIR!, { title: "Filter" });
     const { PATCH } = await import("@/app/api/bundles/[slug]/route");

@@ -85,6 +85,12 @@ describe("renderSectionHtml (transformer)", () => {
     expect(html).toContain('<div class="scene-break">* * *</div>');
   });
 
+  it("escapes quote/apostrophe/slash for safer future attribute-context reuse", () => {
+    const html = renderStoryTitlePageHtml(`A "quote" / O'Hara <x>`, `D / "q" 'a'`);
+    expect(html).toContain("A &quot;quote&quot; &#x2F; O&#39;Hara &lt;x&gt;");
+    expect(html).toContain("D &#x2F; &quot;q&quot; &#39;a&#39;");
+  });
+
   it("collapses single newlines within a paragraph to spaces", () => {
     const html = renderChapterPreviewHtml(
       chapterWith(["line one\nline two\n\nnew para."])
