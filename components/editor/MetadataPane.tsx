@@ -245,13 +245,6 @@ function InnerPane({ slug, chapterId, data, mutate, mutateList }: InnerPaneProps
           mutate={mutate}
           mutateList={mutateList}
         />
-
-        {/*
-          Story-level card — does NOT remount on chapter switch. The container
-          owns its own SWR+autosave; the chapter-keyed cards above are
-          unaffected.
-        */}
-        <AuthorNoteContainer slug={slug} />
       </div>
     </div>
   );
@@ -276,37 +269,58 @@ export function MetadataPane({ slug, chapterId }: MetadataPaneProps) {
     [globalMutate, listKey],
   );
 
+  // Story-level Author Note section is rendered above the chapter-keyed
+  // cards so brand-new (chapterless) stories can still configure it. The
+  // container owns its own SWR+autosave; chapter switches do not remount it.
+  const authorNoteSection = (
+    <div className="border-t border-border px-4 py-4">
+      <AuthorNoteContainer slug={slug} />
+    </div>
+  );
+
   if (chapterId === null) {
     return (
-      <div className="flex h-full items-center justify-center p-4">
-        <p className="text-xs text-muted-foreground">No chapter selected.</p>
+      <div className="flex h-full flex-col">
+        <div className="flex items-center justify-center p-4">
+          <p className="text-xs text-muted-foreground">No chapter selected.</p>
+        </div>
+        {authorNoteSection}
       </div>
     );
   }
 
   if (isLoading) {
     return (
-      <div className="flex h-full items-center justify-center p-4">
-        <p className="text-xs text-muted-foreground">Loading…</p>
+      <div className="flex h-full flex-col">
+        <div className="flex items-center justify-center p-4">
+          <p className="text-xs text-muted-foreground">Loading…</p>
+        </div>
+        {authorNoteSection}
       </div>
     );
   }
 
   if (error || !data) {
     return (
-      <div className="flex h-full items-center justify-center p-4">
-        <p className="text-xs text-muted-foreground">Chapter not found.</p>
+      <div className="flex h-full flex-col">
+        <div className="flex items-center justify-center p-4">
+          <p className="text-xs text-muted-foreground">Chapter not found.</p>
+        </div>
+        {authorNoteSection}
       </div>
     );
   }
 
   return (
-    <InnerPane
-      slug={slug}
-      chapterId={chapterId}
-      data={data}
-      mutate={mutate}
-      mutateList={mutateList}
-    />
+    <div className="flex flex-col">
+      <InnerPane
+        slug={slug}
+        chapterId={chapterId}
+        data={data}
+        mutate={mutate}
+        mutateList={mutateList}
+      />
+      {authorNoteSection}
+    </div>
   );
 }
