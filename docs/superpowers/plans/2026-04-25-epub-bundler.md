@@ -31,8 +31,9 @@
 | `lib/storage/paths.ts` | modify | Add `bundlesDir`, `bundleDir`, `bundleFile`, `bundleCoverPath`, `bundleExportsDir`, `bundleEpubPath` helpers |
 | `lib/storage/bundles.ts` | **new** | Pure disk I/O for bundles: list/read/write/create/delete |
 | `lib/publish/epub-preview.ts` | modify | Export `renderStoryTitlePageHtml`, `stripPreviewWrapper`; extend `EPUB_STYLESHEET` with `.story-title-page` rules |
-| `lib/publish/epub.ts` | modify | Replace inline `.replace()` wrapper-strip with the shared `stripPreviewWrapper` helper (no behavior change) |
-| `lib/publish/epub-bundle.ts` | **new** | `buildBundleEpubBytes(input)` — assembles synthetic chapter list and calls `epub-gen-memory` |
+| `lib/publish/epub.ts` | modify | Replace inline `.replace()` wrapper-strip with shared `stripPreviewWrapper`; extract author-note append + `externalizeDataPngImages` as exported helpers (no behavior change) |
+| `lib/publish/author-note.ts` | modify | Add `resolveBundleAuthorNote(profile)` — resolves `ResolvedAuthorNote` from a pen-name profile alone (no Story override) |
+| `lib/publish/epub-bundle.ts` | **new** | `buildBundleEpubBytes(input)` — assembles synthetic chapter list, optionally appends bundle-level author note, calls `epub-gen-memory` |
 | `app/api/bundles/route.ts` | **new** | `GET` (list) + `POST` (create) |
 | `app/api/bundles/[slug]/route.ts` | **new** | `GET` + `PATCH` + `DELETE` |
 | `app/api/bundles/[slug]/cover/route.ts` | **new** | `PUT` (multipart upload) + `DELETE` |
@@ -796,13 +797,230 @@ git add lib/publish/epub.ts
 git commit -m "refactor(epub): use shared stripPreviewWrapper helper"
 ```
 
-### Task 2.3: Implement `lib/publish/epub-bundle.ts`
+### Task 2.3: Extract author-note append + `externalizeDataPngImages` as exported helpers in `epub.ts`
+
+**Files:**
+- Modify: `lib/publish/epub.ts`
+- Test: existing `tests/lib/publish-epub.test.ts` covers `buildEpubBytes` byte-level output already; the existing tests must continue to pass.
+
+The bundle builder needs the same author-note append + QR post-processing logic the single-story builder has. Rather than duplicate it, extract it from `buildEpubBytes` into exported helpers that both builders call.
+
+- [ ] **Step 1: Read the current `buildEpubBytes` implementation in `lib/publish/epub.ts`**
+
+The relevant block is the `if (input.authorNote)` body inside the `try { … } finally { /* cleanup tempImagePaths */ }` (search for `buildAuthorNoteHtml`). It calls `buildAuthorNoteHtml`, then `externalizeDataPngImages`, then pushes a `{ title: "A note from the author", content }` entry onto the local `content` array, accumulating temp PNG paths into `tempImagePaths` for outer-scope cleanup.
+
+- [ ] **Step 2: Export `externalizeDataPngImages` from `epub.ts`**
+
+It is currently a module-private function. Change `function externalizeDataPngImages(...)` to `export function externalizeDataPngImages(...)`. No callers outside the module currently — the export is for the bundle builder's `finally` cleanup.
+
+- [ ] **Step 3: Add an exported `appendAuthorNoteContent` helper**
+
+Below the existing `externalizeDataPngImages` definition, add:
+
+```ts
+import type { ResolvedAuthorNote } from "@/lib/publish/author-note";
+
+/**
+ * Append the author-note entry to a content array. Used by both the
+ * single-story builder and the bundle builder. Pushes any temp PNG file
+ * paths onto `tempImagePaths` so the caller's `finally` block can clean
+ * them up regardless of whether the generator throws.
+ */
+export async function appendAuthorNoteContent(
+  content: Array<{ title: string; content: string }>,
+  authorNote: ResolvedAuthorNote,
+  tempImagePaths: string[],
+): Promise<void> {
+  const noteHtml = await buildAuthorNoteHtml(authorNote);
+  const { html: rewritten, tempPaths } = await externalizeDataPngImages(noteHtml);
+  tempImagePaths.push(...tempPaths);
+  content.push({
+    title: "A note from the author",
+    content: rewritten,
+  });
+}
+```
+
+(`ResolvedAuthorNote` is already imported from `@/lib/publish/author-note` at the top of the file — verify and reuse the existing import; do not add a duplicate.)
+
+- [ ] **Step 4: Replace the inline block in `buildEpubBytes` with the helper call**
+
+Inside the `try { … }` block of `buildEpubBytes`, replace:
+
+```ts
+if (input.authorNote) {
+  const noteHtml = await buildAuthorNoteHtml(input.authorNote);
+  const { html: rewritten, tempPaths } = await externalizeDataPngImages(noteHtml);
+  tempImagePaths.push(...tempPaths);
+  content.push({
+    title: "A note from the author",
+    content: rewritten,
+  });
+}
+```
+
+With:
+
+```ts
+if (input.authorNote) {
+  await appendAuthorNoteContent(content, input.authorNote, tempImagePaths);
+}
+```
+
+- [ ] **Step 5: Run all the existing single-story EPUB tests + author-note tests**
+
+Run: `npx vitest run tests/lib/publish-epub.test.ts tests/lib/publish-epub-smoke.test.ts tests/lib/publish-epub-storage.test.ts tests/lib/publish-author-note.test.ts`
+Expected: all PASS — byte-level single-story output unchanged. The refactor is purely structural.
+
+- [ ] **Step 6: Run typecheck + lint**
+
+Run: `npm run typecheck && npm run lint`
+Expected: PASS.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add lib/publish/epub.ts
+git commit -m "refactor(epub): extract appendAuthorNoteContent + export externalizeDataPngImages"
+```
+
+### Task 2.4: Add `resolveBundleAuthorNote` helper in `lib/publish/author-note.ts`
+
+**Files:**
+- Modify: `lib/publish/author-note.ts`
+- Test: extend `tests/lib/publish-author-note.test.ts` (existing)
+
+Bundles don't have a `Story.authorNote` override field, so `resolveAuthorNote(story, profile)` doesn't fit. Add a sibling that takes only the profile.
+
+- [ ] **Step 1: Write failing tests**
+
+Append to `tests/lib/publish-author-note.test.ts`:
+
+```ts
+import { resolveBundleAuthorNote } from "@/lib/publish/author-note";
+import type { PenNameProfile } from "@/lib/config";
+
+describe("resolveBundleAuthorNote", () => {
+  it("returns null for missing profile", () => {
+    expect(resolveBundleAuthorNote(undefined)).toBeNull();
+  });
+
+  it("returns null for profile with no usable content", () => {
+    const profile: PenNameProfile = {
+      defaultMessageHtml: "",
+      email: "",
+      mailingListUrl: "",
+    };
+    expect(resolveBundleAuthorNote(profile)).toBeNull();
+  });
+
+  it("returns null when message and email and mailing list URL are all whitespace", () => {
+    const profile: PenNameProfile = {
+      defaultMessageHtml: "   ",
+      email: "  ",
+      mailingListUrl: "\t",
+    };
+    expect(resolveBundleAuthorNote(profile)).toBeNull();
+  });
+
+  it("returns ResolvedAuthorNote when profile has a defaultMessageHtml", () => {
+    const profile: PenNameProfile = {
+      defaultMessageHtml: "<p>Thanks for reading.</p>",
+    };
+    const note = resolveBundleAuthorNote(profile);
+    expect(note).not.toBeNull();
+    expect(note!.messageHtml).toBe("<p>Thanks for reading.</p>");
+    expect(note!.email).toBeUndefined();
+    expect(note!.mailingListUrl).toBeUndefined();
+  });
+
+  it("returns ResolvedAuthorNote when profile has only an email", () => {
+    const profile: PenNameProfile = {
+      email: "author@example.com",
+    };
+    const note = resolveBundleAuthorNote(profile);
+    expect(note).not.toBeNull();
+    expect(note!.email).toBe("author@example.com");
+  });
+
+  it("returns ResolvedAuthorNote when profile has only a mailingListUrl", () => {
+    const profile: PenNameProfile = {
+      mailingListUrl: "https://example.com/subscribe",
+    };
+    const note = resolveBundleAuthorNote(profile);
+    expect(note).not.toBeNull();
+    expect(note!.mailingListUrl).toBe("https://example.com/subscribe");
+  });
+
+  it("includes all fields when all are present", () => {
+    const profile: PenNameProfile = {
+      defaultMessageHtml: "<p>Hi.</p>",
+      email: "a@b.com",
+      mailingListUrl: "https://x.io",
+    };
+    const note = resolveBundleAuthorNote(profile);
+    expect(note).toEqual({
+      messageHtml: "<p>Hi.</p>",
+      email: "a@b.com",
+      mailingListUrl: "https://x.io",
+    });
+  });
+});
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `npx vitest run tests/lib/publish-author-note.test.ts`
+Expected: FAIL — `resolveBundleAuthorNote` not exported.
+
+- [ ] **Step 3: Implement the helper**
+
+Add to `lib/publish/author-note.ts`, below the existing `resolveAuthorNote`:
+
+```ts
+export function resolveBundleAuthorNote(
+  profile: PenNameProfile | undefined,
+): ResolvedAuthorNote | null {
+  if (!profile) return null;
+  const messageHtml =
+    typeof profile.defaultMessageHtml === "string"
+      ? profile.defaultMessageHtml.trim()
+      : "";
+  const email = typeof profile.email === "string" ? profile.email : undefined;
+  const mailingListUrl =
+    typeof profile.mailingListUrl === "string"
+      ? profile.mailingListUrl
+      : undefined;
+  if (messageHtml.length === 0 && !email?.trim() && !mailingListUrl?.trim()) {
+    return null;
+  }
+  return {
+    messageHtml,
+    email,
+    mailingListUrl,
+  };
+}
+```
+
+- [ ] **Step 4: Run tests + typecheck**
+
+Run: `npx vitest run tests/lib/publish-author-note.test.ts && npm run typecheck`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add lib/publish/author-note.ts tests/lib/publish-author-note.test.ts
+git commit -m "feat(author-note): add resolveBundleAuthorNote profile-only resolver"
+```
+
+### Task 2.5: Implement `lib/publish/epub-bundle.ts`
 
 **Files:**
 - Create: `lib/publish/epub-bundle.ts`
 - Test: `tests/lib/publish-epub-bundle.test.ts` (new)
 
-The builder is pure: takes a `Bundle`, a `Map<storySlug, { story, chapters }>` of resolved refs, and an optional cover path. Returns EPUB bytes.
+The builder is pure: takes a `Bundle`, a `Map<storySlug, { story, chapters }>` of resolved refs, an optional cover path, and an optional `ResolvedAuthorNote`. Returns EPUB bytes. The author note (if present) is appended as a final content entry **after all stories' chapters** — exactly one author note per bundle, not per story.
 
 - [ ] **Step 1: Write failing tests**
 
@@ -1002,6 +1220,40 @@ describe("buildBundleEpubBytes", () => {
     });
     expect(bytes.byteLength).toBeGreaterThan(500);
   });
+
+  it("appends a single author-note entry at the end when authorNote is provided", async () => {
+    const stories = new Map([
+      ["story-a", { story: story("story-a", "Story A"), chapters: [chapter("c1", "Ch 1")] }],
+      ["story-b", { story: story("story-b", "Story B"), chapters: [chapter("c2", "Ch 2")] }],
+    ]);
+    const bytes = await buildBundleEpubBytes({
+      bundle: bundle([{ storySlug: "story-a" }, { storySlug: "story-b" }]),
+      stories,
+      authorNote: {
+        messageHtml: "<p>Thanks for reading this collection.</p>",
+        email: "author@example.com",
+      },
+    });
+    const text = await readAllText(bytes);
+    // Author note title and content are present
+    expect(text).toContain("A note from the author");
+    expect(text).toContain("Thanks for reading this collection.");
+    // …and only ONE author-note section, not one per story
+    const matches = text.match(/A note from the author/g) ?? [];
+    expect(matches.length).toBe(1);
+  });
+
+  it("omits the author-note entry when authorNote is undefined", async () => {
+    const stories = new Map([
+      ["story-a", { story: story("story-a", "Story A"), chapters: [chapter("c1", "Ch 1")] }],
+    ]);
+    const bytes = await buildBundleEpubBytes({
+      bundle: bundle([{ storySlug: "story-a" }]),
+      stories,
+    });
+    const text = await readAllText(bytes);
+    expect(text).not.toContain("A note from the author");
+  });
 });
 ```
 
@@ -1016,12 +1268,15 @@ Create `lib/publish/epub-bundle.ts`:
 
 ```ts
 import { pathToFileURL } from "node:url";
+import { rm } from "node:fs/promises";
 import {
   renderChapterPreviewHtml,
   renderStoryTitlePageHtml,
   stripPreviewWrapper,
   EPUB_STYLESHEET,
 } from "@/lib/publish/epub-preview";
+import { appendAuthorNoteContent } from "@/lib/publish/epub";
+import type { ResolvedAuthorNote } from "@/lib/publish/author-note";
 import type { Bundle, Chapter, Story } from "@/lib/types";
 import type { EpubVersion } from "@/lib/storage/paths";
 
@@ -1032,6 +1287,7 @@ export type BundleEpubInput = {
   stories: Map<string, ResolvedStory>;
   coverPath?: string;
   version?: EpubVersion;
+  authorNote?: ResolvedAuthorNote;
 };
 
 type EpubGenFn = (
@@ -1056,7 +1312,7 @@ function getGenerator(): EpubGenFn {
 }
 
 export async function buildBundleEpubBytes(input: BundleEpubInput): Promise<Uint8Array> {
-  const { bundle, stories, coverPath, version = 3 } = input;
+  const { bundle, stories, coverPath, version = 3, authorNote } = input;
 
   const content: Array<{ title: string; content: string }> = [];
   for (const ref of bundle.stories) {
@@ -1081,23 +1337,39 @@ export async function buildBundleEpubBytes(input: BundleEpubInput): Promise<Uint
     });
   }
 
-  const generator = getGenerator();
-  const buffer = await generator(
-    {
-      title: bundle.title,
-      author: bundle.authorPenName,
-      description: bundle.description,
-      lang: bundle.language || "en",
-      // file:// URL avoids the 0-byte-cover gotcha in epub-gen-memory.
-      cover: coverPath ? pathToFileURL(coverPath).href : undefined,
-      ignoreFailedDownloads: true,
-      css: EPUB_STYLESHEET,
-    },
-    content,
-    version,
-  );
+  // Track temp PNG files written for the QR data-URL workaround so we can
+  // clean them up regardless of whether the generator throws (mirrors the
+  // pattern in `buildEpubBytes`).
+  const tempImagePaths: string[] = [];
 
-  return new Uint8Array(buffer);
+  try {
+    if (authorNote) {
+      await appendAuthorNoteContent(content, authorNote, tempImagePaths);
+    }
+
+    const generator = getGenerator();
+    const buffer = await generator(
+      {
+        title: bundle.title,
+        author: bundle.authorPenName,
+        description: bundle.description,
+        lang: bundle.language || "en",
+        // file:// URL avoids the 0-byte-cover gotcha in epub-gen-memory.
+        cover: coverPath ? pathToFileURL(coverPath).href : undefined,
+        ignoreFailedDownloads: true,
+        css: EPUB_STYLESHEET,
+      },
+      content,
+      version,
+    );
+
+    return new Uint8Array(buffer);
+  } finally {
+    // Best-effort cleanup of QR temp PNGs.
+    for (const path of tempImagePaths) {
+      await rm(path, { force: true }).catch(() => {});
+    }
+  }
 }
 ```
 
@@ -1113,11 +1385,11 @@ git add lib/publish/epub-bundle.ts tests/lib/publish-epub-bundle.test.ts
 git commit -m "feat(epub): add bundle builder"
 ```
 
-### Task 2.4: Chunk close-out
+### Task 2.6: Chunk close-out
 
 - [ ] **Step 1: Run quality gates**
 
-Run: `npm run lint && npm run typecheck && npx vitest run tests/lib/publish-epub.test.ts tests/lib/publish-epub-bundle.test.ts tests/lib/publish-epub-smoke.test.ts tests/lib/publish-epub-storage.test.ts`
+Run: `npm run lint && npm run typecheck && npx vitest run tests/lib/publish-epub.test.ts tests/lib/publish-epub-bundle.test.ts tests/lib/publish-epub-smoke.test.ts tests/lib/publish-epub-storage.test.ts tests/lib/publish-author-note.test.ts`
 Expected: all PASS.
 
 - [ ] **Step 2: Spot-check main-checkout cleanliness** (worktree mode only)
@@ -1976,6 +2248,65 @@ describe("POST /api/bundles/[slug]/export/epub", () => {
     const res = await callPost(b.slug, { version: 5 });
     expect(res.status).toBe(400);
   });
+
+  it("appends author note from pen-name profile when configured", async () => {
+    const { saveConfig } = await import("@/lib/config");
+    await saveConfig(tmpDir, {
+      penNameProfiles: {
+        Pen: {
+          defaultMessageHtml: "<p>Thanks for reading.</p>",
+        },
+      },
+    });
+
+    const story = await createStory(tmpDir, { title: "S", authorPenName: "Pen" });
+    await createImportedChapter(tmpDir, story.slug, { title: "C", sectionContents: ["x."] });
+
+    const b = await createBundle(tmpDir, { title: "B" });
+    await updateBundle(tmpDir, b.slug, {
+      authorPenName: "Pen",
+      stories: [{ storySlug: story.slug }],
+    });
+
+    const res = await callPost(b.slug);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+
+    // The EPUB should contain the author note. Inspect via JSZip.
+    const JSZip = (await import("jszip")).default;
+    const fs = await import("node:fs/promises");
+    const epubBytes = await fs.readFile(body.data.path);
+    const zip = await JSZip.loadAsync(epubBytes);
+    const names = Object.keys(zip.files).filter((n) => /^OEBPS\/.*\.xhtml$/i.test(n));
+    let combined = "";
+    for (const name of names) combined += await zip.file(name)!.async("string");
+    expect(combined).toContain("Thanks for reading.");
+  });
+
+  it("omits author note when no profile exists for bundle.authorPenName", async () => {
+    const story = await createStory(tmpDir, { title: "S2", authorPenName: "NoProfile" });
+    await createImportedChapter(tmpDir, story.slug, { title: "C", sectionContents: ["y."] });
+
+    const b = await createBundle(tmpDir, { title: "B2" });
+    await updateBundle(tmpDir, b.slug, {
+      authorPenName: "NoProfile",
+      stories: [{ storySlug: story.slug }],
+    });
+
+    const res = await callPost(b.slug);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    const JSZip = (await import("jszip")).default;
+    const fs = await import("node:fs/promises");
+    const epubBytes = await fs.readFile(body.data.path);
+    const zip = await JSZip.loadAsync(epubBytes);
+    const names = Object.keys(zip.files).filter((n) => /^OEBPS\/.*\.xhtml$/i.test(n));
+    let combined = "";
+    for (const name of names) combined += await zip.file(name)!.async("string");
+    expect(combined).not.toContain("A note from the author");
+  });
 });
 ```
 
@@ -1995,9 +2326,10 @@ import { ok, fail, readJson } from "@/lib/api";
 import { getBundle } from "@/lib/storage/bundles";
 import { getStory } from "@/lib/storage/stories";
 import { listChapters } from "@/lib/storage/chapters";
-import { effectiveDataDir } from "@/lib/config";
+import { effectiveDataDir, loadConfig } from "@/lib/config";
 import { buildBundleEpubBytes, type ResolvedStory } from "@/lib/publish/epub-bundle";
 import { validateEpub } from "@/lib/publish/epub";
+import { resolveBundleAuthorNote } from "@/lib/publish/author-note";
 import {
   bundleCoverPath,
   bundleEpubPath,
@@ -2057,12 +2389,33 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     coverPath = undefined;
   }
 
-  const bytes = await buildBundleEpubBytes({
-    bundle,
-    stories: resolved,
-    coverPath,
-    version,
-  });
+  // Author note (optional). Resolved from the pen-name profile keyed off
+  // bundle.authorPenName — bundles do not have a per-bundle override field,
+  // so this uses the profile's defaultMessageHtml directly.
+  const cfg = await loadConfig(dataDir);
+  const profile = cfg.penNameProfiles?.[bundle.authorPenName];
+  const authorNote = resolveBundleAuthorNote(profile) ?? undefined;
+
+  // Same QR-overflow guard the single-story export route uses: the qrcode
+  // library throws "The amount of data is too big to be stored in a QR Code"
+  // when a mailing-list URL exceeds capacity. Surface that as a 400 instead
+  // of letting it 500. Other errors propagate.
+  let bytes: Uint8Array;
+  try {
+    bytes = await buildBundleEpubBytes({
+      bundle,
+      stories: resolved,
+      coverPath,
+      version,
+      authorNote,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/too big to be stored in a QR/i.test(msg)) {
+      return fail("mailing list URL is too long to encode as a QR code", 400);
+    }
+    throw err;
+  }
 
   const { warnings: validationWarnings } = await validateEpub(bytes);
 
@@ -2235,6 +2588,22 @@ const bCh = await createChapter(tmpDir, bStory.slug, { title: "B1" });
 }
 
 // ── /api/bundles/[slug]/export/epub  (×2: version=3 and version=2) ─────
+// Seed a pen-name profile keyed off the bundle's authorPenName so the
+// export route exercises the resolveBundleAuthorNote → buildAuthorNoteHtml →
+// QR-encode → externalizeDataPngImages path. qrcode is a pure-JS encoder;
+// this confirms it does not phone home.
+{
+  const { saveConfig } = await import("@/lib/config");
+  await saveConfig(tmpDir, {
+    penNameProfiles: {
+      Pen: {
+        defaultMessageHtml: "<p>Thanks for reading.</p>",
+        mailingListUrl: "https://example.com/list",
+      },
+    },
+  });
+}
+
 for (const version of [3, 2] as const) {
   const { POST } = await import("@/app/api/bundles/[slug]/export/epub/route");
   const ctx = { params: Promise.resolve({ slug: bundleSlug }) };
