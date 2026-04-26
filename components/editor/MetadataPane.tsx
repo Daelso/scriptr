@@ -172,7 +172,7 @@ function AuthorNoteEditor({
     [slug, mutateStory],
   );
 
-  useAutoSave(local, save);
+  const { status } = useAutoSave(local, save);
 
   const effectiveStory: Story = { ...story, authorNote: local };
 
@@ -181,6 +181,7 @@ function AuthorNoteEditor({
       story={effectiveStory}
       profile={profile}
       onChange={(next) => setLocal(next)}
+      saveStatus={status}
     />
   );
 }
