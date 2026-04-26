@@ -30,6 +30,48 @@ export const URI_ATTRS = new Set([
   "usemap",
 ]);
 
+const URI_CONTROL_OR_SPACE_RE = /[\u0000-\u001F\u007F\s]/u;
+const URI_BIDI_RE = /[\u202A-\u202E\u2066-\u2069]/u;
+
+function normalizeUriValue(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (URI_CONTROL_OR_SPACE_RE.test(trimmed) || URI_BIDI_RE.test(trimmed)) {
+    return null;
+  }
+  return trimmed;
+}
+
+function uriRegexAllows(uriRegex: RegExp, value: string): boolean {
+  uriRegex.lastIndex = 0;
+  return uriRegex.test(value);
+}
+
+function extraUriChecks(value: string): boolean {
+  const lower = value.toLowerCase();
+  if (lower.startsWith("http://") || lower.startsWith("https://")) {
+    try {
+      const parsed = new URL(value);
+      return (
+        (parsed.protocol === "http:" || parsed.protocol === "https:")
+        && parsed.hostname.length > 0
+      );
+    } catch {
+      return false;
+    }
+  }
+  if (lower.startsWith("mailto:")) {
+    const addr = value.slice("mailto:".length);
+    return addr.length > 0 && addr.includes("@");
+  }
+  if (lower.startsWith("data:image/png;base64,")) {
+    const payload = value.slice("data:image/png;base64,".length);
+    return payload.length > 0 && /^[A-Za-z0-9+/=]+$/.test(payload);
+  }
+  // Unknown schemes are governed by the caller's regex only.
+  return true;
+}
+
 /**
  * Run DOMPurify with an optional URI allowlist regex that is also enforced
  * on URI-bearing attributes (see `URI_ATTRS`). The hook is added/removed
@@ -52,7 +94,21 @@ export function sanitizeWith(
     _node: Element,
     data: { attrName: string; attrValue: string; keepAttr: boolean },
   ) => {
-    if (URI_ATTRS.has(data.attrName) && !uriRegex.test(data.attrValue)) {
+    try {
+      const attr = data.attrName.toLowerCase();
+      if (!URI_ATTRS.has(attr)) return;
+      const normalized = normalizeUriValue(data.attrValue);
+      if (!normalized) {
+        data.keepAttr = false;
+        return;
+      }
+      if (!uriRegexAllows(uriRegex, normalized) || !extraUriChecks(normalized)) {
+        data.keepAttr = false;
+        return;
+      }
+      data.attrValue = normalized;
+    } catch {
+      // Fail closed on any unexpected parser/regex error.
       data.keepAttr = false;
     }
   };

@@ -84,9 +84,27 @@ async function externalizeDataPngImages(
   html: string,
 ): Promise<{ html: string; tempPaths: string[] }> {
   const tempPaths: string[] = [];
+  const decodePayload = (input: string): Buffer | null => {
+    let payload = input;
+    try {
+      payload = decodeURIComponent(payload);
+    } catch {
+      // keep raw payload
+    }
+    payload = payload.replace(/\s+/g, "");
+    if (!/^[A-Za-z0-9+/=]+$/.test(payload)) return null;
+    try {
+      return Buffer.from(payload, "base64");
+    } catch {
+      return null;
+    }
+  };
   // Match <img ... src="data:image/png;base64,XXXX" ...> with single or double
-  // quotes. Capture the surrounding attributes so we can preserve them.
-  const re = /<img\b([^>]*?)\bsrc=(["'])data:image\/png;base64,([A-Za-z0-9+/=]+)\2([^>]*)>/gi;
+  // quotes. Capture the surrounding attributes so we can preserve them. The
+  // payload capture is intentionally broad (`[^"']+`) so percent-encoded
+  // newlines/spaces are still rewritten instead of producing broken archive
+  // image entries.
+  const re = /<img\b([^>]*?)\bsrc=(["'])data:image\/png;base64,([^"']+)\2([^>]*)>/gi;
   const matches: Array<{ start: number; end: number; pre: string; payload: string; post: string }> = [];
   let m: RegExpExecArray | null;
   while ((m = re.exec(html)) !== null) {
@@ -112,7 +130,14 @@ async function externalizeDataPngImages(
     let cursor = 0;
     for (const match of matches) {
       out.push(html.slice(cursor, match.start));
-      const bytes = Buffer.from(match.payload, "base64");
+      const bytes = decodePayload(match.payload);
+      if (!bytes) {
+        // Drop malformed data-URI images instead of passing broken source
+        // through to epub-gen-memory (which otherwise emits invalid manifest
+        // entries and 0-byte files).
+        cursor = match.end;
+        continue;
+      }
       const filename = `scriptr-qr-${randomBytes(8).toString("hex")}.png`;
       const tmpPath = join(tmpdir(), filename);
       await writeFile(tmpPath, bytes);
@@ -203,10 +228,6 @@ export async function buildEpubBytes(input: EpubInput): Promise<Uint8Array> {
 // each message has `{ id, severity, message }`. The validator accepts a
 // `Uint8Array` directly, so no temp file is needed.
 //
-// We use dynamic `import()` rather than `require()` because the package is
-// pure ESM (`"type": "module"`) and one of its transitive deps
-// (`libxml2-wasm`) uses top-level await — which CJS `require()` cannot load.
-//
 // We surface every non-info / non-usage message as a warning string.
 // Validation is non-blocking — any throw is caught and reported as a single
 // warning instead of propagating.
@@ -234,7 +255,8 @@ export type ValidationResult = { warnings: string[] };
 
 export async function validateEpub(bytes: Uint8Array): Promise<ValidationResult> {
   try {
-    const mod = (await import("@likecoin/epubcheck-ts")) as EpubcheckModule;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require("@likecoin/epubcheck-ts") as EpubcheckModule;
     const ns = mod.default ?? mod;
     const validate = ns.EpubCheck?.validate;
     if (typeof validate !== "function") {

@@ -156,6 +156,22 @@ describe("updateStory", () => {
       expect(reloaded!.description).toBe("Persisted description");
     });
   });
+
+  it("serializes concurrent updates so both patches persist", async () => {
+    await withTemp(async (dir) => {
+      const created = await createStory(dir, { title: "Race Test" });
+      for (let i = 0; i < 20; i += 1) {
+        await updateStory(dir, created.slug, { title: "Race Test", description: "" });
+        await Promise.all([
+          updateStory(dir, created.slug, { title: `Title ${i}` }),
+          updateStory(dir, created.slug, { description: `Description ${i}` }),
+        ]);
+        const reloaded = await getStory(dir, created.slug);
+        expect(reloaded!.title).toBe(`Title ${i}`);
+        expect(reloaded!.description).toBe(`Description ${i}`);
+      }
+    });
+  });
 });
 
 describe("deleteStory", () => {
