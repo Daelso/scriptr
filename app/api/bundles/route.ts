@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { ok, fail, readJson } from "@/lib/api";
+import { ok, fail, readJson, JsonParseError } from "@/lib/api";
 import { createBundle, listBundles } from "@/lib/storage/bundles";
 import { effectiveDataDir } from "@/lib/config";
 
@@ -8,7 +8,13 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const body = await readJson<{ title?: unknown }>(req);
+  let body: { title?: unknown };
+  try {
+    body = await readJson<{ title?: unknown }>(req);
+  } catch (err) {
+    if (err instanceof JsonParseError) return fail(err.message, 400);
+    throw err;
+  }
   if (typeof body.title !== "string" || body.title.trim() === "") {
     return fail("title required");
   }

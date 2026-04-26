@@ -59,6 +59,18 @@ describe("/api/bundles", () => {
     expect(res.status).toBe(400);
   });
 
+  it("POST with malformed JSON returns 400", async () => {
+    const { POST } = await import("@/app/api/bundles/route");
+    const res = await POST(
+      makeReq("http://localhost/api/bundles", {
+        method: "POST",
+        body: "not-json",
+        headers: { "content-type": "application/json" },
+      })
+    );
+    expect(res.status).toBe(400);
+  });
+
   it("POST then GET returns the new bundle", async () => {
     const { POST, GET } = await import("@/app/api/bundles/route");
     await POST(
