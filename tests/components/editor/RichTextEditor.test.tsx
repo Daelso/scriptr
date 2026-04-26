@@ -137,4 +137,61 @@ describe("RichTextEditor", () => {
 
     unmount();
   });
+
+  it("Link button rejects URLs with disallowed schemes via window.alert", () => {
+    const onChange = vi.fn();
+    const { container, unmount } = mount(
+      <RichTextEditor initialHtml="<p>x</p>" onChange={onChange} />,
+    );
+
+    const linkBtn = container.querySelector(
+      '[aria-label="Link"]',
+    ) as HTMLButtonElement;
+    expect(linkBtn).not.toBeNull();
+
+    const promptSpy = vi
+      .spyOn(window, "prompt")
+      .mockReturnValue("javascript:alert(1)");
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+
+    act(() => {
+      linkBtn.click();
+    });
+
+    // The scheme guard should have fired exactly one alert and never
+    // called setLink — so the editor surface must not contain an <a>.
+    expect(alertSpy).toHaveBeenCalledTimes(1);
+    const surface = container.querySelector(".tiptap-rich-editor");
+    expect(surface?.querySelector("a")).toBeNull();
+
+    promptSpy.mockRestore();
+    alertSpy.mockRestore();
+    unmount();
+  });
+
+  it("Link button accepts an https:// URL", () => {
+    const onChange = vi.fn();
+    const { container, unmount } = mount(
+      <RichTextEditor initialHtml="<p>x</p>" onChange={onChange} />,
+    );
+
+    const linkBtn = container.querySelector(
+      '[aria-label="Link"]',
+    ) as HTMLButtonElement;
+    const promptSpy = vi
+      .spyOn(window, "prompt")
+      .mockReturnValue("https://example.com");
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+
+    act(() => {
+      linkBtn.click();
+    });
+
+    // No alert was fired — the URL passed the scheme guard.
+    expect(alertSpy).not.toHaveBeenCalled();
+
+    promptSpy.mockRestore();
+    alertSpy.mockRestore();
+    unmount();
+  });
 });
