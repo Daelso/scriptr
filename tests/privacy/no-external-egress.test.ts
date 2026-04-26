@@ -57,6 +57,8 @@
  *   POST /api/stories/[slug]/export/epub  (with author-note configured —
  *     exercises the QR encoder + buildAuthorNoteHtml + epub-gen-memory path
  *     to assert the EPUB pipeline never phones home)
+ *   GET  /api/bundles
+ *   POST /api/bundles
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -536,6 +538,25 @@ describe("no external egress from API routes", () => {
       }) as unknown as NextRequest;
       const res = await POST(req);
       expect(res.status).toBe(200);
+    }
+
+    // ── GET /api/bundles ───────────────────────────────────────────────────
+    {
+      const { GET } = await import("@/app/api/bundles/route");
+      const res = await GET();
+      expect(res.status).toBe(200);
+    }
+
+    // ── POST /api/bundles ──────────────────────────────────────────────────
+    {
+      const { POST } = await import("@/app/api/bundles/route");
+      const req = makeReq("http://localhost/api/bundles", {
+        method: "POST",
+        body: JSON.stringify({ title: "Egress Test Bundle" }),
+        headers: { "content-type": "application/json" },
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(201);
     }
 
     // ── The load-bearing assertion ─────────────────────────────────────────
