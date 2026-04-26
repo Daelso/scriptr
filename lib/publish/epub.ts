@@ -102,21 +102,33 @@ async function externalizeDataPngImages(
   if (matches.length === 0) return { html, tempPaths };
 
   // Rebuild the HTML in order, replacing each match with the rewritten <img>.
-  const out: string[] = [];
-  let cursor = 0;
-  for (const match of matches) {
-    out.push(html.slice(cursor, match.start));
-    const bytes = Buffer.from(match.payload, "base64");
-    const filename = `scriptr-qr-${randomBytes(8).toString("hex")}.png`;
-    const tmpPath = join(tmpdir(), filename);
-    await writeFile(tmpPath, bytes);
-    tempPaths.push(tmpPath);
-    const fileUrl = pathToFileURL(tmpPath).href;
-    out.push(`<img${match.pre} src="${fileUrl}"${match.post}>`);
-    cursor = match.end;
+  // Wrap the writes in try/catch so a failure on image N doesn't leak the
+  // bytes already written for images 1..N-1 — the function is the only
+  // place that knows about its temp paths until it returns, so the caller's
+  // outer finally can't help here. Best-effort cleanup on throw; rethrow
+  // the original error so the caller still surfaces it.
+  try {
+    const out: string[] = [];
+    let cursor = 0;
+    for (const match of matches) {
+      out.push(html.slice(cursor, match.start));
+      const bytes = Buffer.from(match.payload, "base64");
+      const filename = `scriptr-qr-${randomBytes(8).toString("hex")}.png`;
+      const tmpPath = join(tmpdir(), filename);
+      await writeFile(tmpPath, bytes);
+      tempPaths.push(tmpPath);
+      const fileUrl = pathToFileURL(tmpPath).href;
+      out.push(`<img${match.pre} src="${fileUrl}"${match.post}>`);
+      cursor = match.end;
+    }
+    out.push(html.slice(cursor));
+    return { html: out.join(""), tempPaths };
+  } catch (err) {
+    await Promise.all(
+      tempPaths.map((p) => unlink(p).catch(() => {})),
+    );
+    throw err;
   }
-  out.push(html.slice(cursor));
-  return { html: out.join(""), tempPaths };
 }
 
 export async function buildEpubBytes(input: EpubInput): Promise<Uint8Array> {
@@ -135,20 +147,23 @@ export async function buildEpubBytes(input: EpubInput): Promise<Uint8Array> {
   });
 
   // Track temp PNG files written for the QR data-URL workaround so we can
-  // clean them up regardless of whether the generator throws.
+  // clean them up regardless of whether the generator throws. The author-
+  // note build runs INSIDE the try so the outer finally also covers any
+  // throw from `externalizeDataPngImages` itself — `externalizeDataPngImages`
+  // does its own best-effort cleanup on throw, so this is belt-and-braces.
   const tempImagePaths: string[] = [];
 
-  if (input.authorNote) {
-    const noteHtml = await buildAuthorNoteHtml(input.authorNote);
-    const { html: rewritten, tempPaths } = await externalizeDataPngImages(noteHtml);
-    tempImagePaths.push(...tempPaths);
-    content.push({
-      title: "A note from the author",
-      content: rewritten,
-    });
-  }
-
   try {
+    if (input.authorNote) {
+      const noteHtml = await buildAuthorNoteHtml(input.authorNote);
+      const { html: rewritten, tempPaths } = await externalizeDataPngImages(noteHtml);
+      tempImagePaths.push(...tempPaths);
+      content.push({
+        title: "A note from the author",
+        content: rewritten,
+      });
+    }
+
     const generator = getGenerator();
     const buffer = await generator(
       {
