@@ -6,7 +6,7 @@ import {
   stripPreviewWrapper,
   EPUB_STYLESHEET,
 } from "@/lib/publish/epub-preview";
-import { appendAuthorNoteContent } from "@/lib/publish/epub";
+import { appendAuthorNoteContent, getGenerator } from "@/lib/publish/epub";
 import type { ResolvedAuthorNote } from "@/lib/publish/author-note";
 import type { Bundle, Chapter, Story } from "@/lib/types";
 import type { EpubVersion } from "@/lib/storage/paths";
@@ -20,27 +20,6 @@ export type BundleEpubInput = {
   version?: EpubVersion;
   authorNote?: ResolvedAuthorNote;
 };
-
-type EpubGenFn = (
-  options: {
-    title: string;
-    author: string;
-    description?: string;
-    lang?: string;
-    cover?: string;
-    ignoreFailedDownloads?: boolean;
-    css?: string;
-  },
-  content: Array<{ title: string; content: string }>,
-  version?: 2 | 3,
-  verbose?: boolean,
-) => Promise<Buffer>;
-
-function getGenerator(): EpubGenFn {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const mod = require("epub-gen-memory") as { default?: EpubGenFn } & EpubGenFn;
-  return (mod.default ?? mod) as EpubGenFn;
-}
 
 export async function buildBundleEpubBytes(input: BundleEpubInput): Promise<Uint8Array> {
   const { bundle, stories, coverPath, version = 3, authorNote } = input;
