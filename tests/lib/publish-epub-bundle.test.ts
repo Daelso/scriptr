@@ -205,8 +205,13 @@ describe("buildBundleEpubBytes", () => {
     const text = await readAllText(bytes);
     expect(text).toContain("A note from the author");
     expect(text).toContain("Thanks for reading this collection.");
-    const matches = text.match(/A note from the author/g) ?? [];
-    expect(matches.length).toBe(1);
+    // …and only ONE author-note CONTENT ENTRY, not one per story.
+    // Use the body text as the marker — it appears exactly once per appended
+    // entry (in the body XHTML only). The bare title "A note from the author"
+    // can match in multiple places (chapter <title>, auto-<h1>, TOC) per
+    // epub-gen-memory's normal output structure, so it's not a reliable count.
+    const bodyMatches = text.match(/Thanks for reading this collection\./g) ?? [];
+    expect(bodyMatches.length).toBe(1);
   });
 
   it("omits the author-note entry when authorNote is undefined", async () => {

@@ -76,15 +76,6 @@ export async function buildBundleEpubBytes(input: BundleEpubInput): Promise<Uint
   try {
     if (authorNote) {
       await appendAuthorNoteContent(content, authorNote, tempImagePaths);
-      // `appendAuthorNoteContent` pushes `title: "A note from the author"`.
-      // epub-gen-memory echoes that title into both <title> and <h1> in the
-      // generated xhtml, so the phrase would appear 3× in that file plus
-      // once in toc.xhtml — 4 total. Since our HTML already contains the
-      // heading as <h2>A note from the author</h2>, we clear the entry title
-      // so epub-gen-memory emits no duplicate heading and the phrase appears
-      // exactly once across the archive.
-      const last = content[content.length - 1];
-      if (last) last.title = "";
     }
 
     const generator = getGenerator();
