@@ -41,7 +41,7 @@ export type EpubInput = {
   authorNote?: ResolvedAuthorNote;
 };
 
-type EpubGenFn = (
+export type EpubGenFn = (
   options: {
     title: string;
     author: string;
@@ -60,7 +60,7 @@ type EpubGenFn = (
 // top level so bundlers don't have to analyze it during client builds. Even
 // though this file is server-only, guarding the require makes the dep
 // graph explicit.
-function getGenerator(): EpubGenFn {
+export function getGenerator(): EpubGenFn {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const mod = require("epub-gen-memory") as { default?: EpubGenFn } & EpubGenFn;
   return (mod.default ?? mod) as EpubGenFn;
