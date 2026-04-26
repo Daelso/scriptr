@@ -111,10 +111,31 @@ export function RichTextEditor({ initialHtml, onChange, ariaLabel }: Props) {
         </button>
         <button
           type="button"
-          aria-label="Link"
+          aria-label={editor.isActive("link") ? "Remove link" : "Link"}
           onClick={() => {
-            const url = window.prompt("URL");
-            if (!url) return;
+            // When the cursor is inside a link, the toolbar button toggles
+            // to "Remove link" so the user has a way to undo a previous
+            // setLink without learning a keyboard shortcut.
+            if (editor.isActive("link")) {
+              editor.chain().focus().unsetLink().run();
+              return;
+            }
+            const raw = window.prompt("URL");
+            if (!raw) return;
+            const url = raw.trim();
+            // Client-side scheme guard. The DOMPurify sanitizer also strips
+            // `javascript:` / `data:text/html` URIs at render time
+            // (AUTHOR_NOTE_SANITIZE_OPTS.ALLOWED_URI_REGEXP), but that runs
+            // on output — disallowed URLs would still persist in the editor
+            // model until next reload. Reject obvious bad schemes here so
+            // the user gets immediate feedback and the saved HTML stays
+            // clean.
+            if (!/^(https?:\/\/|mailto:)/i.test(url)) {
+              window.alert(
+                "URL must start with http://, https://, or mailto:",
+              );
+              return;
+            }
             editor.chain().focus().setLink({ href: url }).run();
           }}
           className={`px-2 py-1 text-sm rounded ${
