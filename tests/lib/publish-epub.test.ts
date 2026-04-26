@@ -573,6 +573,16 @@ describe("stripPreviewWrapper", () => {
   it("returns the input unchanged when wrapper not present", () => {
     expect(stripPreviewWrapper("<p>nope</p>")).toBe("<p>nope</p>");
   });
+
+  it("does not strip trailing </div> when prefix is absent", () => {
+    // Regression: previously, the second replace ran independently and
+    // stripped the closing </div> from any div-ending string, even when
+    // the .epub-preview wrapper wasn't present. The output of
+    // renderStoryTitlePageHtml ends in </div> but should pass through
+    // stripPreviewWrapper untouched.
+    const standalone = '<div class="story-title-page"><h1>X</h1></div>';
+    expect(stripPreviewWrapper(standalone)).toBe(standalone);
+  });
 });
 
 describe("EPUB_STYLESHEET — story title page", () => {
