@@ -157,4 +157,25 @@ describe("buildAuthorNoteHtml", () => {
     expect(AUTHOR_NOTE_SANITIZE_OPTS.ALLOWED_URI_REGEXP.test("data:image/png;base64,abc")).toBe(true);
     expect(AUTHOR_NOTE_SANITIZE_OPTS.ALLOWED_URI_REGEXP.test("data:image/svg+xml;base64,abc")).toBe(false);
   });
+
+  it("strips data-* attributes injected via messageHtml", async () => {
+    // DOMPurify defaults `ALLOW_DATA_ATTR` to true. The sanitize opts now
+    // explicitly turn it off so the attribute surface area is exactly what
+    // ALLOWED_ATTR lists. Use an attribute that survives DOMPurify's other
+    // checks (anchor + http link) so we know the strip we observe is from
+    // the data-* policy, not some other rule.
+    const html = await buildAuthorNoteHtml({
+      messageHtml: '<a href="https://example.com" data-evil="1">x</a>',
+    });
+    expect(html).toContain('href="https://example.com"');
+    expect(html).not.toContain("data-evil");
+  });
+
+  it("strips aria-* attributes injected via messageHtml", async () => {
+    const html = await buildAuthorNoteHtml({
+      messageHtml: '<a href="https://example.com" aria-evil="1">x</a>',
+    });
+    expect(html).toContain('href="https://example.com"');
+    expect(html).not.toContain("aria-evil");
+  });
 });
