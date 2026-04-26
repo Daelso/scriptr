@@ -52,9 +52,15 @@ const FUSE_VALUES = {
   // Encrypt cookies at rest using OS-level keys.
   [FuseV1Options.EnableCookieEncryption]: true,
 
-  // Default true. Set explicitly so future Electron upgrades don't
-  // silently flip it.
-  [FuseV1Options.LoadBrowserProcessSpecificV8Snapshot]: true,
+  // MUST stay false. Flipping this on tells Electron's browser process to
+  // load `browser_v8_context_snapshot.bin` instead of the standard
+  // `v8_context_snapshot.bin` — but electron-builder only ships the
+  // standard file. With this fuse on, the browser process aborts at
+  // startup with `FATAL:v8_initializer.cc … Error loading V8 startup
+  // snapshot file` before any window or dialog can appear, so launches
+  // silently fail. Only flip this if we start generating a per-process
+  // snapshot ourselves and bundling it.
+  [FuseV1Options.LoadBrowserProcessSpecificV8Snapshot]: false,
 };
 
 module.exports = async function afterPack(context) {

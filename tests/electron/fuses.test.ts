@@ -24,7 +24,7 @@ describe("electron/afterPack.cjs — FUSE_VALUES", () => {
     [FuseV1Options.EnableNodeCliInspectArguments, "EnableNodeCliInspectArguments", false],
     [FuseV1Options.EnableNodeOptionsEnvironmentVariable, "EnableNodeOptionsEnvironmentVariable", false],
     [FuseV1Options.EnableCookieEncryption, "EnableCookieEncryption", true],
-    [FuseV1Options.LoadBrowserProcessSpecificV8Snapshot, "LoadBrowserProcessSpecificV8Snapshot", true],
+    [FuseV1Options.LoadBrowserProcessSpecificV8Snapshot, "LoadBrowserProcessSpecificV8Snapshot", false],
   ] as const)("sets FuseV1Options.%s (key=%s) to %s", (key, _label, value) => {
     expect(afterPack.FUSE_VALUES[key]).toBe(value);
   });
