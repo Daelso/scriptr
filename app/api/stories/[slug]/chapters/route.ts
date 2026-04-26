@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { ok, fail, readJson } from "@/lib/api";
+import { ok, fail, readJson, JsonParseError } from "@/lib/api";
 import { listChapters, createChapter } from "@/lib/storage/chapters";
 import { getStory } from "@/lib/storage/stories";
 import { effectiveDataDir } from "@/lib/config";
@@ -19,7 +19,16 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   const story = await getStory(effectiveDataDir(), slug);
   if (!story) return fail("story not found", 404);
 
-  const body = await readJson<{ title?: unknown; summary?: unknown }>(req);
+  let body: { title?: unknown; summary?: unknown };
+  try {
+    body = await readJson<{ title?: unknown; summary?: unknown }>(req);
+  } catch (err) {
+    if (err instanceof JsonParseError) return fail(err.message, 400);
+    throw err;
+  }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return fail("request body must be an object", 400);
+  }
   if (typeof body.title !== "string" || body.title.trim() === "") {
     return fail("title required");
   }

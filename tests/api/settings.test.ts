@@ -117,9 +117,7 @@ describe("/api/settings", () => {
 
     const getRes = await GET();
     const getBody = await getRes.json();
-    // bindPort is not in allowed list — should remain default 3000
-    // bindPort is not returned by GET (not in the allowed fields), so verify by checking
-    // that the route silently ignored it (no 500, and key was accepted)
+    // bindPort is not in the allowlist. It should be silently ignored.
     expect(getBody.data.hasKey).toBe(true);
     // Privacy: raw tail of the key must not appear in responses
     expect(JSON.stringify(putBody)).not.toContain("xyz987654321a");
