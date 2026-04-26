@@ -19,6 +19,9 @@ import { logCrash } from "./crash-log";
 const isDev = !app.isPackaged;
 let serverHandle: ServerHandle | null = null;
 let mainWindow: BrowserWindow | null = null;
+let appDataDir: string | null = null;
+let appNeedsOnboarding = false;
+let appUpdatesEnabled = false;
 // Set true once we've decided to quit on purpose. The `serverHandle.onExit`
 // listener checks this synchronously to distinguish "user quit → child
 // killed cleanly" from "child died on its own". Ordering matters: we set
@@ -168,7 +171,137 @@ async function handleRendererCrash(
 
 // ─── Main startup sequence ───────────────────────────────────────────────────
 
+async function createMainWindow(
+  dataDir: string,
+  needsOnboarding: boolean,
+  updatesEnabled: boolean,
+): Promise<void> {
+  if (!serverHandle) {
+    throw new Error("local server is not running");
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+    return;
+  }
+
+  const win = new BrowserWindow({
+    width: 1200,
+    height: 800,
+    title: "scriptr",
+    backgroundColor: "#ffffff",
+    show: false, // wait for ready-to-show to avoid blank flash
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+      devTools: isDev,
+      // Default-true. When enabled, Chromium fetches hunspell dictionaries
+      // from redirector.gvt1.com (Google CDN) on first text-input focus.
+      // The network filter blocks the requests, but they still spam
+      // blocked-requests.log with Google URLs and contradict the
+      // privacy panel's "Allowed destinations" claim. We rely on OS-level
+      // spellcheck if the user wants it.
+      spellcheck: false,
+    },
+  });
+  mainWindow = win;
+  win.on("closed", () => {
+    if (mainWindow === win) mainWindow = null;
+  });
+  Menu.setApplicationMenu(buildAppMenu(dataDir, isDev));
+
+  // External-link handler: allowlist-guarded shell.openExternal.
+  // Tighter than just `endsWith(".x.ai")` — match exact host or an explicit
+  // subdomain set, and require GitHub URLs to be under the scriptr repo.
+  const xAiHosts = new Set(["x.ai", "console.x.ai", "api.x.ai"]);
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      const parsed = new URL(url);
+      const isXai = parsed.protocol === "https:" && xAiHosts.has(parsed.hostname);
+      // Path boundary check: `/Daelso/scriptr` must match the full path or
+      // be followed by `/`. Otherwise `/Daelso/scriptr-evil` would match
+      // because string.startsWith doesn't respect path segments.
+      const isScriptrRepo =
+        parsed.protocol === "https:" &&
+        parsed.hostname === "github.com" &&
+        (parsed.pathname === GITHUB_REPO_PATH ||
+          parsed.pathname.startsWith(GITHUB_REPO_PATH + "/"));
+      if (isXai || isScriptrRepo) void shell.openExternal(url);
+    } catch {
+      // ignore invalid URLs
+    }
+    return { action: "deny" };
+  });
+
+  // Block in-place navigation away from the embedded Next server. Without
+  // this, a renderer-side `location.href = "https://github.com/..."` would
+  // navigate the main window. The network filter would block the actual
+  // fetch, but the user could still be stranded on a blank/error page.
+  // We only allow navigation within the loopback origin we booted.
+  const loopbackOrigin = serverHandle.url;
+  win.webContents.on("will-navigate", (event, url) => {
+    if (!url.startsWith(loopbackOrigin + "/") && url !== loopbackOrigin) {
+      event.preventDefault();
+      // If it looks like an external link, route through the same allowlist
+      // as the window-open handler so users still get useful behavior.
+      try {
+        const parsed = new URL(url);
+        const isXai = parsed.protocol === "https:" && xAiHosts.has(parsed.hostname);
+        const isScriptrRepo =
+          parsed.protocol === "https:" &&
+          parsed.hostname === "github.com" &&
+          (parsed.pathname === GITHUB_REPO_PATH ||
+            parsed.pathname.startsWith(GITHUB_REPO_PATH + "/"));
+        if (isXai || isScriptrRepo) void shell.openExternal(url);
+      } catch {
+        // ignore
+      }
+    }
+  });
+
+  win.once("ready-to-show", () => win.show());
+
+  win.webContents.on("render-process-gone", (_event, details) => {
+    void handleRendererCrash(win, dataDir, details);
+  });
+
+  const landing = needsOnboarding ? "/settings?onboarding=1" : "/";
+  await win.loadURL(serverHandle.url + landing);
+
+  // 6. Updates: gated behind did-finish-load so the check doesn't compete
+  //    with first paint. updatesEnabled is already false during onboarding
+  //    (set in step 2), so no extra check needed here.
+  if (updatesEnabled) {
+    const runCheck = configureUpdater({
+      dataDir,
+      onUpdateReady: (version) => {
+        win.webContents.executeJavaScript(
+          `window.dispatchEvent(new CustomEvent("scriptr:update-ready", { detail: ${JSON.stringify(version)} }))`,
+        ).catch(() => { /* swallow — notification UX is best-effort */ });
+      },
+    });
+    win.webContents.once("did-finish-load", () => {
+      void runCheck();
+    });
+  }
+}
+
 async function main(): Promise<void> {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+    return;
+  }
+
+  // On macOS activate, `main()` can run after all windows are closed.
+  // If backend state is already alive, only recreate the BrowserWindow.
+  if (serverHandle && appDataDir) {
+    await createMainWindow(appDataDir, appNeedsOnboarding, appUpdatesEnabled);
+    return;
+  }
+
   // 1. Resolve data directory (may prompt + migrate)
   let dataDir: string;
   try {
@@ -183,6 +316,7 @@ async function main(): Promise<void> {
     return;
   }
   process.env.SCRIPTR_DATA_DIR = dataDir;
+  appDataDir = dataDir;
 
   // 2. Read config to decide CSP shape + onboarding posture. Both must be
   //    settled BEFORE Next boots — Next reads SCRIPTR_UPDATES_CHECK at startup
@@ -193,7 +327,13 @@ async function main(): Promise<void> {
   const cfg = await loadConfig(dataDir);
   const needsOnboarding = !cfg.apiKey;
   const updatesEnabled = !needsOnboarding && (await isCheckEnabled(dataDir));
-  if (updatesEnabled) process.env.SCRIPTR_UPDATES_CHECK = "1";
+  appNeedsOnboarding = needsOnboarding;
+  appUpdatesEnabled = updatesEnabled;
+  if (updatesEnabled) {
+    process.env.SCRIPTR_UPDATES_CHECK = "1";
+  } else {
+    delete process.env.SCRIPTR_UPDATES_CHECK;
+  }
 
   // 3. Boot the Next.js server (Next standalone bundle) on an ephemeral port.
   //    In dev the standalone bundle lives at <cwd>/.next/standalone after
@@ -225,105 +365,6 @@ async function main(): Promise<void> {
     callback(false);
   });
 
-  // 5. Create the window — application menu set once for all platforms
-  mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    title: "scriptr",
-    backgroundColor: "#ffffff",
-    show: false, // wait for ready-to-show to avoid blank flash
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: true,
-      webSecurity: true,
-      devTools: isDev,
-      // Default-true. When enabled, Chromium fetches hunspell dictionaries
-      // from redirector.gvt1.com (Google CDN) on first text-input focus.
-      // The network filter blocks the requests, but they still spam
-      // blocked-requests.log with Google URLs and contradict the
-      // privacy panel's "Allowed destinations" claim. We rely on OS-level
-      // spellcheck if the user wants it.
-      spellcheck: false,
-    },
-  });
-  Menu.setApplicationMenu(buildAppMenu(dataDir, isDev));
-
-  // External-link handler: allowlist-guarded shell.openExternal.
-  // Tighter than just `endsWith(".x.ai")` — match exact host or an explicit
-  // subdomain set, and require GitHub URLs to be under the scriptr repo.
-  const xAiHosts = new Set(["x.ai", "console.x.ai", "api.x.ai"]);
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    try {
-      const parsed = new URL(url);
-      const isXai = parsed.protocol === "https:" && xAiHosts.has(parsed.hostname);
-      // Path boundary check: `/Daelso/scriptr` must match the full path or
-      // be followed by `/`. Otherwise `/Daelso/scriptr-evil` would match
-      // because string.startsWith doesn't respect path segments.
-      const isScriptrRepo =
-        parsed.protocol === "https:" &&
-        parsed.hostname === "github.com" &&
-        (parsed.pathname === GITHUB_REPO_PATH ||
-          parsed.pathname.startsWith(GITHUB_REPO_PATH + "/"));
-      if (isXai || isScriptrRepo) void shell.openExternal(url);
-    } catch {
-      // ignore invalid URLs
-    }
-    return { action: "deny" };
-  });
-
-  // Block in-place navigation away from the embedded Next server. Without
-  // this, a renderer-side `location.href = "https://github.com/..."` would
-  // navigate the main window. The network filter would block the actual
-  // fetch, but the user could still be stranded on a blank/error page.
-  // We only allow navigation within the loopback origin we booted.
-  const loopbackOrigin = serverHandle.url; // http://127.0.0.1:<port>
-  mainWindow.webContents.on("will-navigate", (event, url) => {
-    if (!url.startsWith(loopbackOrigin + "/") && url !== loopbackOrigin) {
-      event.preventDefault();
-      // If it looks like an external link, route through the same allowlist
-      // as the window-open handler so users still get useful behavior.
-      try {
-        const parsed = new URL(url);
-        const isXai = parsed.protocol === "https:" && xAiHosts.has(parsed.hostname);
-        const isScriptrRepo =
-          parsed.protocol === "https:" &&
-          parsed.hostname === "github.com" &&
-          (parsed.pathname === GITHUB_REPO_PATH ||
-            parsed.pathname.startsWith(GITHUB_REPO_PATH + "/"));
-        if (isXai || isScriptrRepo) void shell.openExternal(url);
-      } catch {
-        // ignore
-      }
-    }
-  });
-
-  mainWindow.once("ready-to-show", () => mainWindow?.show());
-
-  // Capture into a local so the closure doesn't have to deal with the
-  // module-scoped `mainWindow` going null between event registration and fire.
-  const win = mainWindow;
-  win.webContents.on("render-process-gone", (_event, details) => {
-    void handleRendererCrash(win, dataDir, details);
-  });
-
-  const landing = needsOnboarding ? "/settings?onboarding=1" : "/";
-  await mainWindow.loadURL(serverHandle.url + landing);
-
-  // 6. Updates: gated behind did-finish-load so the check doesn't compete
-  //    with first paint. updatesEnabled is already false during onboarding
-  //    (set in step 2), so no extra check needed here.
-  if (updatesEnabled) {
-    const runCheck = configureUpdater({
-      dataDir,
-      onUpdateReady: (version) => {
-        mainWindow?.webContents.executeJavaScript(
-          `window.dispatchEvent(new CustomEvent("scriptr:update-ready", { detail: ${JSON.stringify(version)} }))`,
-        ).catch(() => { /* swallow — notification UX is best-effort */ });
-      },
-    });
-    mainWindow.webContents.once("did-finish-load", () => {
-      void runCheck();
-    });
-  }
+  // 5. Create the window — application menu set once for all platforms.
+  await createMainWindow(dataDir, needsOnboarding, updatesEnabled);
 }

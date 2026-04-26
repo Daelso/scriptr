@@ -237,6 +237,24 @@ describe("updateChapter", () => {
       ).rejects.toThrow("Chapter not found: nonexistent-id");
     });
   });
+
+  it("recomputes wordCount when sections are updated and wordCount is omitted", async () => {
+    await withTemp(async (dir) => {
+      const story = await createStory(dir, { title: "My Story" });
+      const created = await createChapter(dir, story.slug, { title: "Chapter One" });
+
+      const updated = await updateChapter(dir, story.slug, created.id, {
+        sections: [
+          { id: "s1", content: "one two" },
+          { id: "s2", content: "three" },
+        ],
+      });
+
+      expect(updated.wordCount).toBe(3);
+      const reloaded = await getChapter(dir, story.slug, created.id);
+      expect(reloaded?.wordCount).toBe(3);
+    });
+  });
 });
 
 describe("deleteChapter", () => {

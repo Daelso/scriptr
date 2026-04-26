@@ -119,4 +119,18 @@ describe("/api/stories", () => {
     expect(body.ok).toBe(false);
     expect(body.error).toBe("title required");
   });
+
+  it("POST with malformed JSON body returns 400 instead of 500", async () => {
+    const req = new Request("http://localhost/api/stories", {
+      method: "POST",
+      body: "{",
+      headers: { "content-type": "application/json" },
+    }) as unknown as NextRequest;
+
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("invalid JSON body");
+  });
 });

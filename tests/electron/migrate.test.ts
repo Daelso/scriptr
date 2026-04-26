@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { decideStartupAction, type StartupInputs } from "@/electron/migrate";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { decideStartupAction, isCandidateSafe, type StartupInputs } from "@/electron/migrate";
 
 function inputs(overrides: Partial<StartupInputs> = {}): StartupInputs {
   return {
@@ -64,5 +67,35 @@ describe("migrate — decideStartupAction", () => {
       targetIfCopy: "/app-data/data",
       locationJsonPath: "/app-data/location.json",
     });
+  });
+});
+
+describe("migrate — isCandidateSafe", () => {
+  it("returns false when any nested symlink exists", async () => {
+    const root = await mkdtemp(join(tmpdir(), "scriptr-migrate-safe-"));
+    try {
+      await mkdir(join(root, "nested"), { recursive: true });
+      await writeFile(join(root, "config.json"), "{}", "utf-8");
+      await symlink("/tmp", join(root, "nested", "out-link"));
+
+      const safe = await isCandidateSafe(root);
+      expect(safe).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("returns true when the tree contains no symlinks", async () => {
+    const root = await mkdtemp(join(tmpdir(), "scriptr-migrate-safe-"));
+    try {
+      await mkdir(join(root, "nested"), { recursive: true });
+      await writeFile(join(root, "config.json"), "{}", "utf-8");
+      await writeFile(join(root, "nested", "story.json"), "{}", "utf-8");
+
+      const safe = await isCandidateSafe(root);
+      expect(safe).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

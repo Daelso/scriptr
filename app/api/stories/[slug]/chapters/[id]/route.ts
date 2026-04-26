@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { ok, fail, readJson } from "@/lib/api";
+import { ok, fail, readJson, JsonParseError } from "@/lib/api";
 import { getChapter, updateChapter, deleteChapter } from "@/lib/storage/chapters";
 import { effectiveDataDir } from "@/lib/config";
 import type { Chapter } from "@/lib/types";
@@ -19,7 +19,16 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
 
 export async function PATCH(req: NextRequest, ctx: Ctx) {
   const { slug, id } = await ctx.params;
-  const body = await readJson<Partial<Chapter>>(req);
+  let body: Partial<Chapter>;
+  try {
+    body = await readJson<Partial<Chapter>>(req);
+  } catch (err) {
+    if (err instanceof JsonParseError) return fail(err.message, 400);
+    throw err;
+  }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return fail("request body must be an object", 400);
+  }
   const patch: Partial<Chapter> = {};
   for (const k of ALLOWED) if (k in body) (patch as Record<string, unknown>)[k] = body[k];
   try {
