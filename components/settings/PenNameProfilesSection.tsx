@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,9 +15,28 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { RichTextEditor } from "@/components/editor/RichTextEditor";
 import { toSlug } from "@/lib/slug";
 import type { PenNameProfile } from "@/lib/config";
+
+// Lazy-load the TipTap-backed editor so the ~408KB raw / ~128KB gzipped
+// ProseMirror+TipTap chunk does not land in the settings page's first-load
+// JS. Settings is the first thing many users see; the editor only matters
+// after they expand a pen-name card and start typing in the default-message
+// field. `ssr: false` is required because TipTap's `useEditor` hook reads
+// from the DOM and must run in the browser. The placeholder mirrors the
+// editor's `min-h-[5em]` host so the layout doesn't jump on hydration.
+const RichTextEditor = dynamic(
+  () =>
+    import("@/components/editor/RichTextEditor").then((m) => ({
+      default: m.RichTextEditor,
+    })),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="min-h-[5em] rounded-md border border-input bg-muted/40 animate-pulse" />
+    ),
+  },
+);
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
