@@ -46,8 +46,55 @@ jobs:
       - name: Next.js build
         run: npm run build
 
+      # Privacy gate, surfaced as its own labeled check so reviewers see it in
+      # the PR status list. Without this split, a regression in the egress
+      # test would still fail "Tests" but the privacy intent gets lost in the
+      # 700+ other tests. The file is also covered by `npm test` below — the
+      # duplication is intentional and costs <1s.
+      - name: Privacy — no external egress
+        run: npx vitest run tests/privacy/
+
       - name: Tests
         run: npm test
+
+      # Visibility-only: emit one ::warning:: annotation per high/critical
+      # advisory. We deliberately do NOT fail the build — the goal is for
+      # reviewers to see the dependency posture at a glance. `npm audit`
+      # exits non-zero when findings exist; `continue-on-error` keeps the
+      # job green and the inline parser turns the JSON into annotations.
+      # No github.* expressions are interpolated into the run: block —
+      # input comes only from `npm audit` against the checked-in lockfile.
+      - name: Dependency audit (non-blocking)
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          npm audit --audit-level=high --json > audit.json
+          set -e
+          if [[ ! -s audit.json ]]; then
+            echo "npm audit produced no output"
+            exit 0
+          fi
+          NODE_NO_WARNINGS=1 node -e '
+            const fs = require("node:fs");
+            let report;
+            try { report = JSON.parse(fs.readFileSync("audit.json", "utf-8")); }
+            catch (e) { console.log("::warning ::npm audit output was not valid JSON: " + e.message); process.exit(0); }
+            const vulns = (report && report.vulnerabilities) || {};
+            let count = 0;
+            for (const [name, info] of Object.entries(vulns)) {
+              const sev = info && info.severity;
+              if (sev !== "high" && sev !== "critical") continue;
+              const via = Array.isArray(info.via) ? info.via : [];
+              const advisory = via.find((v) => v && typeof v === "object" && v.url);
+              const url = advisory ? advisory.url : "https://github.com/advisories";
+              const title = (advisory && advisory.title) || sev;
+              console.log(`::warning ::${name} (${sev}): ${title} — ${url}`);
+              count += 1;
+            }
+            console.log(`npm audit summary: ${count} high/critical advisory annotation(s) emitted`);
+          '
+          rm -f audit.json
 
   # Cross-platform typecheck + Electron compile. Lint/build/test don't
   # vary by OS so they stay Linux-only above. This matrix exists to
