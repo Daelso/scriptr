@@ -60,6 +60,18 @@ describe("config", () => {
     });
   });
 
+  it("saveConfig does not persist env apiKey when saving unrelated fields", async () => {
+    await withTemp(async (dir) => {
+      process.env.XAI_API_KEY = "xai-from-env";
+      await saveConfig(dir, { theme: "dark" });
+
+      const { readFile } = await import("node:fs/promises");
+      const raw = JSON.parse(await readFile(join(dir, "config.json"), "utf8"));
+      expect(raw.theme).toBe("dark");
+      expect(raw.apiKey).toBeUndefined();
+    });
+  });
+
   it("persists and reloads styleDefaults", async () => {
     await withTemp(async (dir) => {
       await saveConfig(dir, { styleDefaults: { tense: "present", noEmDashes: false } });

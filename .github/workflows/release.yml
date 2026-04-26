@@ -144,7 +144,13 @@ jobs:
               targets+=("release/win-unpacked/scriptr.exe")
               ;;
             macos-latest)
-              mapfile -t apps < <(find release -maxdepth 3 -type d -name "scriptr.app" 2>/dev/null)
+              # macOS runners ship bash 3.2 (Apple's last GPLv2 bash) which
+              # lacks `mapfile`. Use a portable while-read loop so this step
+              # works on every platform.
+              apps=()
+              while IFS= read -r line; do
+                apps+=("$line")
+              done < <(find release -maxdepth 3 -type d -name "scriptr.app" 2>/dev/null)
               if [[ ${#apps[@]} -eq 0 ]]; then
                 echo "::error ::No scriptr.app found under release/"
                 ls -la release/ || true

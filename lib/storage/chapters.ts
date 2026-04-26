@@ -21,18 +21,33 @@ async function readAllChapterFiles(
     throw err;
   }
 
-  const results: { path: string; chapter: Chapter }[] = [];
-  for (const file of files) {
-    if (!file.endsWith(".json")) continue;
-    const filePath = join(dir, file);
-    try {
-      const raw = await readFile(filePath, "utf-8");
-      results.push({ path: filePath, chapter: JSON.parse(raw) as Chapter });
-    } catch {
-      // skip malformed files
-    }
-  }
-  return results;
+  const chapterFiles = files.filter((file) => file.endsWith(".json"));
+  const entries = await Promise.all(
+    chapterFiles.map(async (file) => {
+      const filePath = join(dir, file);
+      try {
+        const raw = await readFile(filePath, "utf-8");
+        return { path: filePath, chapter: JSON.parse(raw) as Chapter };
+      } catch {
+        // skip malformed files
+        return null;
+      }
+    })
+  );
+  return entries.filter((entry): entry is { path: string; chapter: Chapter } => entry !== null);
+}
+
+async function findChapterFileById(
+  dataDir: string,
+  slug: string,
+  chapterId: string
+): Promise<{ path: string; chapter: Chapter } | null> {
+  const all = await readAllChapterFiles(dataDir, slug);
+  return all.find((entry) => entry.chapter.id === chapterId) ?? null;
+}
+
+function wordCountForSections(sections: Chapter["sections"]): number {
+  return sections.reduce((sum, section) => sum + countWords(section.content), 0);
 }
 
 async function rewriteChapterFilenames(
@@ -115,10 +130,7 @@ export async function createImportedChapter(
     id: randomUUID(),
     content,
   }));
-  const wordCount = input.sectionContents.reduce(
-    (acc, s) => acc + countWords(s),
-    0
-  );
+  const wordCount = wordCountForSections(sections);
 
   const chapter: Chapter = {
     id: randomUUID(),
@@ -168,8 +180,7 @@ export async function getChapter(
   if (!story) return null;
   if (!story.chapterOrder.includes(chapterId)) return null;
 
-  const existing = await readAllChapterFiles(dataDir, slug);
-  const entry = existing.find((e) => e.chapter.id === chapterId);
+  const entry = await findChapterFileById(dataDir, slug, chapterId);
   return entry?.chapter ?? null;
 }
 
@@ -185,27 +196,40 @@ export async function updateChapter(
     throw new Error(`Chapter not found: ${chapterId}`);
   }
 
-  const existing = await readAllChapterFiles(dataDir, slug);
-  const entry = existing.find((e) => e.chapter.id === chapterId);
+  const entry = await findChapterFileById(dataDir, slug, chapterId);
   if (!entry) throw new Error(`Chapter not found: ${chapterId}`);
 
-  const updated: Chapter = {
+  const hasSectionsPatch = Object.prototype.hasOwnProperty.call(patch, "sections");
+  const updatedBase: Chapter = {
     ...entry.chapter,
     ...patch,
     id: entry.chapter.id,
   };
+  const shouldRecalculateWordCount =
+    hasSectionsPatch &&
+    patch.wordCount === undefined &&
+    Array.isArray(updatedBase.sections);
+  const updated: Chapter =
+    shouldRecalculateWordCount
+      ? { ...updatedBase, wordCount: wordCountForSections(updatedBase.sections) }
+      : updatedBase;
 
-  // Write to old path first so rewriteChapterFilenames can find it.
+  const titleChanged =
+    typeof patch.title === "string" && patch.title !== entry.chapter.title;
+
+  // Write to old path first so rewriteChapterFilenames can find it if needed.
   await writeFile(entry.path, JSON.stringify(updated, null, 2), "utf-8");
 
-  // Rebuild full ordered chapter list with the update applied.
-  const byId = new Map(existing.map((e) => [e.chapter.id, e.chapter]));
-  byId.set(updated.id, updated);
-  const orderedChapters = story.chapterOrder
-    .map((id) => byId.get(id))
-    .filter((c): c is Chapter => c !== undefined);
-
-  await rewriteChapterFilenames(dataDir, slug, orderedChapters);
+  if (titleChanged) {
+    // Rebuild full ordered chapter list with the update applied.
+    const existing = await readAllChapterFiles(dataDir, slug);
+    const byId = new Map(existing.map((e) => [e.chapter.id, e.chapter]));
+    byId.set(updated.id, updated);
+    const orderedChapters = story.chapterOrder
+      .map((id) => byId.get(id))
+      .filter((c): c is Chapter => c !== undefined);
+    await rewriteChapterFilenames(dataDir, slug, orderedChapters);
+  }
   await updateStory(dataDir, slug, {});
 
   return updated;

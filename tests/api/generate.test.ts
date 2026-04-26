@@ -99,6 +99,14 @@ function makeReq(body: unknown): NextRequest {
   }) as unknown as NextRequest;
 }
 
+function makeRawReq(rawBody: string): NextRequest {
+  return new Request("http://localhost/api/generate", {
+    method: "POST",
+    body: rawBody,
+    headers: { "content-type": "application/json" },
+  }) as unknown as NextRequest;
+}
+
 // ---- setup ----
 
 const originalEnv = process.env;
@@ -304,6 +312,22 @@ describe("POST /api/generate", () => {
     const body = await res.json() as { ok: boolean; error: string };
     expect(body.ok).toBe(false);
     expect(body.error).toMatch(/unsupported mode/);
+  });
+
+  it("malformed JSON body returns 400", async () => {
+    const res = await POST(makeRawReq("{"));
+    expect(res.status).toBe(400);
+    const body = await res.json() as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("invalid JSON body");
+  });
+
+  it("non-object JSON body returns 400", async () => {
+    const res = await POST(makeRawReq('"string-body"'));
+    expect(res.status).toBe(400);
+    const body = await res.json() as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("request body must be an object");
   });
 
   it("missing story returns 400 JSON error", async () => {

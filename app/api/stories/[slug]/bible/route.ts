@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { ok, fail, readJson } from "@/lib/api";
+import { ok, fail, readJson, JsonParseError } from "@/lib/api";
 import { getBible, saveBible, validateBible } from "@/lib/storage/bible";
 import { getStory } from "@/lib/storage/stories";
 import { effectiveDataDir } from "@/lib/config";
@@ -19,7 +19,13 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
   const story = await getStory(effectiveDataDir(), slug);
   if (!story) return fail("story not found", 404);
 
-  const body = await readJson<unknown>(req);
+  let body: unknown;
+  try {
+    body = await readJson<unknown>(req);
+  } catch (err) {
+    if (err instanceof JsonParseError) return fail(err.message, 400);
+    throw err;
+  }
   if (!validateBible(body)) return fail("invalid bible shape");
 
   const saved = await saveBible(effectiveDataDir(), slug, body);
