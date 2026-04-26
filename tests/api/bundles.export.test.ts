@@ -115,6 +115,23 @@ describe("POST /api/bundles/[slug]/export/epub", () => {
     expect(res.status).toBe(400);
   });
 
+  it("400 on malformed JSON body", async () => {
+    const story = await createStory(tmpDir, { title: "Mal" });
+    await createImportedChapter(tmpDir, story.slug, { title: "C", sectionContents: ["x."] });
+    const b = await createBundle(tmpDir, { title: "Mal" });
+    await updateBundle(tmpDir, b.slug, { stories: [{ storySlug: story.slug }] });
+
+    const { POST } = await import("@/app/api/bundles/[slug]/export/epub/route");
+    const req = new Request(`http://localhost/api/bundles/${b.slug}/export/epub`, {
+      method: "POST",
+      body: "not-json",
+      headers: { "content-type": "application/json" },
+    }) as unknown as NextRequest;
+    const ctx = { params: Promise.resolve({ slug: b.slug }) };
+    const res = await POST(req, ctx);
+    expect(res.status).toBe(400);
+  });
+
   it("appends author note from pen-name profile when configured", async () => {
     const { saveConfig } = await import("@/lib/config");
     await saveConfig(tmpDir, {
