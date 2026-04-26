@@ -1,0 +1,113 @@
+import { pathToFileURL } from "node:url";
+import { rm } from "node:fs/promises";
+import {
+  renderChapterPreviewHtml,
+  renderStoryTitlePageHtml,
+  stripPreviewWrapper,
+  EPUB_STYLESHEET,
+} from "@/lib/publish/epub-preview";
+import { appendAuthorNoteContent } from "@/lib/publish/epub";
+import type { ResolvedAuthorNote } from "@/lib/publish/author-note";
+import type { Bundle, Chapter, Story } from "@/lib/types";
+import type { EpubVersion } from "@/lib/storage/paths";
+
+export type ResolvedStory = { story: Story; chapters: Chapter[] };
+
+export type BundleEpubInput = {
+  bundle: Bundle;
+  stories: Map<string, ResolvedStory>;
+  coverPath?: string;
+  version?: EpubVersion;
+  authorNote?: ResolvedAuthorNote;
+};
+
+type EpubGenFn = (
+  options: {
+    title: string;
+    author: string;
+    description?: string;
+    lang?: string;
+    cover?: string;
+    ignoreFailedDownloads?: boolean;
+    css?: string;
+  },
+  content: Array<{ title: string; content: string }>,
+  version?: 2 | 3,
+  verbose?: boolean,
+) => Promise<Buffer>;
+
+function getGenerator(): EpubGenFn {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const mod = require("epub-gen-memory") as { default?: EpubGenFn } & EpubGenFn;
+  return (mod.default ?? mod) as EpubGenFn;
+}
+
+export async function buildBundleEpubBytes(input: BundleEpubInput): Promise<Uint8Array> {
+  const { bundle, stories, coverPath, version = 3, authorNote } = input;
+
+  const content: Array<{ title: string; content: string }> = [];
+  for (const ref of bundle.stories) {
+    const resolved = stories.get(ref.storySlug);
+    if (!resolved) continue;
+
+    const displayTitle = ref.titleOverride ?? resolved.story.title;
+    const displayDescription = ref.descriptionOverride ?? resolved.story.description;
+
+    content.push({
+      title: displayTitle,
+      content: renderStoryTitlePageHtml(displayTitle, displayDescription),
+    });
+
+    resolved.chapters.forEach((chapter, idx) => {
+      content.push({
+        title: chapter.title || `Chapter ${idx + 1}`,
+        content: stripPreviewWrapper(
+          renderChapterPreviewHtml(chapter, { chapterNumber: idx + 1 }),
+        ),
+      });
+    });
+  }
+
+  // Track temp PNG files written for the QR data-URL workaround so we can
+  // clean them up regardless of whether the generator throws (mirrors the
+  // pattern in `buildEpubBytes`).
+  const tempImagePaths: string[] = [];
+
+  try {
+    if (authorNote) {
+      await appendAuthorNoteContent(content, authorNote, tempImagePaths);
+      // `appendAuthorNoteContent` pushes `title: "A note from the author"`.
+      // epub-gen-memory echoes that title into both <title> and <h1> in the
+      // generated xhtml, so the phrase would appear 3× in that file plus
+      // once in toc.xhtml — 4 total. Since our HTML already contains the
+      // heading as <h2>A note from the author</h2>, we clear the entry title
+      // so epub-gen-memory emits no duplicate heading and the phrase appears
+      // exactly once across the archive.
+      const last = content[content.length - 1];
+      if (last) last.title = "";
+    }
+
+    const generator = getGenerator();
+    const buffer = await generator(
+      {
+        title: bundle.title,
+        author: bundle.authorPenName,
+        description: bundle.description,
+        lang: bundle.language || "en",
+        // file:// URL avoids the 0-byte-cover gotcha in epub-gen-memory.
+        cover: coverPath ? pathToFileURL(coverPath).href : undefined,
+        ignoreFailedDownloads: true,
+        css: EPUB_STYLESHEET,
+      },
+      content,
+      version,
+    );
+
+    return new Uint8Array(buffer);
+  } finally {
+    // Best-effort cleanup of QR temp PNGs.
+    for (const path of tempImagePaths) {
+      await rm(path, { force: true }).catch(() => {});
+    }
+  }
+}
