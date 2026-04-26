@@ -4,6 +4,14 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RichTextEditor } from "@/components/editor/RichTextEditor";
@@ -141,6 +149,8 @@ function PenNameCard({
 }) {
   const [local, setLocal] = useState<PenNameProfile>({ ...initial });
   const [saving, setSaving] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const slug = toSlug(name);
 
   async function handleSave() {
@@ -149,6 +159,17 @@ function PenNameCard({
       await onSaveProfile(local);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleConfirmDelete() {
+    if (!onDeleteProfile) return;
+    setDeleting(true);
+    try {
+      await onDeleteProfile();
+      setConfirmingDelete(false);
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -211,13 +232,53 @@ function PenNameCard({
               type="button"
               variant="ghost"
               data-testid={`pen-delete-${slug}`}
-              onClick={() => onDeleteProfile()}
+              onClick={() => setConfirmingDelete(true)}
             >
               Delete profile
             </Button>
           )}
         </div>
       </CardContent>
+
+      {hasSavedProfile && onDeleteProfile && (
+        <Dialog
+          open={confirmingDelete}
+          onOpenChange={(open) => {
+            if (!open) setConfirmingDelete(false);
+          }}
+        >
+          <DialogContent showCloseButton={false}>
+            <DialogHeader>
+              <DialogTitle>
+                Delete profile for &ldquo;{name}&rdquo;?
+              </DialogTitle>
+              <DialogDescription>
+                Stories using this pen name will lose their author-note
+                configuration. This cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setConfirmingDelete(false)}
+                disabled={deleting}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                data-testid={`pen-delete-confirm-${slug}`}
+                onClick={handleConfirmDelete}
+                disabled={deleting}
+              >
+                {deleting ? "Deleting…" : "Delete"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </Card>
   );
 }

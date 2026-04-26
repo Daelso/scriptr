@@ -181,7 +181,7 @@ describe("PenNameProfilesSection", () => {
     unmount();
   });
 
-  it("calls onDelete when a profile's delete button is clicked", () => {
+  it("does not call onDelete on the first click — opens a confirmation dialog instead", () => {
     const onDelete = vi.fn();
     const { container, unmount } = mount(
       <PenNameProfilesSection
@@ -198,6 +198,20 @@ describe("PenNameProfilesSection", () => {
     expect(deleteBtn).not.toBeNull();
     act(() => {
       deleteBtn.click();
+    });
+
+    // Clicking the trigger must NOT fire onDelete — it only opens the dialog.
+    expect(onDelete).not.toHaveBeenCalled();
+
+    // The dialog renders into a portal on document.body, not inside our
+    // container. Look up the destructive confirmation button there.
+    const confirmBtn = document.body.querySelector(
+      '[data-testid="pen-delete-confirm-jane-doe"]',
+    ) as HTMLButtonElement | null;
+    expect(confirmBtn).not.toBeNull();
+
+    act(() => {
+      confirmBtn!.click();
     });
 
     expect(onDelete).toHaveBeenCalledWith("Jane Doe");
