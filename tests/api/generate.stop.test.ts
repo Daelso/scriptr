@@ -70,4 +70,18 @@ describe("POST /api/generate/stop", () => {
     const body2 = await res2.json() as { ok: boolean; data: { stopped: boolean } };
     expect(body2.data.stopped).toBe(false);
   });
+
+  it("malformed JSON body returns 400", async () => {
+    const req = new Request("http://localhost/api/generate/stop", {
+      method: "POST",
+      body: "{",
+      headers: { "content-type": "application/json" },
+    }) as unknown as NextRequest;
+
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    const body = await res.json() as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("invalid JSON body");
+  });
 });

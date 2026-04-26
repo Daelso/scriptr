@@ -16,7 +16,6 @@ import type { Config } from "@/lib/config";
 const baseCfg: Config = {
   defaultModel: "grok-4-latest",
   bindHost: "127.0.0.1",
-  bindPort: 3000,
   theme: "system",
   autoRecap: true,
   includeLastChapterFullText: false,
