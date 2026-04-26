@@ -64,6 +64,7 @@
  *   DELETE /api/bundles/[slug]
  *   PUT  /api/bundles/[slug]/cover
  *   DELETE /api/bundles/[slug]/cover
+ *   GET  /api/bundles/[slug]/preview
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -639,6 +640,26 @@ describe("no external egress from API routes", () => {
       }) as unknown as NextRequest;
       const delRes = await DELETE(delReq, ctx);
       expect(delRes.status).toBe(200);
+    }
+
+    // ── /api/bundles/[slug]/preview ────────────────────────────────────────
+    {
+      // Create or reuse a bundle for this exercise
+      const { POST: createBundleRoute } = await import("@/app/api/bundles/route");
+      const createRes = await createBundleRoute(
+        makeReq("http://localhost/api/bundles", {
+          method: "POST",
+          body: JSON.stringify({ title: "Preview Egress" }),
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      const previewSlug = (await createRes.json()).data.slug as string;
+
+      const { GET } = await import("@/app/api/bundles/[slug]/preview/route");
+      const ctx = { params: Promise.resolve({ slug: previewSlug }) };
+      const req = makeReq(`http://localhost/api/bundles/${previewSlug}/preview`);
+      const res = await GET(req, ctx);
+      expect(res.status).toBe(200);
     }
 
     // ── The load-bearing assertion ─────────────────────────────────────────
