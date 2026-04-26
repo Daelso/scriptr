@@ -298,7 +298,10 @@ async function main(): Promise<void> {
   // On macOS activate, `main()` can run after all windows are closed.
   // If backend state is already alive, only recreate the BrowserWindow.
   if (serverHandle && appDataDir) {
-    await createMainWindow(appDataDir, appNeedsOnboarding, appUpdatesEnabled);
+    const cfg = await loadConfig(appDataDir);
+    const needsOnboarding = !cfg.apiKey;
+    appNeedsOnboarding = needsOnboarding;
+    await createMainWindow(appDataDir, needsOnboarding, appUpdatesEnabled);
     return;
   }
 
