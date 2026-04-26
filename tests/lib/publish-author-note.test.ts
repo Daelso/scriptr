@@ -210,3 +210,72 @@ describe("buildAuthorNoteHtml", () => {
     expect(html).not.toContain("aria-evil");
   });
 });
+
+import { resolveBundleAuthorNote } from "@/lib/publish/author-note";
+
+describe("resolveBundleAuthorNote", () => {
+  it("returns null for missing profile", () => {
+    expect(resolveBundleAuthorNote(undefined)).toBeNull();
+  });
+
+  it("returns null for profile with no usable content", () => {
+    const profile: PenNameProfile = {
+      defaultMessageHtml: "",
+      email: "",
+      mailingListUrl: "",
+    };
+    expect(resolveBundleAuthorNote(profile)).toBeNull();
+  });
+
+  it("returns null when message and email and mailing list URL are all whitespace", () => {
+    const profile: PenNameProfile = {
+      defaultMessageHtml: "   ",
+      email: "  ",
+      mailingListUrl: "\t",
+    };
+    expect(resolveBundleAuthorNote(profile)).toBeNull();
+  });
+
+  it("returns ResolvedAuthorNote when profile has a defaultMessageHtml", () => {
+    const profile: PenNameProfile = {
+      defaultMessageHtml: "<p>Thanks for reading.</p>",
+    };
+    const note = resolveBundleAuthorNote(profile);
+    expect(note).not.toBeNull();
+    expect(note!.messageHtml).toBe("<p>Thanks for reading.</p>");
+    expect(note!.email).toBeUndefined();
+    expect(note!.mailingListUrl).toBeUndefined();
+  });
+
+  it("returns ResolvedAuthorNote when profile has only an email", () => {
+    const profile: PenNameProfile = {
+      email: "author@example.com",
+    };
+    const note = resolveBundleAuthorNote(profile);
+    expect(note).not.toBeNull();
+    expect(note!.email).toBe("author@example.com");
+  });
+
+  it("returns ResolvedAuthorNote when profile has only a mailingListUrl", () => {
+    const profile: PenNameProfile = {
+      mailingListUrl: "https://example.com/subscribe",
+    };
+    const note = resolveBundleAuthorNote(profile);
+    expect(note).not.toBeNull();
+    expect(note!.mailingListUrl).toBe("https://example.com/subscribe");
+  });
+
+  it("includes all fields when all are present", () => {
+    const profile: PenNameProfile = {
+      defaultMessageHtml: "<p>Hi.</p>",
+      email: "a@b.com",
+      mailingListUrl: "https://x.io",
+    };
+    const note = resolveBundleAuthorNote(profile);
+    expect(note).toEqual({
+      messageHtml: "<p>Hi.</p>",
+      email: "a@b.com",
+      mailingListUrl: "https://x.io",
+    });
+  });
+});

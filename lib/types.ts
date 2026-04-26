@@ -75,3 +75,27 @@ export type GenerateEvent =
 export type ApiResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: string };
+
+export type BundleStoryRef = {
+  storySlug: string;
+  titleOverride?: string;
+  descriptionOverride?: string;
+};
+
+export type Bundle = {
+  slug: string;
+  title: string;
+  authorPenName: string;
+  description: string;
+  language: string;
+  createdAt: string;
+  updatedAt: string;
+  stories: BundleStoryRef[];
+};
+
+export type BundleSummary = {
+  slug: string;
+  title: string;
+  storyCount: number;
+  updatedAt: string;
+};
