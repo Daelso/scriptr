@@ -30,8 +30,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -76,11 +76,29 @@ jobs:
         os: ${{ fromJSON(needs.setup.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
+
+      # Cache Electron's prebuilt binary download and electron-builder's
+      # tool/staging cache. Cuts 1–2 min/OS off the build job.
+      # The cache action silently skips paths that don't exist on the
+      # current OS, so we list every platform's directory in one step.
+      # Key by lockfile hash so version bumps re-fetch; restore-keys
+      # lets stale-but-similar caches still hit on bumps.
+      - name: Cache Electron downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            electron-${{ runner.os }}-
 
       - name: Install dependencies
         run: npm ci
@@ -174,7 +192,7 @@ jobs:
       # Upload installers as workflow artifacts so manual runs are useful.
       # On tag push these are duplicated by the GitHub Release upload; harmless.
       - name: Upload installers as workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: scriptr-${{ matrix.os }}
           path: |
