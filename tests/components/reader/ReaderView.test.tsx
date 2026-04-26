@@ -83,6 +83,36 @@ describe("ReaderView author-note", () => {
     unmount();
   });
 
+  it("preserves the .author-note* class hooks the reader CSS targets", () => {
+    // The reader stylesheet in app/globals.css scopes its rules to these
+    // exact class names. If the SafeHtml sanitize allowlist drops `class`
+    // (or the build pipeline rewrites the HTML), the styles silently break.
+    // This test guards the wiring between the HTML produced by
+    // `buildAuthorNoteHtml` and the CSS in globals.css.
+    const html =
+      '<div class="author-note">' +
+      '<h2>A note from the author</h2>' +
+      '<div class="author-note-message"><p>Hi</p></div>' +
+      '<div class="author-note-footer"><p>Find me</p>' +
+      '<img alt="QR" width="200" height="200" src="https://example.com/qr.png" />' +
+      "</div>" +
+      "</div>";
+    const { container, unmount } = mount(
+      <ReaderView
+        story={baseStory()}
+        chapters={baseChapters}
+        authorNoteHtml={html}
+      />,
+    );
+
+    expect(container.querySelector(".author-note")).not.toBeNull();
+    expect(container.querySelector(".author-note-message")).not.toBeNull();
+    expect(container.querySelector(".author-note-footer")).not.toBeNull();
+    expect(container.querySelector(".author-note-footer img")).not.toBeNull();
+
+    unmount();
+  });
+
   it("omits the note block when authorNoteHtml is undefined", () => {
     const { container, unmount } = mount(
       <ReaderView story={baseStory()} chapters={baseChapters} />,
