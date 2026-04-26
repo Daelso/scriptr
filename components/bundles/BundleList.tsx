@@ -21,6 +21,14 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { NewBundleDialog } from "@/components/bundles/NewBundleDialog";
 import type { BundleSummary } from "@/lib/types";
 
@@ -45,15 +53,24 @@ function relativeTime(iso: string): string {
 export function BundleList() {
   const { data, mutate } = useSWR<BundleSummary[]>("/api/bundles", fetcher);
   const [newOpen, setNewOpen] = useState(false);
+  const [pendingDeleteSlug, setPendingDeleteSlug] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
-  async function handleDelete(slug: string) {
-    const res = await fetch(`/api/bundles/${slug}`, { method: "DELETE" });
-    const body = await res.json();
-    if (!body.ok) {
-      toast.error(body.error ?? "Delete failed");
-      return;
+  async function handleConfirmDelete() {
+    if (!pendingDeleteSlug) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/bundles/${pendingDeleteSlug}`, { method: "DELETE" });
+      const body = await res.json();
+      if (!body.ok) {
+        toast.error(body.error ?? "Delete failed");
+        return;
+      }
+      setPendingDeleteSlug(null);
+      void mutate();
+    } finally {
+      setDeleting(false);
     }
-    void mutate();
   }
 
   if (!data) {
@@ -103,7 +120,7 @@ export function BundleList() {
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
                       <DropdownMenuItem
-                        onClick={() => void handleDelete(b.slug)}
+                        onClick={() => setPendingDeleteSlug(b.slug)}
                         data-testid={`bundle-delete-${b.slug}`}
                       >
                         Delete
@@ -123,6 +140,39 @@ export function BundleList() {
         onOpenChange={setNewOpen}
         onCreated={() => void mutate()}
       />
+
+      <Dialog
+        open={pendingDeleteSlug !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDeleteSlug(null);
+        }}
+      >
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Delete this bundle?</DialogTitle>
+            <DialogDescription>
+              This removes <code>data/bundles/{pendingDeleteSlug}/</code> recursively, including any built EPUB files. The member stories themselves are not affected. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setPendingDeleteSlug(null)}
+              disabled={deleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void handleConfirmDelete()}
+              disabled={deleting}
+              data-testid="bundle-delete-confirm"
+            >
+              {deleting ? "Deleting…" : "Delete bundle"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

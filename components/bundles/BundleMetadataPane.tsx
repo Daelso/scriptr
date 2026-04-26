@@ -110,7 +110,7 @@ export function BundleMetadataPane({ bundle, onUpdate }: Props) {
   const canBuild =
     draft.title.trim() !== "" &&
     draft.authorPenName.trim() !== "" &&
-    draft.stories.length > 0 &&
+    bundle.stories.length > 0 &&
     !building;
 
   return (
@@ -173,7 +173,7 @@ export function BundleMetadataPane({ bundle, onUpdate }: Props) {
         <div className="flex flex-col gap-3">
           <h2 className="text-sm font-semibold">Build</h2>
           <div className="text-xs text-muted-foreground">
-            {draft.stories.length} {draft.stories.length === 1 ? "story" : "stories"}
+            {bundle.stories.length} {bundle.stories.length === 1 ? "story" : "stories"}
           </div>
           <div
             role="radiogroup"
