@@ -18,5 +18,9 @@
     }
   },
   "include": ["**/*.ts", "../lib/**/*.ts"],
-  "exclude": ["**/*.test.ts", "../lib/**/*.test.ts"]
+  "exclude": [
+    "**/*.test.ts",
+    "../lib/**/*.test.ts",
+    "../lib/publish/**"
+  ]
 }
