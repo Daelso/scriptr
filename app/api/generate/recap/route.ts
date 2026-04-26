@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { ok, fail, readJson } from "@/lib/api";
+import { ok, fail, readJson, JsonParseError } from "@/lib/api";
 import { loadConfig, effectiveDataDir } from "@/lib/config";
 import { getStory } from "@/lib/storage/stories";
 import { getChapter, updateChapter } from "@/lib/storage/chapters";
@@ -7,7 +7,16 @@ import { getGrokClient, MissingKeyError } from "@/lib/grok";
 import { generateRecap } from "@/lib/recap";
 
 export async function POST(req: NextRequest) {
-  const body = await readJson<{ storySlug?: unknown; chapterId?: unknown }>(req);
+  let body: { storySlug?: unknown; chapterId?: unknown };
+  try {
+    body = await readJson<{ storySlug?: unknown; chapterId?: unknown }>(req);
+  } catch (err) {
+    if (err instanceof JsonParseError) return fail(err.message, 400);
+    throw err;
+  }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return fail("request body must be an object", 400);
+  }
   if (typeof body.storySlug !== "string") return fail("storySlug required");
   if (typeof body.chapterId !== "string") return fail("chapterId required");
 

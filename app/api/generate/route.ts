@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import type OpenAI from "openai";
-import { readJson } from "@/lib/api";
+import { readJson, JsonParseError } from "@/lib/api";
 import { loadConfig, effectiveDataDir } from "@/lib/config";
 import { getStory } from "@/lib/storage/stories";
 import { getBible } from "@/lib/storage/bible";
@@ -37,18 +37,50 @@ type OpenAIChunk = {
 };
 
 export async function POST(req: NextRequest): Promise<Response> {
-  const body = await readJson<GenerateRequest>(req);
+  let body: {
+    mode?: unknown;
+    storySlug?: unknown;
+    chapterId?: unknown;
+    sectionId?: unknown;
+    regenNote?: unknown;
+  };
+  try {
+    body = await readJson<{
+      mode?: unknown;
+      storySlug?: unknown;
+      chapterId?: unknown;
+      sectionId?: unknown;
+      regenNote?: unknown;
+    }>(req);
+  } catch (err) {
+    if (err instanceof JsonParseError) return json400(err.message);
+    throw err;
+  }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return json400("request body must be an object");
+  }
+  if (typeof body.storySlug !== "string" || body.storySlug === "") {
+    return json400("storySlug required");
+  }
+  if (typeof body.chapterId !== "string" || body.chapterId === "") {
+    return json400("chapterId required");
+  }
+  if (body.mode !== "full" && body.mode !== "section" && body.mode !== "continue") {
+    return json400(`unsupported mode: ${String(body.mode)}`);
+  }
 
-  if (body.mode === "full") {
-    return handleFull(body);
+  const parsedBody = body as GenerateRequest;
+
+  if (parsedBody.mode === "full") {
+    return handleFull(parsedBody);
   }
-  if (body.mode === "section") {
-    return handleSection(body);
+  if (parsedBody.mode === "section") {
+    return handleSection(parsedBody);
   }
-  if (body.mode === "continue") {
-    return handleContinue(body);
+  if (parsedBody.mode === "continue") {
+    return handleContinue(parsedBody);
   }
-  return json400(`unsupported mode: ${body.mode}`);
+  return json400(`unsupported mode: ${parsedBody.mode}`);
 }
 
 type ChapterStreamOptions = {
@@ -84,6 +116,7 @@ function runChapterStream(opts: ChapterStreamOptions): Response {
       const sections: Section[] = [...initialSections];
       let currentText = "";
       let finishReason = "stop";
+      let wasAborted = false;
 
       // Write queue: serializes all updateChapter calls to prevent concurrent writes.
       let writeQueue: Promise<void> = Promise.resolve();
@@ -132,7 +165,10 @@ function runChapterStream(opts: ChapterStreamOptions): Response {
           openAIStream: AsyncIterable<OpenAIChunk>
         ): AsyncIterable<string> {
           for await (const chunk of openAIStream) {
-            if (abort.signal.aborted) return;
+            if (abort.signal.aborted) {
+              wasAborted = true;
+              return;
+            }
             const choice = chunk.choices?.[0];
             if (choice?.finish_reason) finishReason = choice.finish_reason;
             const content = choice?.delta?.content;
@@ -143,7 +179,10 @@ function runChapterStream(opts: ChapterStreamOptions): Response {
         for await (const ev of chunkBySectionBreak(
           tokensOf(response as unknown as AsyncIterable<OpenAIChunk>)
         )) {
-          if (abort.signal.aborted) break;
+          if (abort.signal.aborted) {
+            wasAborted = true;
+            break;
+          }
 
           if (ev.type === "token") {
             currentText += ev.text;
@@ -179,6 +218,13 @@ function runChapterStream(opts: ChapterStreamOptions): Response {
           }
         });
         await writeQueue;
+
+        if (abort.signal.aborted || wasAborted) {
+          controller.enqueue(
+            sse({ type: "error", message: "generation stopped", kind: "aborted" })
+          );
+          return;
+        }
 
         controller.enqueue(sse({ type: "done", finishReason }));
 
@@ -456,6 +502,7 @@ async function handleSection(body: GenerateRequest): Promise<Response> {
     async start(controller) {
       let accumulated = "";
       let finishReason = "stop";
+      let wasAborted = false;
 
       controller.enqueue(sse({ type: "start", jobId }));
 
@@ -474,7 +521,10 @@ async function handleSection(body: GenerateRequest): Promise<Response> {
         );
 
         for await (const chunk of response as unknown as AsyncIterable<OpenAIChunk>) {
-          if (abort.signal.aborted) break;
+          if (abort.signal.aborted) {
+            wasAborted = true;
+            break;
+          }
           const choice = chunk.choices?.[0];
           if (choice?.finish_reason) finishReason = choice.finish_reason;
           const content = choice?.delta?.content;
@@ -482,6 +532,14 @@ async function handleSection(body: GenerateRequest): Promise<Response> {
             accumulated += content;
             controller.enqueue(sse({ type: "token", text: content }));
           }
+        }
+
+        if (abort.signal.aborted || wasAborted) {
+          // Stop semantics for section mode: keep the original section content.
+          controller.enqueue(
+            sse({ type: "error", message: "generation stopped", kind: "aborted" })
+          );
+          return;
         }
 
         // Replace the target section with accumulated text (trimmed)

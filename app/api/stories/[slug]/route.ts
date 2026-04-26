@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { ok, fail, readJson } from "@/lib/api";
+import { ok, fail, readJson, JsonParseError } from "@/lib/api";
 import { getStory, updateStory, deleteStory } from "@/lib/storage/stories";
 import { effectiveDataDir } from "@/lib/config";
 import type { Story } from "@/lib/types";
@@ -15,7 +15,16 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
 
 export async function PATCH(req: NextRequest, ctx: Ctx) {
   const { slug } = await ctx.params;
-  const body = await readJson<Partial<Story>>(req);
+  let body: Partial<Story>;
+  try {
+    body = await readJson<Partial<Story>>(req);
+  } catch (err) {
+    if (err instanceof JsonParseError) return fail(err.message, 400);
+    throw err;
+  }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return fail("request body must be an object", 400);
+  }
   const allowed: (keyof Story)[] = [
     "title", "authorPenName", "subtitle", "description",
     "copyrightYear", "language", "bisacCategory", "keywords",

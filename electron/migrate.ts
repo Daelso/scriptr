@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, realpath, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { App, Dialog } from "electron";
 
@@ -139,23 +139,30 @@ export async function resolveDataDir(app: App, dialog: Dialog): Promise<string> 
 
 /**
  * A candidate data directory is "safe" if its real path equals its given path
- * (no symlink redirection on the directory itself) and none of its top-level
- * entries are symlinks. We don't recurse — a malicious tree deeper than one
- * level still gets caught by `verbatimSymlinks: true` during cp.
+ * (no symlink redirection on the directory itself) and no file/dir anywhere
+ * under it is a symlink. We reject at discovery time so migration never
+ * copies a tree that can later pivot outside the trusted data root.
  */
-async function isCandidateSafe(candidate: string): Promise<boolean> {
+export async function isCandidateSafe(candidate: string): Promise<boolean> {
   try {
     const real = await realpath(candidate);
     if (real !== candidate) return false;
-    const { readdir } = await import("node:fs/promises");
-    const entries = await readdir(candidate, { withFileTypes: true });
-    for (const e of entries) {
-      if (e.isSymbolicLink()) return false;
-    }
+    if (await treeContainsSymlink(candidate)) return false;
     return true;
   } catch {
     return false;
   }
+}
+
+async function treeContainsSymlink(root: string): Promise<boolean> {
+  const entries = await readdir(root, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.isSymbolicLink()) return true;
+    if (entry.isDirectory()) {
+      if (await treeContainsSymlink(join(root, entry.name))) return true;
+    }
+  }
+  return false;
 }
 
 function candidatesFromEnv(): string[] {
