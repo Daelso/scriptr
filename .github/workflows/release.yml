@@ -89,7 +89,7 @@ jobs:
       # Key by lockfile hash so version bumps re-fetch; restore-keys
       # lets stale-but-similar caches still hit on bumps.
       - name: Cache Electron downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cache/electron
@@ -192,7 +192,7 @@ jobs:
       # Upload installers as workflow artifacts so manual runs are useful.
       # On tag push these are duplicated by the GitHub Release upload; harmless.
       - name: Upload installers as workflow artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: scriptr-${{ matrix.os }}
           path: |
