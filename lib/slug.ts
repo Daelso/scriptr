@@ -15,3 +15,9 @@ export function uniqueSlug(base: string, existing: string[]): string {
   while (taken.has(`${base}-${n}`)) n++;
   return `${base}-${n}`;
 }
+
+const SLUG_SEGMENT_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+export function isValidSlugSegment(input: string): boolean {
+  return SLUG_SEGMENT_RE.test(input);
+}

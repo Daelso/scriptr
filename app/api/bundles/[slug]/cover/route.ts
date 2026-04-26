@@ -32,10 +32,14 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
   if (entry.size > MAX_BYTES) return fail("cover exceeds 20 MB limit", 413);
 
   const inputBytes = Buffer.from(await entry.arrayBuffer());
-  const jpegBytes =
-    entry.type === "image/jpeg"
-      ? inputBytes
-      : await sharp(inputBytes).jpeg({ quality: 92 }).toBuffer();
+  let jpegBytes: Buffer;
+  try {
+    // Always decode + rotate so EXIF orientation is normalized for JPEG
+    // uploads too. Corrupt bytes should be a 400, not a 500.
+    jpegBytes = await sharp(inputBytes).rotate().jpeg({ quality: 92 }).toBuffer();
+  } catch {
+    return fail("invalid image data", 400);
+  }
 
   const path = bundleCoverPath(dataDir, slug);
   await mkdir(dirname(path), { recursive: true });

@@ -3,6 +3,7 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { NextRequest } from "next/server";
+import sharp from "sharp";
 import { createStory } from "@/lib/storage/stories";
 import { coverPath } from "@/lib/storage/paths";
 
@@ -31,6 +32,16 @@ describe("/api/stories/[slug]/cover PUT", () => {
     return PUT(req, ctx);
   }
 
+  async function makeJpeg(w: number, h: number, orientation?: number): Promise<Buffer> {
+    let pipeline = sharp({
+      create: { width: w, height: h, channels: 3, background: { r: 80, g: 80, b: 80 } },
+    });
+    if (orientation !== undefined) {
+      pipeline = pipeline.withMetadata({ orientation });
+    }
+    return pipeline.jpeg({ quality: 85 }).toBuffer();
+  }
+
   it("returns 404 for unknown story", async () => {
     const jpg = new Blob([Buffer.from([0xff, 0xd8, 0xff])], { type: "image/jpeg" });
     const res = await callPut("nope", jpg);
@@ -55,12 +66,35 @@ describe("/api/stories/[slug]/cover PUT", () => {
 
   it("writes cover.jpg and returns 200", async () => {
     const story = await createStory(tmpDir, { title: "S" });
-    const jpg = new Blob([Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0])], {
-      type: "image/jpeg",
-    });
+    const jpg = new Blob([new Uint8Array(await makeJpeg(1600, 2560))], { type: "image/jpeg" });
     const res = await callPut(story.slug, jpg);
     expect(res.status).toBe(200);
     const statResult = await stat(coverPath(tmpDir, story.slug));
     expect(statResult.isFile()).toBe(true);
+  });
+
+  it("returns 400 for corrupt image bytes with accepted MIME", async () => {
+    const story = await createStory(tmpDir, { title: "S" });
+    const corrupt = new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3])], {
+      type: "image/png",
+    });
+    const res = await callPut(story.slug, corrupt);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("invalid image data");
+  });
+
+  it("normalizes EXIF orientation for JPEG uploads", async () => {
+    const story = await createStory(tmpDir, { title: "S" });
+    const oriented = new Blob([new Uint8Array(await makeJpeg(3, 2, 6))], {
+      type: "image/jpeg",
+    });
+    const res = await callPut(story.slug, oriented);
+    expect(res.status).toBe(200);
+
+    const meta = await sharp(coverPath(tmpDir, story.slug)).metadata();
+    expect(meta.width).toBe(2);
+    expect(meta.height).toBe(3);
+    expect(meta.orientation).not.toBe(6);
   });
 });

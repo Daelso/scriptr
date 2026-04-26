@@ -15,6 +15,19 @@ async function makeJpeg(w: number, h: number): Promise<Buffer> {
     .toBuffer();
 }
 
+async function makeJpegWithOrientation(
+  w: number,
+  h: number,
+  orientation: number,
+): Promise<Buffer> {
+  return sharp({
+    create: { width: w, height: h, channels: 3, background: { r: 80, g: 80, b: 80 } },
+  })
+    .withMetadata({ orientation })
+    .jpeg({ quality: 85 })
+    .toBuffer();
+}
+
 describe("/api/bundles/[slug]/cover", () => {
   const originalEnv = process.env;
   let tmpDir: string;
@@ -72,6 +85,49 @@ describe("/api/bundles/[slug]/cover", () => {
     const ctx = { params: Promise.resolve({ slug: b.slug }) };
     const res = await PUT(req, ctx);
     expect(res.status).toBe(415);
+  });
+
+  it("PUT returns 400 for corrupt image bytes with accepted MIME", async () => {
+    const b = await createBundle(tmpDir, { title: "Corrupt" });
+    const { PUT } = await import("@/app/api/bundles/[slug]/cover/route");
+    const fd = new FormData();
+    fd.append(
+      "cover",
+      new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3])], { type: "image/png" }),
+      "bad.png",
+    );
+    const req = new Request(`http://localhost/api/bundles/${b.slug}/cover`, {
+      method: "PUT",
+      body: fd,
+    }) as unknown as NextRequest;
+    const ctx = { params: Promise.resolve({ slug: b.slug }) };
+    const res = await PUT(req, ctx);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("invalid image data");
+  });
+
+  it("PUT normalizes EXIF orientation for JPEG uploads", async () => {
+    const b = await createBundle(tmpDir, { title: "Exif" });
+    const { PUT } = await import("@/app/api/bundles/[slug]/cover/route");
+    const fd = new FormData();
+    fd.append(
+      "cover",
+      new Blob([new Uint8Array(await makeJpegWithOrientation(3, 2, 6))], { type: "image/jpeg" }),
+      "rotated.jpg",
+    );
+    const req = new Request(`http://localhost/api/bundles/${b.slug}/cover`, {
+      method: "PUT",
+      body: fd,
+    }) as unknown as NextRequest;
+    const ctx = { params: Promise.resolve({ slug: b.slug }) };
+    const res = await PUT(req, ctx);
+    expect(res.status).toBe(200);
+
+    const meta = await sharp(bundleCoverPath(tmpDir, b.slug)).metadata();
+    expect(meta.width).toBe(2);
+    expect(meta.height).toBe(3);
+    expect(meta.orientation).not.toBe(6);
   });
 
   it("DELETE removes cover.jpg if present, succeeds idempotently if absent", async () => {

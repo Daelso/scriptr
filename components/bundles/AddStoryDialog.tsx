@@ -44,12 +44,16 @@ export function AddStoryDialog({ open, onOpenChange, excludeSlugs, onAdd }: Prop
 
   async function handleAdd() {
     await onAdd(Array.from(selected));
-    setSelected(new Set());
-    onOpenChange(false);
+    handleOpenChange(false);
+  }
+
+  function handleOpenChange(nextOpen: boolean) {
+    if (!nextOpen) setSelected(new Set());
+    onOpenChange(nextOpen);
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Add stories</DialogTitle>
