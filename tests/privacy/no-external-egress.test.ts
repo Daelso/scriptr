@@ -59,6 +59,9 @@
  *     to assert the EPUB pipeline never phones home)
  *   GET  /api/bundles
  *   POST /api/bundles
+ *   GET  /api/bundles/[slug]
+ *   PATCH /api/bundles/[slug]
+ *   DELETE /api/bundles/[slug]
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -557,6 +560,45 @@ describe("no external egress from API routes", () => {
       });
       const res = await POST(req);
       expect(res.status).toBe(201);
+    }
+
+    // ── /api/bundles/[slug] GET + PATCH + DELETE ───────────────────────────
+    let bundleSlug: string;
+    {
+      const { POST } = await import("@/app/api/bundles/route");
+      const req = makeReq("http://localhost/api/bundles", {
+        method: "POST",
+        body: JSON.stringify({ title: "Slug Test Bundle" }),
+        headers: { "content-type": "application/json" },
+      });
+      const res = await POST(req);
+      const body = await res.json();
+      bundleSlug = body.data.slug as string;
+    }
+    {
+      const { GET } = await import("@/app/api/bundles/[slug]/route");
+      const ctx = { params: Promise.resolve({ slug: bundleSlug }) };
+      const req = makeReq(`http://localhost/api/bundles/${bundleSlug}`);
+      const res = await GET(req, ctx);
+      expect(res.status).toBe(200);
+    }
+    {
+      const { PATCH } = await import("@/app/api/bundles/[slug]/route");
+      const ctx = { params: Promise.resolve({ slug: bundleSlug }) };
+      const req = makeReq(`http://localhost/api/bundles/${bundleSlug}`, {
+        method: "PATCH",
+        body: JSON.stringify({ description: "Updated blurb" }),
+        headers: { "content-type": "application/json" },
+      });
+      const res = await PATCH(req, ctx);
+      expect(res.status).toBe(200);
+    }
+    {
+      const { DELETE } = await import("@/app/api/bundles/[slug]/route");
+      const ctx = { params: Promise.resolve({ slug: bundleSlug }) };
+      const req = makeReq(`http://localhost/api/bundles/${bundleSlug}`);
+      const res = await DELETE(req, ctx);
+      expect(res.status).toBe(200);
     }
 
     // ── The load-bearing assertion ─────────────────────────────────────────
