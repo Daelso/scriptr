@@ -65,7 +65,9 @@
  *   PUT  /api/bundles/[slug]/cover
  *   DELETE /api/bundles/[slug]/cover
  *   GET  /api/bundles/[slug]/preview
- *   POST /api/bundles/[slug]/export/epub
+ *   POST /api/bundles/[slug]/export/epub  (×2: version=3 and version=2, with
+ *     pen-name profile seeded so the resolveBundleAuthorNote →
+ *     buildAuthorNoteHtml → QR-encode → externalizeDataPngImages path runs)
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -714,16 +716,35 @@ describe("no external egress from API routes", () => {
       );
       expect(patchRes.status).toBe(200);
 
+      // Seed a pen-name profile keyed off the bundle's authorPenName so the
+      // export route exercises the resolveBundleAuthorNote → buildAuthorNoteHtml
+      // → QR-encode → externalizeDataPngImages path. qrcode is a pure-JS
+      // encoder; this confirms it does not phone home.
+      await saveConfig(tmpDir, {
+        penNameProfiles: {
+          Pen: {
+            defaultMessageHtml: "<p>Thanks for reading.</p>",
+            mailingListUrl: "https://example.com/list",
+          },
+        },
+      });
+
       const { POST: exportRoute } = await import(
         "@/app/api/bundles/[slug]/export/epub/route"
       );
-      const ctx = { params: Promise.resolve({ slug: exportSlug }) };
-      const req = makeReq(
-        `http://localhost/api/bundles/${exportSlug}/export/epub`,
-        { method: "POST" },
-      );
-      const res = await exportRoute(req, ctx);
-      expect(res.status).toBe(200);
+      for (const version of [3, 2] as const) {
+        const ctx = { params: Promise.resolve({ slug: exportSlug }) };
+        const req = makeReq(
+          `http://localhost/api/bundles/${exportSlug}/export/epub`,
+          {
+            method: "POST",
+            body: JSON.stringify({ version }),
+            headers: { "content-type": "application/json" },
+          },
+        );
+        const res = await exportRoute(req, ctx);
+        expect(res.status).toBe(200);
+      }
     }
 
     // ── The load-bearing assertion ─────────────────────────────────────────
