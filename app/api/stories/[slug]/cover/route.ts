@@ -12,8 +12,9 @@ const ACCEPTED = new Set(["image/jpeg", "image/png"]);
 
 export async function PUT(req: NextRequest, ctx: Ctx) {
   const { slug } = await ctx.params;
+  const dataDir = effectiveDataDir();
 
-  const story = await getStory(effectiveDataDir(), slug);
+  const story = await getStory(dataDir, slug);
   if (!story) return fail("story not found", 404);
 
   let form: FormData;
@@ -35,12 +36,16 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
   }
 
   const inputBytes = Buffer.from(await entry.arrayBuffer());
-  const jpegBytes =
-    entry.type === "image/jpeg"
-      ? inputBytes
-      : await sharp(inputBytes).jpeg({ quality: 92 }).toBuffer();
+  let jpegBytes: Buffer;
+  try {
+    // Always run through sharp so JPEG uploads also get EXIF orientation
+    // normalized into pixel data.
+    jpegBytes = await sharp(inputBytes).rotate().jpeg({ quality: 92 }).toBuffer();
+  } catch {
+    return fail("invalid image data", 400);
+  }
 
-  const path = await writeCoverJpeg(effectiveDataDir(), slug, jpegBytes);
+  const path = await writeCoverJpeg(dataDir, slug, jpegBytes);
 
   const warnings: string[] = [];
   try {

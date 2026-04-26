@@ -40,3 +40,28 @@ export function blockedRequestsLog(dataDir: string) {
 export function crashesLog(dataDir: string) {
   return join(logsDir(dataDir), "crashes.log");
 }
+export function bundlesDir(dataDir: string) {
+  return join(dataDir, "bundles");
+}
+export function bundleDir(dataDir: string, bundleSlug: string) {
+  return join(bundlesDir(dataDir), bundleSlug);
+}
+export function bundleFile(dataDir: string, bundleSlug: string) {
+  return join(bundleDir(dataDir, bundleSlug), "bundle.json");
+}
+export function bundleCoverPath(dataDir: string, bundleSlug: string) {
+  return join(bundleDir(dataDir, bundleSlug), "cover.jpg");
+}
+export function bundleExportsDir(dataDir: string, bundleSlug: string) {
+  return join(bundleDir(dataDir, bundleSlug), "exports");
+}
+export function bundleEpubPath(
+  dataDir: string,
+  bundleSlug: string,
+  version: EpubVersion
+) {
+  return join(
+    bundleExportsDir(dataDir, bundleSlug),
+    `${bundleSlug}-epub${version}.epub`
+  );
+}

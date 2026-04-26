@@ -3,6 +3,11 @@ import {
   renderChapterPreviewHtml,
   EPUB_STYLESHEET,
 } from "@/lib/publish/epub";
+import {
+  renderStoryTitlePageHtml,
+  stripPreviewWrapper,
+  EPUB_STYLESHEET as STYLESHEET_AGAIN,
+} from "@/lib/publish/epub-preview";
 import type { Chapter } from "@/lib/types";
 
 describe("epub module scaffold", () => {
@@ -78,6 +83,12 @@ describe("renderSectionHtml (transformer)", () => {
   it("renders a scene-break div between sections within a chapter", () => {
     const html = renderChapterPreviewHtml(chapterWith(["one", "two"]));
     expect(html).toContain('<div class="scene-break">* * *</div>');
+  });
+
+  it("escapes quote/apostrophe/slash for safer future attribute-context reuse", () => {
+    const html = renderStoryTitlePageHtml(`A "quote" / O'Hara <x>`, `D / "q" 'a'`);
+    expect(html).toContain("A &quot;quote&quot; &#x2F; O&#39;Hara &lt;x&gt;");
+    expect(html).toContain("D &#x2F; &quot;q&quot; &#39;a&#39;");
   });
 
   it("collapses single newlines within a paragraph to spaces", () => {
@@ -519,5 +530,70 @@ describe("buildEpubBytes author-note integration", () => {
     })) {
       expect(text).not.toContain("A note from the author");
     }
+  });
+});
+
+describe("renderStoryTitlePageHtml", () => {
+  it("renders a centered title with no description block when description is undefined", () => {
+    const html = renderStoryTitlePageHtml("My Story");
+    expect(html).toContain('class="story-title-page"');
+    expect(html).toContain("<h1>My Story</h1>");
+    expect(html).not.toContain("<p>");
+  });
+
+  it("renders the description as a <p> when provided", () => {
+    const html = renderStoryTitlePageHtml("My Story", "A blurb.");
+    expect(html).toContain("<h1>My Story</h1>");
+    expect(html).toContain("<p>A blurb.</p>");
+  });
+
+  it("treats empty-string and whitespace-only descriptions as absent", () => {
+    expect(renderStoryTitlePageHtml("X", "")).not.toContain("<p>");
+    expect(renderStoryTitlePageHtml("X", "   ")).not.toContain("<p>");
+    expect(renderStoryTitlePageHtml("X", "\n\t ")).not.toContain("<p>");
+  });
+
+  it("escapes HTML entities in title and description", () => {
+    const html = renderStoryTitlePageHtml(
+      "<script>x</script>",
+      "She & Him <fin>"
+    );
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;script&gt;");
+    expect(html).toContain("She &amp; Him &lt;fin&gt;");
+  });
+
+  it("uses a div tag (compatible with SafeHtml allowlist)", () => {
+    const html = renderStoryTitlePageHtml("Title");
+    expect(html.startsWith("<div")).toBe(true);
+    expect(html.endsWith("</div>")).toBe(true);
+  });
+});
+
+describe("stripPreviewWrapper", () => {
+  it("removes the outer .epub-preview div", () => {
+    const wrapped = '<div class="epub-preview"><h1>X</h1></div>';
+    expect(stripPreviewWrapper(wrapped)).toBe("<h1>X</h1>");
+  });
+
+  it("returns the input unchanged when wrapper not present", () => {
+    expect(stripPreviewWrapper("<p>nope</p>")).toBe("<p>nope</p>");
+  });
+
+  it("does not strip trailing </div> when prefix is absent", () => {
+    // Regression: previously, the second replace ran independently and
+    // stripped the closing </div> from any div-ending string, even when
+    // the .epub-preview wrapper wasn't present. The output of
+    // renderStoryTitlePageHtml ends in </div> but should pass through
+    // stripPreviewWrapper untouched.
+    const standalone = '<div class="story-title-page"><h1>X</h1></div>';
+    expect(stripPreviewWrapper(standalone)).toBe(standalone);
+  });
+});
+
+describe("EPUB_STYLESHEET — story title page", () => {
+  it("includes a .story-title-page rule with page-break-before", () => {
+    expect(STYLESHEET_AGAIN).toMatch(/\.story-title-page/);
+    expect(STYLESHEET_AGAIN).toMatch(/\.story-title-page[^}]*page-break-before/);
   });
 });

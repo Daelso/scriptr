@@ -124,6 +124,29 @@ export async function buildAuthorNoteHtml(opts: {
   );
 }
 
+export function resolveBundleAuthorNote(
+  profile: PenNameProfile | undefined,
+): ResolvedAuthorNote | null {
+  if (!profile) return null;
+  const messageHtml =
+    typeof profile.defaultMessageHtml === "string"
+      ? profile.defaultMessageHtml.trim()
+      : "";
+  const email = typeof profile.email === "string" ? profile.email : undefined;
+  const mailingListUrl =
+    typeof profile.mailingListUrl === "string"
+      ? profile.mailingListUrl
+      : undefined;
+  if (messageHtml.length === 0 && !email?.trim() && !mailingListUrl?.trim()) {
+    return null;
+  }
+  return {
+    messageHtml,
+    email,
+    mailingListUrl,
+  };
+}
+
 export function resolveAuthorNote(
   story: Story,
   profile: PenNameProfile | undefined,

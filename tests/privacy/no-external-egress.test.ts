@@ -57,6 +57,17 @@
  *   POST /api/stories/[slug]/export/epub  (with author-note configured —
  *     exercises the QR encoder + buildAuthorNoteHtml + epub-gen-memory path
  *     to assert the EPUB pipeline never phones home)
+ *   GET  /api/bundles
+ *   POST /api/bundles
+ *   GET  /api/bundles/[slug]
+ *   PATCH /api/bundles/[slug]
+ *   DELETE /api/bundles/[slug]
+ *   PUT  /api/bundles/[slug]/cover
+ *   DELETE /api/bundles/[slug]/cover
+ *   GET  /api/bundles/[slug]/preview
+ *   POST /api/bundles/[slug]/export/epub  (×2: version=3 and version=2, with
+ *     pen-name profile seeded so the resolveBundleAuthorNote →
+ *     buildAuthorNoteHtml → QR-encode → externalizeDataPngImages path runs)
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -536,6 +547,204 @@ describe("no external egress from API routes", () => {
       }) as unknown as NextRequest;
       const res = await POST(req);
       expect(res.status).toBe(200);
+    }
+
+    // ── GET /api/bundles ───────────────────────────────────────────────────
+    {
+      const { GET } = await import("@/app/api/bundles/route");
+      const res = await GET();
+      expect(res.status).toBe(200);
+    }
+
+    // ── POST /api/bundles ──────────────────────────────────────────────────
+    {
+      const { POST } = await import("@/app/api/bundles/route");
+      const req = makeReq("http://localhost/api/bundles", {
+        method: "POST",
+        body: JSON.stringify({ title: "Egress Test Bundle" }),
+        headers: { "content-type": "application/json" },
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(201);
+    }
+
+    // ── /api/bundles/[slug] GET + PATCH + DELETE ───────────────────────────
+    let bundleSlug: string;
+    {
+      const { POST } = await import("@/app/api/bundles/route");
+      const req = makeReq("http://localhost/api/bundles", {
+        method: "POST",
+        body: JSON.stringify({ title: "Slug Test Bundle" }),
+        headers: { "content-type": "application/json" },
+      });
+      const res = await POST(req);
+      const body = await res.json();
+      bundleSlug = body.data.slug as string;
+    }
+    {
+      const { GET } = await import("@/app/api/bundles/[slug]/route");
+      const ctx = { params: Promise.resolve({ slug: bundleSlug }) };
+      const req = makeReq(`http://localhost/api/bundles/${bundleSlug}`);
+      const res = await GET(req, ctx);
+      expect(res.status).toBe(200);
+    }
+    {
+      const { PATCH } = await import("@/app/api/bundles/[slug]/route");
+      const ctx = { params: Promise.resolve({ slug: bundleSlug }) };
+      const req = makeReq(`http://localhost/api/bundles/${bundleSlug}`, {
+        method: "PATCH",
+        body: JSON.stringify({ description: "Updated blurb" }),
+        headers: { "content-type": "application/json" },
+      });
+      const res = await PATCH(req, ctx);
+      expect(res.status).toBe(200);
+    }
+    {
+      const { DELETE } = await import("@/app/api/bundles/[slug]/route");
+      const ctx = { params: Promise.resolve({ slug: bundleSlug }) };
+      const req = makeReq(`http://localhost/api/bundles/${bundleSlug}`);
+      const res = await DELETE(req, ctx);
+      expect(res.status).toBe(200);
+    }
+
+    // ── /api/bundles/[slug]/cover PUT + DELETE ─────────────────────────────
+    {
+      // Re-create a bundle for this exercise
+      const { POST: createBundleRoute } = await import("@/app/api/bundles/route");
+      const createRes = await createBundleRoute(
+        makeReq("http://localhost/api/bundles", {
+          method: "POST",
+          body: JSON.stringify({ title: "Cover Egress" }),
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      const coverSlug = (await createRes.json()).data.slug as string;
+      const ctx = { params: Promise.resolve({ slug: coverSlug }) };
+
+      const sharp = (await import("sharp")).default;
+      const jpegBytes = await sharp({
+        create: { width: 1600, height: 2560, channels: 3, background: { r: 80, g: 80, b: 80 } },
+      })
+        .jpeg({ quality: 85 })
+        .toBuffer();
+
+      const { PUT, DELETE } = await import("@/app/api/bundles/[slug]/cover/route");
+      const fd = new FormData();
+      fd.append("cover", new Blob([new Uint8Array(jpegBytes)], { type: "image/jpeg" }), "cover.jpg");
+      const putReq = new Request(`http://localhost/api/bundles/${coverSlug}/cover`, {
+        method: "PUT",
+        body: fd,
+      }) as unknown as NextRequest;
+      const putRes = await PUT(putReq, ctx);
+      expect(putRes.status).toBe(200);
+
+      const delReq = new Request(`http://localhost/api/bundles/${coverSlug}/cover`, {
+        method: "DELETE",
+      }) as unknown as NextRequest;
+      const delRes = await DELETE(delReq, ctx);
+      expect(delRes.status).toBe(200);
+    }
+
+    // ── /api/bundles/[slug]/preview ────────────────────────────────────────
+    {
+      // Create or reuse a bundle for this exercise
+      const { POST: createBundleRoute } = await import("@/app/api/bundles/route");
+      const createRes = await createBundleRoute(
+        makeReq("http://localhost/api/bundles", {
+          method: "POST",
+          body: JSON.stringify({ title: "Preview Egress" }),
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      const previewSlug = (await createRes.json()).data.slug as string;
+
+      const { GET } = await import("@/app/api/bundles/[slug]/preview/route");
+      const ctx = { params: Promise.resolve({ slug: previewSlug }) };
+      const req = makeReq(`http://localhost/api/bundles/${previewSlug}/preview`);
+      const res = await GET(req, ctx);
+      expect(res.status).toBe(200);
+    }
+
+    // ── /api/bundles/[slug]/export/epub ────────────────────────────────────────
+    {
+      // Need a bundle WITH a real story+chapter for export to succeed.
+      // Reuse existing seed if visible, or create fresh.
+      const story = await createStory(tmpDir, {
+        title: "Export Egress Story",
+        authorPenName: "Pen",
+      });
+      const ch = await createChapter(tmpDir, story.slug, { title: "C1" });
+      // Add content to the chapter via the existing PATCH route
+      {
+        const { PATCH } = await import(
+          "@/app/api/stories/[slug]/chapters/[id]/route"
+        );
+        const r = makeReq(
+          `http://localhost/api/stories/${story.slug}/chapters/${ch.id}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              sections: [{ id: "s1", content: "Body for export." }],
+            }),
+            headers: { "content-type": "application/json" },
+          },
+        );
+        await PATCH(r, { params: Promise.resolve({ slug: story.slug, id: ch.id }) });
+      }
+
+      const { POST: createBundleRoute } = await import("@/app/api/bundles/route");
+      const createRes = await createBundleRoute(
+        makeReq("http://localhost/api/bundles", {
+          method: "POST",
+          body: JSON.stringify({ title: "Export Egress" }),
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      const exportSlug = (await createRes.json()).data.slug as string;
+
+      const { PATCH: patchBundle } = await import("@/app/api/bundles/[slug]/route");
+      const patchRes = await patchBundle(
+        makeReq(`http://localhost/api/bundles/${exportSlug}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            authorPenName: "Pen",
+            stories: [{ storySlug: story.slug }],
+          }),
+          headers: { "content-type": "application/json" },
+        }),
+        { params: Promise.resolve({ slug: exportSlug }) },
+      );
+      expect(patchRes.status).toBe(200);
+
+      // Seed a pen-name profile keyed off the bundle's authorPenName so the
+      // export route exercises the resolveBundleAuthorNote → buildAuthorNoteHtml
+      // → QR-encode → externalizeDataPngImages path. qrcode is a pure-JS
+      // encoder; this confirms it does not phone home.
+      await saveConfig(tmpDir, {
+        penNameProfiles: {
+          Pen: {
+            defaultMessageHtml: "<p>Thanks for reading.</p>",
+            mailingListUrl: "https://example.com/list",
+          },
+        },
+      });
+
+      const { POST: exportRoute } = await import(
+        "@/app/api/bundles/[slug]/export/epub/route"
+      );
+      for (const version of [3, 2] as const) {
+        const ctx = { params: Promise.resolve({ slug: exportSlug }) };
+        const req = makeReq(
+          `http://localhost/api/bundles/${exportSlug}/export/epub`,
+          {
+            method: "POST",
+            body: JSON.stringify({ version }),
+            headers: { "content-type": "application/json" },
+          },
+        );
+        const res = await exportRoute(req, ctx);
+        expect(res.status).toBe(200);
+      }
     }
 
     // ── The load-bearing assertion ─────────────────────────────────────────

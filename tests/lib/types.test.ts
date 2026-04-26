@@ -30,3 +30,41 @@ describe("Story.authorNote", () => {
     expect(without.authorNote).toBeUndefined();
   });
 });
+
+import type { Bundle, BundleStoryRef, BundleSummary } from "@/lib/types";
+
+describe("Bundle types", () => {
+  it("Bundle has required fields and ordered stories array", () => {
+    const b: Bundle = {
+      slug: "omnibus",
+      title: "Omnibus",
+      authorPenName: "Pen",
+      description: "Three short stories.",
+      language: "en",
+      createdAt: "2026-04-25T00:00:00.000Z",
+      updatedAt: "2026-04-25T00:00:00.000Z",
+      stories: [{ storySlug: "story-a" }],
+    };
+    expect(b.stories).toHaveLength(1);
+  });
+
+  it("BundleStoryRef supports optional title and description overrides", () => {
+    const ref: BundleStoryRef = {
+      storySlug: "story-b",
+      titleOverride: "Book Two: Story B",
+      descriptionOverride: "A new blurb for the bundle context.",
+    };
+    expect(ref.titleOverride).toBe("Book Two: Story B");
+    expect(ref.descriptionOverride).toContain("blurb");
+  });
+
+  it("BundleSummary has slug, title, storyCount, updatedAt", () => {
+    const s: BundleSummary = {
+      slug: "omnibus",
+      title: "Omnibus",
+      storyCount: 3,
+      updatedAt: "2026-04-25T00:00:00.000Z",
+    };
+    expect(s.storyCount).toBe(3);
+  });
+});

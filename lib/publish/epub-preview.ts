@@ -69,13 +69,47 @@ div.scene-break {
   margin: 0.5em auto;
   max-width: 200px;
 }
+.story-title-page {
+  page-break-before: always;
+  text-align: center;
+  padding: 2em 0;
+}
+.story-title-page h1 {
+  font-size: 1.8em;
+  font-weight: 600;
+  margin: 0 0 1em;
+}
+.story-title-page p {
+  text-indent: 0;
+  text-align: center;
+  font-style: italic;
+  margin: 0 1em;
+}
 `.trim();
 
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+    .replace(/\//g, "&#x2F;");
+}
+
+export function renderStoryTitlePageHtml(title: string, description?: string): string {
+  const trimmed = description?.trim() ?? "";
+  const descBlock = trimmed.length > 0 ? `<p>${escapeHtml(trimmed)}</p>` : "";
+  return `<div class="story-title-page"><h1>${escapeHtml(title)}</h1>${descBlock}</div>`;
+}
+
+export function stripPreviewWrapper(html: string): string {
+  const prefix = '<div class="epub-preview">';
+  const suffix = "</div>";
+  if (html.startsWith(prefix) && html.endsWith(suffix)) {
+    return html.slice(prefix.length, html.length - suffix.length);
+  }
+  return html;
 }
 
 export function renderSectionHtml(content: string): string {

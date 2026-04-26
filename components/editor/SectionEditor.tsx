@@ -49,10 +49,11 @@ const HTML_ESCAPES: Record<string, string> = {
   ">": "&gt;",
   '"': "&quot;",
   "'": "&#39;",
+  "/": "&#x2F;",
 };
 
 function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]!);
+  return s.replace(/[&<>"'/]/g, (c) => HTML_ESCAPES[c]!);
 }
 
 /** Convert storage plain text to Tiptap-compatible HTML paragraph nodes. */
