@@ -11,7 +11,8 @@ Allow combining multiple existing stories into a single EPUB ("omnibus" / "box s
 
 - Per-chapter inclusion/exclusion within a story (all-or-nothing per story in v1).
 - Renaming a bundle's slug after creation.
-- Integration with the in-progress author-note end-page feature (deferred until that ships).
+- Per-bundle override of the author-note message (bundles use the pen-name profile's `defaultMessageHtml`; no `Bundle.authorNote.messageHtml` override field in v1).
+- Per-story author notes interleaved between stories (the bundle appends ONE author note at the end, not N).
 - Nested two-level TOC (story → chapters as a hierarchy in `nav.xhtml` / `toc.ncx`).
 - Bundles of bundles.
 - Generation-time work — bundles are pure assembly of already-generated chapters; no calls to xAI.
@@ -168,6 +169,48 @@ Flat. Each title page is its own TOC entry under the story's display title; chap
 ### Validation
 
 `validateEpub` from [lib/publish/epub.ts](../../lib/publish/epub.ts) is reused unchanged — same warning surfacing, same `@likecoin/epubcheck-ts`-currently-broken-under-Next-16 caveat applies (it returns warnings on success and a single `validator error: …` warning on throw).
+
+## Author-note integration
+
+The author-note end-page feature shipped on `main` in PR #5 (commit `5d18299`). Single-story exports look up `Config.penNameProfiles[story.authorPenName]`, call `resolveAuthorNote(story, profile)` to produce a `ResolvedAuthorNote | null`, and pass it to `buildEpubBytes`, which appends it as a final content entry titled "A note from the author" with QR-code post-processing via `externalizeDataPngImages`.
+
+Bundles get the same treatment — **one author note at the end of the entire bundle**, resolved from `bundle.authorPenName`. Per-story interleaved notes were considered and rejected: in the common case all member stories share the same pen name, so per-story notes would repeat the same content N times.
+
+### Resolution
+
+A new helper in [lib/publish/author-note.ts](../../lib/publish/author-note.ts):
+
+```ts
+export function resolveBundleAuthorNote(
+  profile: PenNameProfile | undefined,
+): ResolvedAuthorNote | null;
+```
+
+Returns `null` when the profile is missing or has no usable content (empty `defaultMessageHtml`, no email, no mailing-list URL). Otherwise returns a `ResolvedAuthorNote` populated from the profile's defaults — bundles do not have a per-bundle message override in v1.
+
+This is a separate function from `resolveAuthorNote(story, profile)` rather than refactoring it, because:
+- The bundle path has no `Story.authorNote` override field equivalent.
+- The single-story function's signature is already a public-ish surface used by the existing export route — easier to add a sibling than to broaden an existing one.
+
+### Builder integration
+
+`BundleEpubInput` gains an optional `authorNote?: ResolvedAuthorNote` field, mirroring `EpubInput`. The bundle builder appends the author-note entry **after all stories' content** using the same logic the single-story builder uses today.
+
+To avoid duplicating the QR-image post-processing path, the relevant block in [lib/publish/epub.ts](../../lib/publish/epub.ts) is extracted into a shared exported helper (working name `appendAuthorNoteContent`) that:
+1. Calls `buildAuthorNoteHtml(authorNote)`
+2. Runs the result through `externalizeDataPngImages`
+3. Pushes the resulting `{ title, content }` entry onto the caller-supplied content array
+4. Pushes any temp PNG paths onto a caller-supplied cleanup array
+
+Both builders call this helper inside their existing `try { … } finally { /* cleanup tempImagePaths */ }` block. `externalizeDataPngImages` is also exported from `epub.ts` so the bundle builder's cleanup `finally` works the same way.
+
+### Export route
+
+`/api/bundles/[slug]/export/epub` loads `Config.penNameProfiles[bundle.authorPenName]`, calls `resolveBundleAuthorNote(profile)`, and passes the result to `buildBundleEpubBytes`. Same QR-overflow guard the single-story route uses (catch-and-rethrow that surfaces "URL too long for QR" as a 400 instead of a 500).
+
+### Privacy & egress
+
+The egress test extension in Section "Privacy" already asserts `recorded === []` for the bundle export route. To exercise the author-note path, the test seeds a `penNameProfiles` entry under the bundle's `authorPenName` (with a `defaultMessageHtml` of any inline content) before calling the export — this confirms the QR/sanitize path runs end-to-end without making any `fetch` calls. `qrcode` is a pure-JS encoder; it does not network.
 
 ## API routes
 
