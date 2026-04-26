@@ -8,6 +8,7 @@ import {
   getBundle,
   updateBundle,
   deleteBundle,
+  BundleNotFoundError,
 } from "@/lib/storage/bundles";
 import { bundleDir } from "@/lib/storage/paths";
 
@@ -155,11 +156,12 @@ describe("updateBundle", () => {
     });
   });
 
-  it("throws when slug not found", async () => {
+  it("throws BundleNotFoundError when slug not found", async () => {
     await withTemp(async (dir) => {
-      await expect(updateBundle(dir, "nope", { title: "x" })).rejects.toThrow(
-        /not found/i
-      );
+      const p1 = updateBundle(dir, "nope", { title: "x" });
+      await expect(p1).rejects.toThrow(BundleNotFoundError);
+      const p2 = updateBundle(dir, "nope", { title: "x" });
+      await expect(p2).rejects.toThrow(/not found/i);
     });
   });
 });

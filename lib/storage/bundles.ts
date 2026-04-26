@@ -2,8 +2,16 @@ import { mkdir, writeFile, readFile, readdir, rm } from "node:fs/promises";
 import { bundleDir, bundleFile, bundleExportsDir, bundlesDir } from "@/lib/storage/paths";
 import { toSlug, uniqueSlug } from "@/lib/slug";
 import type { Bundle, BundleSummary } from "@/lib/types";
+import { withPathLock, writeJsonAtomic } from "@/lib/fs-atomic";
 
 export type NewBundleInput = { title: string };
+
+export class BundleNotFoundError extends Error {
+  constructor(slug: string) {
+    super(`Bundle not found: ${slug}`);
+    this.name = "BundleNotFoundError";
+  }
+}
 
 export async function createBundle(
   dataDir: string,
@@ -74,20 +82,23 @@ export async function updateBundle(
   slug: string,
   patch: Partial<Bundle>
 ): Promise<Bundle> {
-  const existing = await getBundle(dataDir, slug);
-  if (!existing) throw new Error(`Bundle not found: ${slug}`);
+  const jsonPath = bundleFile(dataDir, slug);
+  return withPathLock(jsonPath, async () => {
+    const existing = await getBundle(dataDir, slug);
+    if (!existing) throw new BundleNotFoundError(slug);
 
-  const updated: Bundle = {
-    ...existing,
-    ...patch,
-    // Immutable
-    slug: existing.slug,
-    createdAt: existing.createdAt,
-    updatedAt: new Date().toISOString(),
-  };
+    const updated: Bundle = {
+      ...existing,
+      ...patch,
+      // Immutable
+      slug: existing.slug,
+      createdAt: existing.createdAt,
+      updatedAt: new Date().toISOString(),
+    };
 
-  await writeFile(bundleFile(dataDir, slug), JSON.stringify(updated, null, 2), "utf-8");
-  return updated;
+    await writeJsonAtomic(jsonPath, updated);
+    return updated;
+  });
 }
 
 export async function deleteBundle(dataDir: string, slug: string): Promise<void> {
