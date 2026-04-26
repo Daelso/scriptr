@@ -204,4 +204,62 @@ describe("/api/settings", () => {
     expect(cfg.penNameProfiles).toEqual(profile);
     expect((cfg as Record<string, unknown>).somethingElse).toBeUndefined();
   });
+
+  it("PUT rejects penNameProfiles: null and preserves existing profiles", async () => {
+    const baseline = {
+      "Pen One": { email: "one@example.com" },
+    };
+    const setReq = new Request("http://localhost/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({ penNameProfiles: baseline }),
+      headers: { "content-type": "application/json" },
+    }) as unknown as NextRequest;
+    expect((await PUT(setReq)).status).toBe(200);
+
+    const badReq = new Request("http://localhost/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({ penNameProfiles: null }),
+      headers: { "content-type": "application/json" },
+    }) as unknown as NextRequest;
+    const badRes = await PUT(badReq);
+    expect(badRes.status).toBe(400);
+
+    const cfg = await loadConfig(tmpDir);
+    expect(cfg.penNameProfiles).toEqual(baseline);
+  });
+
+  it("PUT rejects penNameProfiles with non-string inner fields", async () => {
+    const req = new Request("http://localhost/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({
+        penNameProfiles: {
+          "Bad Pen": { email: 12345 },
+        },
+      }),
+      headers: { "content-type": "application/json" },
+    }) as unknown as NextRequest;
+
+    const res = await PUT(req);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/email must be a string/i);
+  });
+
+  it("PUT rejects reserved penNameProfiles keys that could poison object prototypes", async () => {
+    const req = new Request("http://localhost/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({
+        penNameProfiles: {
+          constructor: { email: "x@example.com" },
+        },
+      }),
+      headers: { "content-type": "application/json" },
+    }) as unknown as NextRequest;
+    const res = await PUT(req);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/reserved key/i);
+  });
 });

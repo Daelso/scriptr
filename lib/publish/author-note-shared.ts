@@ -12,6 +12,8 @@ export type ResolvedAuthorNote = {
   mailingListUrl?: string;
 };
 
+// Allowlist used for fully-rendered author-note HTML (wrapper + footer + QR).
+// This includes <img> so the generated QR can render.
 export const AUTHOR_NOTE_SANITIZE_OPTS = {
   ALLOWED_TAGS: ["div", "p", "br", "strong", "em", "h2", "a", "img"],
   ALLOWED_ATTR: ["class", "href", "src", "alt", "width", "height"],
@@ -21,6 +23,16 @@ export const AUTHOR_NOTE_SANITIZE_OPTS = {
   // ALLOWED_ATTR list. The author-note feature has no need for either, so
   // turn them off as defense in depth — keeps the attribute surface area
   // tight to exactly what `buildAuthorNoteHtml` produces.
+  ALLOW_DATA_ATTR: false,
+  ALLOW_ARIA_ATTR: false,
+};
+
+// Allowlist used for user-authored note message HTML only. No <img>, no
+// class attributes, and no data: URIs.
+export const AUTHOR_NOTE_MESSAGE_SANITIZE_OPTS = {
+  ALLOWED_TAGS: ["div", "p", "br", "strong", "em", "h2", "a"],
+  ALLOWED_ATTR: ["href"],
+  ALLOWED_URI_REGEXP: /^(?:https?:|mailto:)/i,
   ALLOW_DATA_ATTR: false,
   ALLOW_ARIA_ATTR: false,
 };

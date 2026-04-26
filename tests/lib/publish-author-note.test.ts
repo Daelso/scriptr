@@ -60,7 +60,11 @@ describe("resolveAuthorNote", () => {
   });
 });
 
-import { buildAuthorNoteHtml, AUTHOR_NOTE_SANITIZE_OPTS } from "@/lib/publish/author-note";
+import {
+  buildAuthorNoteHtml,
+  AUTHOR_NOTE_SANITIZE_OPTS,
+  AUTHOR_NOTE_MESSAGE_SANITIZE_OPTS,
+} from "@/lib/publish/author-note";
 
 describe("buildAuthorNoteHtml", () => {
   it("includes the heading and message wrapper", async () => {
@@ -147,6 +151,23 @@ describe("buildAuthorNoteHtml", () => {
     expect(html).toContain('href="https://example.com"');
   });
 
+  it("strips user-supplied <img> tags from messageHtml", async () => {
+    const html = await buildAuthorNoteHtml({
+      messageHtml: '<p>hi</p><img src="https://evil.example/pixel.png" alt="x" />',
+    });
+    // Message images are disallowed; only generated QR images are allowed.
+    expect(html).not.toContain("evil.example/pixel.png");
+    expect(html).not.toContain('<img src="https://');
+  });
+
+  it("strips class attributes from user-authored messageHtml", async () => {
+    const html = await buildAuthorNoteHtml({
+      messageHtml: '<p class="hidden flex">Hello</p>',
+    });
+    expect(html).toContain("<p>Hello</p>");
+    expect(html).not.toContain('class="hidden');
+  });
+
   it("AUTHOR_NOTE_SANITIZE_OPTS is exported and usable by SafeHtml", () => {
     expect(AUTHOR_NOTE_SANITIZE_OPTS.ALLOWED_TAGS).toContain("a");
     expect(AUTHOR_NOTE_SANITIZE_OPTS.ALLOWED_TAGS).toContain("img");
@@ -156,6 +177,16 @@ describe("buildAuthorNoteHtml", () => {
     expect(AUTHOR_NOTE_SANITIZE_OPTS.ALLOWED_URI_REGEXP.test("javascript:alert(1)")).toBe(false);
     expect(AUTHOR_NOTE_SANITIZE_OPTS.ALLOWED_URI_REGEXP.test("data:image/png;base64,abc")).toBe(true);
     expect(AUTHOR_NOTE_SANITIZE_OPTS.ALLOWED_URI_REGEXP.test("data:image/svg+xml;base64,abc")).toBe(false);
+  });
+
+  it("AUTHOR_NOTE_MESSAGE_SANITIZE_OPTS forbids images and data: URIs", () => {
+    expect(AUTHOR_NOTE_MESSAGE_SANITIZE_OPTS.ALLOWED_TAGS).not.toContain("img");
+    expect(AUTHOR_NOTE_MESSAGE_SANITIZE_OPTS.ALLOWED_ATTR).not.toContain("src");
+    expect(AUTHOR_NOTE_MESSAGE_SANITIZE_OPTS.ALLOWED_URI_REGEXP.test("https://x.test")).toBe(true);
+    expect(AUTHOR_NOTE_MESSAGE_SANITIZE_OPTS.ALLOWED_URI_REGEXP.test("mailto:x@y")).toBe(true);
+    expect(
+      AUTHOR_NOTE_MESSAGE_SANITIZE_OPTS.ALLOWED_URI_REGEXP.test("data:image/png;base64,abc"),
+    ).toBe(false);
   });
 
   it("strips data-* attributes injected via messageHtml", async () => {

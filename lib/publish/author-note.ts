@@ -4,6 +4,7 @@ import type { PenNameProfile } from "@/lib/config";
 import { sanitizeWith } from "@/lib/publish/sanitize-html";
 import {
   AUTHOR_NOTE_SANITIZE_OPTS,
+  AUTHOR_NOTE_MESSAGE_SANITIZE_OPTS,
   type ResolvedAuthorNote,
 } from "@/lib/publish/author-note-shared";
 
@@ -12,6 +13,7 @@ import {
 // `@/lib/publish/author-note-shared` directly to avoid pulling `qrcode`
 // into client bundles.
 export { AUTHOR_NOTE_SANITIZE_OPTS };
+export { AUTHOR_NOTE_MESSAGE_SANITIZE_OPTS };
 export type { ResolvedAuthorNote };
 
 const HTML_ESCAPES: Record<string, string> = {
@@ -22,31 +24,71 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]!);
 }
 
+const URI_CONTROL_OR_SPACE_RE = /[\u0000-\u001F\u007F\s]/u;
+const URI_BIDI_RE = /[\u202A-\u202E\u2066-\u2069]/u;
+
+function sanitizeMessageHtml(html: string): string {
+  return sanitizeWith(
+    html,
+    { ...AUTHOR_NOTE_MESSAGE_SANITIZE_OPTS },
+    AUTHOR_NOTE_MESSAGE_SANITIZE_OPTS.ALLOWED_URI_REGEXP,
+  );
+}
+
+function normalizeEmail(email?: string): string | undefined {
+  if (typeof email !== "string") return undefined;
+  const trimmed = email.trim();
+  if (!trimmed) return undefined;
+  if (URI_CONTROL_OR_SPACE_RE.test(trimmed)) return undefined;
+  if (!trimmed.includes("@")) return undefined;
+  return trimmed;
+}
+
+function normalizeMailingListUrl(url?: string): string | undefined {
+  if (typeof url !== "string") return undefined;
+  const trimmed = url.trim();
+  if (!trimmed) return undefined;
+  if (URI_CONTROL_OR_SPACE_RE.test(trimmed) || URI_BIDI_RE.test(trimmed)) {
+    return undefined;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return undefined;
+    }
+    return parsed.toString();
+  } catch {
+    return undefined;
+  }
+}
+
 export async function buildAuthorNoteHtml(opts: {
   messageHtml: string;
   email?: string;
   mailingListUrl?: string;
 }): Promise<string> {
   const { messageHtml, email, mailingListUrl } = opts;
+  const safeMessageHtml = sanitizeMessageHtml(messageHtml);
+  const safeEmail = normalizeEmail(email);
+  const safeMailingListUrl = normalizeMailingListUrl(mailingListUrl);
 
   const parts: string[] = [];
   parts.push('<div class="author-note">');
   parts.push("<h2>A note from the author</h2>");
   parts.push('<div class="author-note-message">');
-  parts.push(messageHtml);
+  parts.push(safeMessageHtml);
   parts.push("</div>");
 
   const footerParts: string[] = [];
 
-  if (email && email.trim().length > 0) {
-    const safe = escapeHtml(email.trim());
+  if (safeEmail) {
+    const safe = escapeHtml(safeEmail);
     footerParts.push(`<p><a href="mailto:${safe}">${safe}</a></p>`);
   }
 
-  if (mailingListUrl && mailingListUrl.trim().length > 0) {
-    const url = mailingListUrl.trim();
-    const safeUrl = escapeHtml(url);
-    const dataUrl = await QRCode.toDataURL(url, {
+  if (safeMailingListUrl) {
+    const safeUrl = escapeHtml(safeMailingListUrl);
+    const dataUrl = await QRCode.toDataURL(safeMailingListUrl, {
       type: "image/png",
       width: 200,
       margin: 1,
@@ -88,16 +130,27 @@ export function resolveAuthorNote(
 ): ResolvedAuthorNote | null {
   if (!profile) return null;
   if (story.authorNote?.enabled === false) return null;
-  const overrideRaw = story.authorNote?.messageHtml ?? "";
+  const overrideRaw =
+    typeof story.authorNote?.messageHtml === "string"
+      ? story.authorNote.messageHtml
+      : "";
   const override = overrideRaw.trim();
-  const fallback = (profile.defaultMessageHtml ?? "").trim();
+  const fallback =
+    typeof profile.defaultMessageHtml === "string"
+      ? profile.defaultMessageHtml.trim()
+      : "";
   const messageHtml = override.length > 0 ? override : fallback;
-  if (messageHtml.length === 0 && !profile.email && !profile.mailingListUrl) {
+  const email = typeof profile.email === "string" ? profile.email : undefined;
+  const mailingListUrl =
+    typeof profile.mailingListUrl === "string"
+      ? profile.mailingListUrl
+      : undefined;
+  if (messageHtml.length === 0 && !email?.trim() && !mailingListUrl?.trim()) {
     return null;
   }
   return {
     messageHtml,
-    email: profile.email,
-    mailingListUrl: profile.mailingListUrl,
+    email,
+    mailingListUrl,
   };
 }

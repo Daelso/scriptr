@@ -61,6 +61,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { NextRequest } from "next/server";
@@ -68,11 +69,21 @@ import { createStory } from "@/lib/storage/stories";
 import { createChapter, updateChapter } from "@/lib/storage/chapters";
 import { saveConfig } from "@/lib/config";
 
+const require = createRequire(import.meta.url);
+const httpMod = require("node:http") as typeof import("node:http");
+const httpsMod = require("node:https") as typeof import("node:https");
+
 // ─── Fetch recorder ──────────────────────────────────────────────────────────
 
 type Recorded = { url: string; method: string };
 let recorded: Recorded[];
 let originalFetch: typeof globalThis.fetch | undefined;
+type RecordedNet = { proto: "http" | "https"; method: "request" | "get"; target: string };
+let recordedNet: RecordedNet[];
+let originalHttpRequest: typeof httpMod.request | undefined;
+let originalHttpGet: typeof httpMod.get | undefined;
+let originalHttpsRequest: typeof httpsMod.request | undefined;
+let originalHttpsGet: typeof httpsMod.get | undefined;
 
 function installFetchRecorder() {
   originalFetch = globalThis.fetch;
@@ -103,14 +114,60 @@ function restoreFetch() {
   }
 }
 
+function toTargetString(input: unknown): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  if (input && typeof input === "object") {
+    const maybe = input as { href?: unknown; protocol?: unknown; hostname?: unknown; path?: unknown };
+    if (typeof maybe.href === "string") return maybe.href;
+    const protocol = typeof maybe.protocol === "string" ? maybe.protocol : "";
+    const hostname = typeof maybe.hostname === "string" ? maybe.hostname : "";
+    const path = typeof maybe.path === "string" ? maybe.path : "";
+    if (protocol || hostname || path) return `${protocol}//${hostname}${path}`;
+  }
+  return "<unknown>";
+}
+
+function installNodeNetRecorder() {
+  recordedNet = [];
+  originalHttpRequest = httpMod.request;
+  originalHttpGet = httpMod.get;
+  originalHttpsRequest = httpsMod.request;
+  originalHttpsGet = httpsMod.get;
+
+  const block = (
+    proto: "http" | "https",
+    method: "request" | "get",
+    target: unknown,
+  ) => {
+    const s = toTargetString(target);
+    recordedNet.push({ proto, method, target: s });
+    throw new Error(`unexpected outbound ${proto} ${method}: ${s}`);
+  };
+
+  httpMod.request = ((...args: unknown[]) => block("http", "request", args[0])) as typeof httpMod.request;
+  httpMod.get = ((...args: unknown[]) => block("http", "get", args[0])) as typeof httpMod.get;
+  httpsMod.request = ((...args: unknown[]) => block("https", "request", args[0])) as typeof httpsMod.request;
+  httpsMod.get = ((...args: unknown[]) => block("https", "get", args[0])) as typeof httpsMod.get;
+}
+
+function restoreNodeNetRecorder() {
+  if (originalHttpRequest) httpMod.request = originalHttpRequest;
+  if (originalHttpGet) httpMod.get = originalHttpGet;
+  if (originalHttpsRequest) httpsMod.request = originalHttpsRequest;
+  if (originalHttpsGet) httpsMod.get = originalHttpsGet;
+}
+
 // Install/restore around every test in this file.
 beforeEach(() => {
   recorded = [];
   installFetchRecorder();
+  installNodeNetRecorder();
 });
 
 afterEach(() => {
   restoreFetch();
+  restoreNodeNetRecorder();
 });
 
 // ─── Self-test: prove the stub actually works ─────────────────────────────────
@@ -486,5 +543,6 @@ describe("no external egress from API routes", () => {
     // If any route called fetch(), it will appear in `recorded`. An empty
     // list is the only acceptable result — it means nothing phoned home.
     expect(recorded).toEqual([]);
+    expect(recordedNet).toEqual([]);
   });
 });

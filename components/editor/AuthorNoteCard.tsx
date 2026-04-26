@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Label } from "@/components/ui/label";
 import { RichTextEditor } from "@/components/editor/RichTextEditor";
 import { SafeHtml } from "@/lib/publish/safe-html";
-import { AUTHOR_NOTE_SANITIZE_OPTS } from "@/lib/publish/author-note-shared";
+import { AUTHOR_NOTE_MESSAGE_SANITIZE_OPTS } from "@/lib/publish/author-note-shared";
 import { cn } from "@/lib/utils";
 import type { Story } from "@/lib/types";
 import type { PenNameProfile } from "@/lib/config";
@@ -147,7 +147,7 @@ export function AuthorNoteCard({
               >
                 <SafeHtml
                   html={defaultHtml}
-                  extra={AUTHOR_NOTE_SANITIZE_OPTS}
+                  extra={AUTHOR_NOTE_MESSAGE_SANITIZE_OPTS}
                 />
               </div>
             </div>

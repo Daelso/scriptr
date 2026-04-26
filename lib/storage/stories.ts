@@ -3,8 +3,16 @@ import { join } from "node:path";
 import { storyDir, storyJson, bibleJson, chaptersDir, exportsDir } from "@/lib/storage/paths";
 import { toSlug, uniqueSlug } from "@/lib/slug";
 import type { Story, Bible } from "@/lib/types";
+import { withPathLock, writeJsonAtomic } from "@/lib/fs-atomic";
 
 export type NewStoryInput = { title: string; authorPenName?: string };
+
+export class StoryNotFoundError extends Error {
+  constructor(slug: string) {
+    super(`Story not found: ${slug}`);
+    this.name = "StoryNotFoundError";
+  }
+}
 
 const defaultBible: Bible = {
   characters: [],
@@ -86,20 +94,23 @@ export async function updateStory(
   slug: string,
   patch: Partial<Story>
 ): Promise<Story> {
-  const existing = await getStory(dataDir, slug);
-  if (!existing) throw new Error(`Story not found: ${slug}`);
+  const jsonPath = storyJson(dataDir, slug);
+  return withPathLock(jsonPath, async () => {
+    const existing = await getStory(dataDir, slug);
+    if (!existing) throw new StoryNotFoundError(slug);
 
-  const updated: Story = {
-    ...existing,
-    ...patch,
-    // immutable fields
-    slug: existing.slug,
-    createdAt: existing.createdAt,
-    updatedAt: new Date().toISOString(),
-  };
+    const updated: Story = {
+      ...existing,
+      ...patch,
+      // immutable fields
+      slug: existing.slug,
+      createdAt: existing.createdAt,
+      updatedAt: new Date().toISOString(),
+    };
 
-  await writeFile(storyJson(dataDir, slug), JSON.stringify(updated, null, 2), "utf-8");
-  return updated;
+    await writeJsonAtomic(jsonPath, updated);
+    return updated;
+  });
 }
 
 export async function deleteStory(dataDir: string, slug: string): Promise<void> {
