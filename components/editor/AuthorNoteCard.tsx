@@ -6,8 +6,37 @@ import { Label } from "@/components/ui/label";
 import { RichTextEditor } from "@/components/editor/RichTextEditor";
 import { SafeHtml } from "@/lib/publish/safe-html";
 import { AUTHOR_NOTE_SANITIZE_OPTS } from "@/lib/publish/author-note-shared";
+import { cn } from "@/lib/utils";
 import type { Story } from "@/lib/types";
 import type { PenNameProfile } from "@/lib/config";
+
+// ─── Save status indicator ────────────────────────────────────────────────────
+
+// Mirrors the SaveStatus chip used by SummaryField/BeatList/PromptField/
+// RecapField so the AuthorNote card shows the same idle/saving/saved/error
+// feedback as the other autosave-backed cards. Caller passes the status
+// returned from `useAutoSave`.
+function SaveStatus({
+  status,
+}: {
+  status: "idle" | "saving" | "saved" | "error";
+}) {
+  if (status === "idle") return null;
+  const label =
+    status === "saving" ? "Saving…" :
+    status === "saved"  ? "Saved"   :
+    "Save failed";
+  return (
+    <span
+      className={cn(
+        "text-xs",
+        status === "error" ? "text-destructive" : "text-muted-foreground",
+      )}
+    >
+      {label}
+    </span>
+  );
+}
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -17,6 +46,11 @@ interface Props {
   profile: PenNameProfile | undefined;
   /** Emits the new authorNote shape. Caller persists via PATCH + autosave. */
   onChange: (next: Story["authorNote"]) => void;
+  /**
+   * Autosave status from the parent container's `useAutoSave`. Optional so
+   * the component remains usable without an autosave wrapper (tests, etc.).
+   */
+  saveStatus?: "idle" | "saving" | "saved" | "error";
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -44,7 +78,12 @@ interface Props {
  * `author-note-default-preview`, `author-note-override-editor`) are
  * load-bearing for the Task 7.2 Playwright e2e — do not rename.
  */
-export function AuthorNoteCard({ story, profile, onChange }: Props) {
+export function AuthorNoteCard({
+  story,
+  profile,
+  onChange,
+  saveStatus,
+}: Props) {
   const hasProfile = profile !== undefined;
   const enabled = hasProfile ? story.authorNote?.enabled !== false : false;
 
@@ -68,6 +107,7 @@ export function AuthorNoteCard({ story, profile, onChange }: Props) {
         <Label htmlFor="author-note-toggle" className="text-xs font-medium">
           Author Note
         </Label>
+        {saveStatus !== undefined && <SaveStatus status={saveStatus} />}
       </div>
 
       <label className="flex items-center gap-2 text-sm">
