@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   renderChapterPreviewHtml,
   EPUB_STYLESHEET,
-  type EpubInput,
 } from "@/lib/publish/epub";
 import type { Chapter } from "@/lib/types";
 
@@ -337,5 +336,188 @@ describe("validateEpub", () => {
     const bytes = await buildEpubBytes({ story: story(), chapters: chapters() });
     const result = await validateEpub(bytes);
     expect(Array.isArray(result.warnings)).toBe(true);
+  });
+});
+
+import JSZip from "jszip";
+
+async function unzipXhtmls(bytes: Uint8Array | Buffer): Promise<Record<string, string>> {
+  const zip = await JSZip.loadAsync(bytes);
+  const out: Record<string, string> = {};
+  await Promise.all(
+    Object.keys(zip.files)
+      .filter((p) => p.endsWith(".xhtml"))
+      .map(async (p) => {
+        out[p] = await zip.file(p)!.async("string");
+      }),
+  );
+  return out;
+}
+
+describe("buildEpubBytes author-note integration", () => {
+  function story(): Story {
+    return {
+      slug: "author-note-test",
+      title: "Author Note Test",
+      authorPenName: "Jane Doe",
+      description: "A tiny test.",
+      copyrightYear: 2026,
+      language: "en",
+      bisacCategory: "FIC027000",
+      keywords: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      chapterOrder: ["c1"],
+    };
+  }
+
+  function chapters(): Chapter[] {
+    return [
+      {
+        id: "c1",
+        title: "Ch 1",
+        summary: "",
+        beats: [],
+        prompt: "",
+        recap: "",
+        sections: [{ id: "s1", content: "Hello." }],
+        wordCount: 1,
+      },
+    ];
+  }
+
+  function twoChapters(): Chapter[] {
+    return [
+      {
+        id: "c1",
+        title: "Ch 1",
+        summary: "",
+        beats: [],
+        prompt: "",
+        recap: "",
+        sections: [{ id: "s1", content: "First." }],
+        wordCount: 1,
+      },
+      {
+        id: "c2",
+        title: "Ch 2",
+        summary: "",
+        beats: [],
+        prompt: "",
+        recap: "",
+        sections: [{ id: "s2", content: "Second." }],
+        wordCount: 1,
+      },
+    ];
+  }
+
+  it("appends the author note as a final content entry when input.authorNote is provided", async () => {
+    const bytes = await buildEpubBytes({
+      story: story(),
+      chapters: chapters(),
+      authorNote: {
+        messageHtml: "<p>Thanks!</p>",
+        email: "jane@example.com",
+        mailingListUrl: "https://list.example.com/jane",
+      },
+    });
+    const xhtmls = await unzipXhtmls(bytes);
+    // Find the author-note content XHTML (named like "1_A-note-from-the-author.xhtml")
+    // by content marker; toc.xhtml also references the title in its anchor list.
+    const noteEntry = Object.entries(xhtmls).find(([, html]) =>
+      html.includes('class="author-note"'),
+    );
+    expect(noteEntry, "expected an XHTML containing class=\"author-note\"").toBeDefined();
+    const [, noteHtml] = noteEntry!;
+    expect(noteHtml).toContain("A note from the author");
+    expect(noteHtml).toContain('href="mailto:jane@example.com"');
+    // epub-gen-memory rewrites data: image URLs into separate archive entries
+    // (`OEBPS/images/<uuid>`) and rewrites the <img src> to reference that
+    // path. Verify the <img> tag survives the rewrite and that the archive
+    // actually contains an image entry. We check the zip directly because
+    // unzipXhtmls only returns .xhtml files.
+    expect(noteHtml).toMatch(/<img[^>]+src="[^"]+"/);
+    const zip = await JSZip.loadAsync(bytes);
+    const imageEntries = Object.keys(zip.files).filter((p) => p.startsWith("OEBPS/images/"));
+    // images/ directory + at least one image file
+    const imageFiles = imageEntries.filter((p) => !p.endsWith("/"));
+    expect(imageFiles.length).toBeGreaterThan(0);
+
+    // Regression guard: epub-gen-memory's data-URL handling silently produces
+    // 0-byte image entries with no extension and an empty media-type. Assert
+    // the embedded image actually has PNG bytes and a real media-type.
+    const pngFile = Object.keys(zip.files).find((p) =>
+      /^OEBPS\/images\/.+\.png$/i.test(p),
+    );
+    expect(pngFile, "expected a .png entry under OEBPS/images/").toBeDefined();
+    const imgBuf = await zip.file(pngFile!)!.async("uint8array");
+    expect(imgBuf.length).toBeGreaterThan(100);
+    // PNG magic bytes: 89 50 4E 47
+    expect(Array.from(imgBuf.slice(0, 4))).toEqual([0x89, 0x50, 0x4e, 0x47]);
+
+    // OPF manifest must declare image/png for the embedded QR.
+    const opfFile = Object.keys(zip.files).find((p) => p.endsWith(".opf"))!;
+    const opf = await zip.file(opfFile)!.async("string");
+    const imageItem = opf.match(
+      /<item[^>]*href="images\/[^"]+\.png"[^>]*media-type="([^"]+)"/,
+    );
+    expect(imageItem).not.toBeNull();
+    expect(imageItem![1]).toBe("image/png");
+  });
+
+  it("omits the author note entry when input.authorNote is undefined", async () => {
+    const bytes = await buildEpubBytes({
+      story: story(),
+      chapters: chapters(),
+    });
+    const xhtmls = await unzipXhtmls(bytes);
+    for (const text of Object.values(xhtmls)) {
+      expect(text).not.toContain("A note from the author");
+    }
+  });
+
+  it("works on EPUB2 as well as EPUB3", async () => {
+    const bytes2 = await buildEpubBytes({
+      story: story(),
+      chapters: chapters(),
+      version: 2,
+      authorNote: { messageHtml: "<p>x</p>", email: "j@e.com" },
+    });
+    const xhtmls = await unzipXhtmls(bytes2);
+    const noteEntry = Object.entries(xhtmls).find(([, html]) =>
+      html.includes('class="author-note"'),
+    );
+    expect(noteEntry, "expected an XHTML containing class=\"author-note\" in EPUB2").toBeDefined();
+    expect(noteEntry![1]).toContain("A note from the author");
+  });
+
+  it("regression guard: no-note path produces same XHTML count and content as today's behavior", async () => {
+    // The spec calls for "byte-identical" output but epub-gen-memory writes
+    // ZIP entries with mtimes that may vary per run. The realistic guard is:
+    //   1. Same number of XHTML files (no extra entry appended)
+    //   2. None of those XHTMLs contain the note marker
+    const baseStory = story();
+    const ch = twoChapters();
+
+    const baseline = await buildEpubBytes({ story: baseStory, chapters: ch });
+    const disabled = await buildEpubBytes({
+      story: { ...baseStory, authorNote: { enabled: false } },
+      chapters: ch,
+    });
+    const noProfile = await buildEpubBytes({ story: baseStory, chapters: ch });
+
+    const baseXhtmls = await unzipXhtmls(baseline);
+    const disabledXhtmls = await unzipXhtmls(disabled);
+    const noProfileXhtmls = await unzipXhtmls(noProfile);
+
+    expect(Object.keys(baseXhtmls).length).toBe(Object.keys(disabledXhtmls).length);
+    expect(Object.keys(baseXhtmls).length).toBe(Object.keys(noProfileXhtmls).length);
+    for (const text of Object.values({
+      ...baseXhtmls,
+      ...disabledXhtmls,
+      ...noProfileXhtmls,
+    })) {
+      expect(text).not.toContain("A note from the author");
+    }
   });
 });

@@ -54,21 +54,36 @@
  *   POST /api/import/novelai/commit  (new-story mode)
  *   POST /api/import/novelai/parse
  *   POST /api/import/novelai/commit  (existing-story, reuses seeded slug)
+ *   POST /api/stories/[slug]/export/epub  (with author-note configured —
+ *     exercises the QR encoder + buildAuthorNoteHtml + epub-gen-memory path
+ *     to assert the EPUB pipeline never phones home)
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { NextRequest } from "next/server";
 import { createStory } from "@/lib/storage/stories";
-import { createChapter } from "@/lib/storage/chapters";
+import { createChapter, updateChapter } from "@/lib/storage/chapters";
+import { saveConfig } from "@/lib/config";
+
+const require = createRequire(import.meta.url);
+const httpMod = require("node:http") as typeof import("node:http");
+const httpsMod = require("node:https") as typeof import("node:https");
 
 // ─── Fetch recorder ──────────────────────────────────────────────────────────
 
 type Recorded = { url: string; method: string };
 let recorded: Recorded[];
 let originalFetch: typeof globalThis.fetch | undefined;
+type RecordedNet = { proto: "http" | "https"; method: "request" | "get"; target: string };
+let recordedNet: RecordedNet[];
+let originalHttpRequest: typeof httpMod.request | undefined;
+let originalHttpGet: typeof httpMod.get | undefined;
+let originalHttpsRequest: typeof httpsMod.request | undefined;
+let originalHttpsGet: typeof httpsMod.get | undefined;
 
 function installFetchRecorder() {
   originalFetch = globalThis.fetch;
@@ -99,14 +114,60 @@ function restoreFetch() {
   }
 }
 
+function toTargetString(input: unknown): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  if (input && typeof input === "object") {
+    const maybe = input as { href?: unknown; protocol?: unknown; hostname?: unknown; path?: unknown };
+    if (typeof maybe.href === "string") return maybe.href;
+    const protocol = typeof maybe.protocol === "string" ? maybe.protocol : "";
+    const hostname = typeof maybe.hostname === "string" ? maybe.hostname : "";
+    const path = typeof maybe.path === "string" ? maybe.path : "";
+    if (protocol || hostname || path) return `${protocol}//${hostname}${path}`;
+  }
+  return "<unknown>";
+}
+
+function installNodeNetRecorder() {
+  recordedNet = [];
+  originalHttpRequest = httpMod.request;
+  originalHttpGet = httpMod.get;
+  originalHttpsRequest = httpsMod.request;
+  originalHttpsGet = httpsMod.get;
+
+  const block = (
+    proto: "http" | "https",
+    method: "request" | "get",
+    target: unknown,
+  ) => {
+    const s = toTargetString(target);
+    recordedNet.push({ proto, method, target: s });
+    throw new Error(`unexpected outbound ${proto} ${method}: ${s}`);
+  };
+
+  httpMod.request = ((...args: unknown[]) => block("http", "request", args[0])) as typeof httpMod.request;
+  httpMod.get = ((...args: unknown[]) => block("http", "get", args[0])) as typeof httpMod.get;
+  httpsMod.request = ((...args: unknown[]) => block("https", "request", args[0])) as typeof httpsMod.request;
+  httpsMod.get = ((...args: unknown[]) => block("https", "get", args[0])) as typeof httpsMod.get;
+}
+
+function restoreNodeNetRecorder() {
+  if (originalHttpRequest) httpMod.request = originalHttpRequest;
+  if (originalHttpGet) httpMod.get = originalHttpGet;
+  if (originalHttpsRequest) httpsMod.request = originalHttpsRequest;
+  if (originalHttpsGet) httpsMod.get = originalHttpsGet;
+}
+
 // Install/restore around every test in this file.
 beforeEach(() => {
   recorded = [];
   installFetchRecorder();
+  installNodeNetRecorder();
 });
 
 afterEach(() => {
   restoreFetch();
+  restoreNodeNetRecorder();
 });
 
 // ─── Self-test: prove the stub actually works ─────────────────────────────────
@@ -163,6 +224,25 @@ describe("no external egress from API routes", () => {
 
     const ch1 = await createChapter(tmpDir, slug, { title: "Chapter One" });
     const ch2 = await createChapter(tmpDir, slug, { title: "Chapter Two" });
+
+    // Give chapter one some prose so the EPUB exporter has content to render
+    // when this test exercises the export route below.
+    await updateChapter(tmpDir, slug, ch1.id, {
+      sections: [{ id: "egress-sec-1", content: "Once upon a time." }],
+    });
+
+    // Configure a pen-name profile so the EPUB export step below resolves a
+    // non-undefined author-note. This exercises buildAuthorNoteHtml (QR
+    // encoder + sanitizer + temp-file rewrite) — purely local, no fetch.
+    await saveConfig(tmpDir, {
+      penNameProfiles: {
+        [story.authorPenName]: {
+          email: "test@example.com",
+          mailingListUrl: "https://list.example.com/test",
+          defaultMessageHtml: "<p>Thanks for reading!</p>",
+        },
+      },
+    });
 
     // Clear any recordings from the seed helpers (there shouldn't be any,
     // but be defensive).
@@ -376,6 +456,27 @@ describe("no external egress from API routes", () => {
       expect(res.status).toBe(200);
     }
 
+    // ── POST /api/stories/[slug]/export/epub (with author-note) ────────────
+    // This exercises the full EPUB pipeline — QR encoder, buildAuthorNoteHtml,
+    // epub-gen-memory, and the temp-file QR rewrite — to assert that
+    // generating an EPUB with an author-note configured does NOT phone home.
+    {
+      const { POST } = await import(
+        "@/app/api/stories/[slug]/export/epub/route"
+      );
+      const req = makeReq(
+        `http://localhost/api/stories/${slug}/export/epub`,
+        {
+          method: "POST",
+          body: JSON.stringify({ version: 3 }),
+          headers: { "content-type": "application/json" },
+        },
+      );
+      const ctx = { params: Promise.resolve({ slug }) };
+      const res = await POST(req, ctx);
+      expect(res.status).toBe(200);
+    }
+
     // ── DELETE /api/stories/[slug] ─────────────────────────────────────────
     {
       const { DELETE } = await import("@/app/api/stories/[slug]/route");
@@ -442,5 +543,6 @@ describe("no external egress from API routes", () => {
     // If any route called fetch(), it will appear in `recorded`. An empty
     // list is the only acceptable result — it means nothing phoned home.
     expect(recorded).toEqual([]);
+    expect(recordedNet).toEqual([]);
   });
 });

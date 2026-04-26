@@ -1,9 +1,15 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { effectiveDataDir } from "@/lib/config";
+import { effectiveDataDir, loadConfig } from "@/lib/config";
 import { getStory } from "@/lib/storage/stories";
 import { listChapters } from "@/lib/storage/chapters";
 import { ReaderView } from "@/components/reader/ReaderView";
+import {
+  resolveAuthorNote,
+  buildAuthorNoteHtml,
+} from "@/lib/publish/author-note";
+
+export const dynamic = "force-dynamic";
 
 type Props = { params: Promise<{ slug: string }> };
 
@@ -19,12 +25,25 @@ export default async function ReaderPage({ params }: Props) {
   const { slug } = await params;
   const dataDir = effectiveDataDir();
 
-  const [story, chapters] = await Promise.all([
+  const [story, chapters, cfg] = await Promise.all([
     getStory(dataDir, slug),
     listChapters(dataDir, slug),
+    loadConfig(dataDir),
   ]);
 
   if (!story) notFound();
 
-  return <ReaderView story={story} chapters={chapters} />;
+  const profile = cfg.penNameProfiles?.[story.authorPenName];
+  const resolved = resolveAuthorNote(story, profile);
+  const authorNoteHtml = resolved
+    ? await buildAuthorNoteHtml(resolved)
+    : undefined;
+
+  return (
+    <ReaderView
+      story={story}
+      chapters={chapters}
+      authorNoteHtml={authorNoteHtml}
+    />
+  );
 }
