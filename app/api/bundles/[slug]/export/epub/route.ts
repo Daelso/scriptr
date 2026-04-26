@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { mkdir, writeFile, rename, stat } from "node:fs/promises";
-import { ok, fail, readJson, JsonParseError } from "@/lib/api";
+import { ok, fail } from "@/lib/api";
 import { getBundle } from "@/lib/storage/bundles";
 import { getStory } from "@/lib/storage/stories";
 import { listChapters } from "@/lib/storage/chapters";
@@ -23,16 +23,24 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 
   // Optional version body. Empty body is OK.
   let version: EpubVersion = 3;
-  try {
-    const body = await readJson<{ version?: unknown }>(req);
+  const rawBody = await req.text();
+  if (rawBody.trim() !== "") {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rawBody);
+    } catch {
+      return fail("invalid JSON body", 400);
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return fail("request body must be an object", 400);
+    }
+    const body = parsed as { version?: unknown };
     if (body.version !== undefined) {
       if (body.version !== 2 && body.version !== 3) {
         return fail("version must be 2 or 3", 400);
       }
       version = body.version as EpubVersion;
     }
-  } catch (err) {
-    if (!(err instanceof JsonParseError) && !(err instanceof SyntaxError) && !(err instanceof TypeError)) throw err;
   }
 
   const bundle = await getBundle(dataDir, slug);
