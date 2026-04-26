@@ -84,7 +84,7 @@ function getGenerator(): EpubGenFn {
  * Returns the rewritten HTML and a list of temp file paths the caller must
  * unlink after the EPUB has been built.
  */
-async function externalizeDataPngImages(
+export async function externalizeDataPngImages(
   html: string,
 ): Promise<{ html: string; tempPaths: string[] }> {
   const tempPaths: string[] = [];
@@ -160,6 +160,26 @@ async function externalizeDataPngImages(
   }
 }
 
+/**
+ * Append the author-note entry to a content array. Used by both the
+ * single-story builder and the bundle builder. Pushes any temp PNG file
+ * paths onto `tempImagePaths` so the caller's `finally` block can clean
+ * them up regardless of whether the generator throws.
+ */
+export async function appendAuthorNoteContent(
+  content: Array<{ title: string; content: string }>,
+  authorNote: ResolvedAuthorNote,
+  tempImagePaths: string[],
+): Promise<void> {
+  const noteHtml = await buildAuthorNoteHtml(authorNote);
+  const { html: rewritten, tempPaths } = await externalizeDataPngImages(noteHtml);
+  tempImagePaths.push(...tempPaths);
+  content.push({
+    title: "A note from the author",
+    content: rewritten,
+  });
+}
+
 export async function buildEpubBytes(input: EpubInput): Promise<Uint8Array> {
   const { story, chapters, coverPath, version = 3 } = input;
 
@@ -181,13 +201,7 @@ export async function buildEpubBytes(input: EpubInput): Promise<Uint8Array> {
 
   try {
     if (input.authorNote) {
-      const noteHtml = await buildAuthorNoteHtml(input.authorNote);
-      const { html: rewritten, tempPaths } = await externalizeDataPngImages(noteHtml);
-      tempImagePaths.push(...tempPaths);
-      content.push({
-        title: "A note from the author",
-        content: rewritten,
-      });
+      await appendAuthorNoteContent(content, input.authorNote, tempImagePaths);
     }
 
     const generator = getGenerator();
