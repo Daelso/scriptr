@@ -65,6 +65,7 @@
  *   PUT  /api/bundles/[slug]/cover
  *   DELETE /api/bundles/[slug]/cover
  *   GET  /api/bundles/[slug]/preview
+ *   POST /api/bundles/[slug]/export/epub
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -659,6 +660,69 @@ describe("no external egress from API routes", () => {
       const ctx = { params: Promise.resolve({ slug: previewSlug }) };
       const req = makeReq(`http://localhost/api/bundles/${previewSlug}/preview`);
       const res = await GET(req, ctx);
+      expect(res.status).toBe(200);
+    }
+
+    // ── /api/bundles/[slug]/export/epub ────────────────────────────────────────
+    {
+      // Need a bundle WITH a real story+chapter for export to succeed.
+      // Reuse existing seed if visible, or create fresh.
+      const story = await createStory(tmpDir, {
+        title: "Export Egress Story",
+        authorPenName: "Pen",
+      });
+      const ch = await createChapter(tmpDir, story.slug, { title: "C1" });
+      // Add content to the chapter via the existing PATCH route
+      {
+        const { PATCH } = await import(
+          "@/app/api/stories/[slug]/chapters/[id]/route"
+        );
+        const r = makeReq(
+          `http://localhost/api/stories/${story.slug}/chapters/${ch.id}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              sections: [{ id: "s1", content: "Body for export." }],
+            }),
+            headers: { "content-type": "application/json" },
+          },
+        );
+        await PATCH(r, { params: Promise.resolve({ slug: story.slug, id: ch.id }) });
+      }
+
+      const { POST: createBundleRoute } = await import("@/app/api/bundles/route");
+      const createRes = await createBundleRoute(
+        makeReq("http://localhost/api/bundles", {
+          method: "POST",
+          body: JSON.stringify({ title: "Export Egress" }),
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      const exportSlug = (await createRes.json()).data.slug as string;
+
+      const { PATCH: patchBundle } = await import("@/app/api/bundles/[slug]/route");
+      const patchRes = await patchBundle(
+        makeReq(`http://localhost/api/bundles/${exportSlug}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            authorPenName: "Pen",
+            stories: [{ storySlug: story.slug }],
+          }),
+          headers: { "content-type": "application/json" },
+        }),
+        { params: Promise.resolve({ slug: exportSlug }) },
+      );
+      expect(patchRes.status).toBe(200);
+
+      const { POST: exportRoute } = await import(
+        "@/app/api/bundles/[slug]/export/epub/route"
+      );
+      const ctx = { params: Promise.resolve({ slug: exportSlug }) };
+      const req = makeReq(
+        `http://localhost/api/bundles/${exportSlug}/export/epub`,
+        { method: "POST" },
+      );
+      const res = await exportRoute(req, ctx);
       expect(res.status).toBe(200);
     }
 
