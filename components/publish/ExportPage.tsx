@@ -1,12 +1,22 @@
 "use client";
 
-import { useState, useRef, type KeyboardEvent } from "react";
+import { useEffect, useState, useRef, type KeyboardEvent } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type { Story } from "@/lib/types";
+
+declare global {
+  interface Window {
+    scriptr?: {
+      pickFolder: () => Promise<string | null>;
+      revealInFolder: (path: string) => Promise<void>;
+      openFile: (path: string) => Promise<void>;
+    };
+  }
+}
 
 type Props = {
   story: Story;
@@ -25,6 +35,93 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const v3Ref = useRef<HTMLButtonElement>(null);
   const v2Ref = useRef<HTMLButtonElement>(null);
+  const [isElectron, setIsElectron] = useState(false);
+  const [outputDirDraft, setOutputDirDraft] = useState<string>("");
+  const savedOutputDirRef = useRef<string>("");
+  // Mirrors outputDirDraft so blur handler always reads the latest value
+  // even when React hasn't re-rendered between the input and blur events.
+  const outputDirDraftRef = useRef<string>("");
+  // Native ref for the output-dir input so we can attach a native blur
+  // listener (React's onBlur maps to focusout; tests dispatch "blur").
+  const outputDirInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/settings")
+      .then((r) => r.json())
+      .then((body) => {
+        if (cancelled || !body?.ok) return;
+        setIsElectron(Boolean(body.data?.isElectron));
+        const initial: string = body.data?.defaultExportDir ?? "";
+        outputDirDraftRef.current = initial;
+        setOutputDirDraft(initial);
+        savedOutputDirRef.current = initial;
+      })
+      .catch(() => {
+        // First-load failure is non-fatal; user can still build EPUBs into
+        // the data-dir default. No toast — the page is otherwise usable.
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const saveOutputDir = async (value: string | null) => {
+    try {
+      const { res, body } = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ defaultExportDir: value }),
+      }).then((r) => r.json().then((b: unknown) => ({ res: r, body: b as Record<string, unknown> })));
+      if (!res.ok || !(body as { ok?: boolean }).ok) {
+        toast.error((body as { error?: string }).error ?? "Failed to save output directory");
+        // Roll back input to last-good value
+        outputDirDraftRef.current = savedOutputDirRef.current;
+        setOutputDirDraft(savedOutputDirRef.current);
+        return;
+      }
+      const persisted: string = (body as { data?: { defaultExportDir?: string } }).data?.defaultExportDir ?? "";
+      savedOutputDirRef.current = persisted;
+      // If server normalized (e.g. trimmed), reflect it in the input
+      outputDirDraftRef.current = persisted;
+      setOutputDirDraft(persisted);
+    } catch (err) {
+      toast.error(`Failed to save output directory: ${err instanceof Error ? err.message : String(err)}`);
+      outputDirDraftRef.current = savedOutputDirRef.current;
+      setOutputDirDraft(savedOutputDirRef.current);
+    }
+  };
+
+  const handleOutputDirBlur = () => {
+    // Read from ref so we get the latest value even if React hasn't
+    // re-rendered between the preceding input event and this blur.
+    const trimmed = outputDirDraftRef.current.trim();
+    if (trimmed === savedOutputDirRef.current) return;
+    void saveOutputDir(trimmed === "" ? null : trimmed);
+  };
+
+  // React maps onBlur to "focusout"; tests dispatch "blur". Use a native
+  // listener so both work correctly.
+  useEffect(() => {
+    const el = outputDirInputRef.current;
+    if (!el) return;
+    el.addEventListener("blur", handleOutputDirBlur);
+    return () => { el.removeEventListener("blur", handleOutputDirBlur); };
+  });
+
+  const handlePickFolder = async () => {
+    if (!window.scriptr?.pickFolder) return;
+    const picked = await window.scriptr.pickFolder();
+    if (picked) {
+      outputDirDraftRef.current = picked;
+      setOutputDirDraft(picked);
+      await saveOutputDir(picked);
+    }
+  };
+
+  const handleResetOutputDir = () => {
+    outputDirDraftRef.current = "";
+    setOutputDirDraft("");
+    void saveOutputDir(null);
+  };
 
   const onToggleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const k = e.key;
@@ -235,6 +332,46 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
           <div className="text-xs text-muted-foreground mt-1">
             2:3 ratio, ≤20 MB
           </div>
+        </div>
+
+        <div className="border-t border-border pt-4">
+          <h2 className="text-sm font-semibold mb-1">Output location</h2>
+          <Input
+            ref={outputDirInputRef}
+            type="text"
+            data-testid="export-output-dir"
+            placeholder="Default: <data dir>/stories/<slug>/exports/"
+            value={outputDirDraft}
+            onChange={(e) => { outputDirDraftRef.current = e.target.value; setOutputDirDraft(e.target.value); }}
+            className="text-xs font-mono"
+          />
+          <div className="flex items-center gap-2 mt-2">
+            {isElectron && typeof window !== "undefined" && window.scriptr?.pickFolder && (
+              <Button
+                variant="secondary"
+                size="sm"
+                data-testid="export-pick-folder"
+                onClick={() => void handlePickFolder()}
+              >
+                Choose folder…
+              </Button>
+            )}
+            {outputDirDraft && (
+              <Button
+                variant="ghost"
+                size="sm"
+                data-testid="export-reset-output-dir"
+                onClick={handleResetOutputDir}
+              >
+                Reset to default
+              </Button>
+            )}
+          </div>
+          {!outputDirDraft && (
+            <p className="text-xs text-muted-foreground mt-2">
+              Files land in the story&apos;s <code>exports/</code> folder by default.
+            </p>
+          )}
         </div>
 
         <div className="border-t border-border pt-4">
