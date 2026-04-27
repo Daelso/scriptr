@@ -38,12 +38,6 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
   const [isElectron, setIsElectron] = useState(false);
   const [outputDirDraft, setOutputDirDraft] = useState<string>("");
   const savedOutputDirRef = useRef<string>("");
-  // Mirrors outputDirDraft so blur handler always reads the latest value
-  // even when React hasn't re-rendered between the input and blur events.
-  const outputDirDraftRef = useRef<string>("");
-  // Native ref for the output-dir input so we can attach a native blur
-  // listener (React's onBlur maps to focusout; tests dispatch "blur").
-  const outputDirInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -53,7 +47,6 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
         if (cancelled || !body?.ok) return;
         setIsElectron(Boolean(body.data?.isElectron));
         const initial: string = body.data?.defaultExportDir ?? "";
-        outputDirDraftRef.current = initial;
         setOutputDirDraft(initial);
         savedOutputDirRef.current = initial;
       })
@@ -74,51 +67,35 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
       if (!res.ok || !(body as { ok?: boolean }).ok) {
         toast.error((body as { error?: string }).error ?? "Failed to save output directory");
         // Roll back input to last-good value
-        outputDirDraftRef.current = savedOutputDirRef.current;
         setOutputDirDraft(savedOutputDirRef.current);
         return;
       }
       const persisted: string = (body as { data?: { defaultExportDir?: string } }).data?.defaultExportDir ?? "";
       savedOutputDirRef.current = persisted;
       // If server normalized (e.g. trimmed), reflect it in the input
-      outputDirDraftRef.current = persisted;
       setOutputDirDraft(persisted);
     } catch (err) {
       toast.error(`Failed to save output directory: ${err instanceof Error ? err.message : String(err)}`);
-      outputDirDraftRef.current = savedOutputDirRef.current;
       setOutputDirDraft(savedOutputDirRef.current);
     }
   };
 
   const handleOutputDirBlur = () => {
-    // Read from ref so we get the latest value even if React hasn't
-    // re-rendered between the preceding input event and this blur.
-    const trimmed = outputDirDraftRef.current.trim();
+    const trimmed = outputDirDraft.trim();
     if (trimmed === savedOutputDirRef.current) return;
     void saveOutputDir(trimmed === "" ? null : trimmed);
   };
-
-  // React maps onBlur to "focusout"; tests dispatch "blur". Use a native
-  // listener so both work correctly.
-  useEffect(() => {
-    const el = outputDirInputRef.current;
-    if (!el) return;
-    el.addEventListener("blur", handleOutputDirBlur);
-    return () => { el.removeEventListener("blur", handleOutputDirBlur); };
-  });
 
   const handlePickFolder = async () => {
     if (!window.scriptr?.pickFolder) return;
     const picked = await window.scriptr.pickFolder();
     if (picked) {
-      outputDirDraftRef.current = picked;
       setOutputDirDraft(picked);
       await saveOutputDir(picked);
     }
   };
 
   const handleResetOutputDir = () => {
-    outputDirDraftRef.current = "";
     setOutputDirDraft("");
     void saveOutputDir(null);
   };
@@ -337,12 +314,12 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
         <div className="border-t border-border pt-4">
           <h2 className="text-sm font-semibold mb-1">Output location</h2>
           <Input
-            ref={outputDirInputRef}
             type="text"
             data-testid="export-output-dir"
             placeholder="Default: <data dir>/stories/<slug>/exports/"
             value={outputDirDraft}
-            onChange={(e) => { outputDirDraftRef.current = e.target.value; setOutputDirDraft(e.target.value); }}
+            onChange={(e) => setOutputDirDraft(e.target.value)}
+            onBlur={handleOutputDirBlur}
             className="text-xs font-mono"
           />
           <div className="flex items-center gap-2 mt-2">
