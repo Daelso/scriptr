@@ -7,7 +7,7 @@ import { buildEpubBytes, validateEpub } from "@/lib/publish/epub";
 import { resolveAuthorNote } from "@/lib/publish/author-note";
 import { ensureCoverOrFallback, writeEpub } from "@/lib/publish/epub-storage";
 import type { EpubVersion } from "@/lib/storage/paths";
-import { probeWritableDir } from "@/lib/storage/dir-probe";
+import { probeWritableDir, probeFailDetail } from "@/lib/storage/dir-probe";
 
 type Ctx = { params: Promise<{ slug: string }> };
 
@@ -64,15 +64,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   if (effectiveOutputDir !== undefined) {
     const probe = await probeWritableDir(effectiveOutputDir);
     if (!probe.ok) {
-      const detail =
-        probe.reason === "not-absolute"
-          ? "must be an absolute path"
-          : probe.reason === "not-found"
-          ? "directory does not exist"
-          : probe.reason === "not-a-directory"
-          ? "path is not a directory"
-          : "directory is not writable";
-      return fail(`outputDir ${detail}`, 400);
+      return fail(`outputDir ${probeFailDetail(probe.reason)}`, 400);
     }
   }
 
