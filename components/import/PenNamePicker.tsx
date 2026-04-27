@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Input } from "@/components/ui/input";
 import type { PenNameProfile } from "@/lib/config";
 
-const CUSTOM_SENTINEL = "__custom__";
+const CUSTOM_SENTINEL = "\0__pen-name-picker:custom\0";
 const PLACEHOLDER_SENTINEL = "";
 
 interface PenNamePickerProps {
@@ -35,6 +35,10 @@ export function PenNamePicker({
 }: PenNamePickerProps) {
   const profileNames = profiles ? Object.keys(profiles).sort() : [];
   const hasProfiles = profileNames.length > 0;
+  // `mode` is derived from props on first render only. The parent contract
+  // is: do not mutate `value` to a string that doesn't match a profile key
+  // while the picker is mounted (the picker will silently fall back to the
+  // disabled placeholder option). See the spec's "Defaulting & init rules".
   const [mode, setMode] = useState<"saved" | "custom">(() =>
     deriveInitialMode(profiles, value),
   );
