@@ -127,8 +127,15 @@ describe("PenNamePicker", () => {
     const select = container.querySelector(
       '[data-testid="pen-name-select"]',
     ) as HTMLSelectElement;
+    // The "Custom…" option's value is an opaque sentinel (containing NULs to
+    // avoid colliding with any user-typeable profile name). Look it up by
+    // visible text rather than hardcoding it.
+    const customOption = Array.from(select.querySelectorAll("option")).find(
+      (o) => o.textContent === "Custom…",
+    ) as HTMLOptionElement;
+    expect(customOption).toBeDefined();
     act(() => {
-      select.value = "__custom__";
+      select.value = customOption.value;
       select.dispatchEvent(new Event("change", { bubbles: true }));
     });
     expect(onChange).toHaveBeenCalledWith("");
@@ -172,6 +179,38 @@ describe("PenNamePicker", () => {
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
     expect(onChange).toHaveBeenCalledWith("Made Up Names");
+    unmount();
+  });
+
+  it("reverts to saved mode and clears value when 'Use saved profile' is clicked", () => {
+    const onChange = vi.fn();
+    const { container, unmount } = mount(
+      <PenNamePicker
+        profiles={{ "Sarah Thorne": profile() }}
+        value="Made Up Name"
+        onChange={onChange}
+      />,
+    );
+    // Mounts in custom mode (value doesn't match a profile key).
+    expect(
+      container.querySelector('[data-testid="pen-name-input"]'),
+    ).not.toBeNull();
+
+    const revertBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent === "Use saved profile",
+    ) as HTMLButtonElement;
+    expect(revertBtn).toBeDefined();
+    act(() => {
+      revertBtn.click();
+    });
+
+    expect(onChange).toHaveBeenCalledWith("");
+    expect(
+      container.querySelector('[data-testid="pen-name-select"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="pen-name-input"]'),
+    ).toBeNull();
     unmount();
   });
 
