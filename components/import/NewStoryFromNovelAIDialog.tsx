@@ -122,6 +122,8 @@ export function NewStoryFromNovelAIDialog({ open, onOpenChange }: Props) {
         message: err instanceof Error ? err.message : "Import failed — try again.",
       });
     }
+    // `profiles` must stay in deps so toForm sees the resolved map post-SWR.
+    // It looks unused by the body but is read inside the toForm closure.
   }, [profiles]);
 
   function updateStoryAt(i: number, patch: Partial<StoryFormState>) {
