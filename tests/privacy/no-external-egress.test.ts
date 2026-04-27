@@ -36,7 +36,7 @@
  * ─── ROUTES EXERCISED ───────────────────────────────────────────────────────
  *
  *   GET  /api/settings
- *   PUT  /api/settings
+ *   PUT  /api/settings  (×2: one with apiKey/style fields, one to clear defaultExportDir)
  *   GET  /api/stories
  *   POST /api/stories
  *   GET  /api/stories/[slug]
@@ -261,6 +261,18 @@ describe("no external egress from API routes", () => {
       const req = makeReq("http://localhost/api/settings", {
         method: "PUT",
         body: JSON.stringify({ theme: "dark" }),
+        headers: { "content-type": "application/json" },
+      });
+      const res = await PUT(req);
+      expect(res.status).toBe(200);
+    }
+
+    // ── PUT /api/settings { defaultExportDir: null } (no fs touched on clear) ──
+    {
+      const { PUT } = await import("@/app/api/settings/route");
+      const req = makeReq("http://localhost/api/settings", {
+        method: "PUT",
+        body: JSON.stringify({ defaultExportDir: null }),
         headers: { "content-type": "application/json" },
       });
       const res = await PUT(req);
