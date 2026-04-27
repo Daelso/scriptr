@@ -3,10 +3,12 @@
 import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import useSWR from "swr";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ChapterEditList } from "@/components/import/ChapterEditList";
+import { PenNamePicker } from "@/components/import/PenNamePicker";
 import type {
   Bible,
 } from "@/lib/types";
@@ -15,6 +17,18 @@ import type {
   ProposedChapter,
   StoryProposal,
 } from "@/lib/novelai/types";
+import type { PenNameProfile } from "@/lib/config";
+
+interface SettingsLite {
+  penNameProfiles?: Record<string, PenNameProfile>;
+}
+
+const jsonFetcher = async <T,>(url: string): Promise<T> => {
+  const res = await fetch(url);
+  const json = (await res.json()) as { ok: boolean; data?: T; error?: string };
+  if (!json.ok) throw new Error(json.error ?? "request failed");
+  return json.data as T;
+};
 
 type Props = {
   open: boolean;
@@ -40,6 +54,7 @@ type StoryFormState = {
   title: string;
   description: string;
   keywords: string; // comma-separated string for the input field
+  authorPenName: string;
   chapters: ProposedChapter[];
   bible: Bible;
   splitSource: StoryProposal["split"]["splitSource"];
@@ -51,7 +66,12 @@ type Stage =
   | { kind: "error"; message: string }
   | { kind: "preview" };
 
-function toForm(s: StoryProposal): StoryFormState {
+export function toForm(
+  s: StoryProposal,
+  profiles: Record<string, PenNameProfile> | undefined,
+): StoryFormState {
+  const profileKeys = profiles ? Object.keys(profiles) : [];
+  const initialPenName = profileKeys.length === 1 ? profileKeys[0] : "";
   return {
     title: s.proposed.story.title,
     description: s.proposed.story.description,
@@ -59,6 +79,7 @@ function toForm(s: StoryProposal): StoryFormState {
     chapters: s.split.chapters,
     bible: s.proposed.bible,
     splitSource: s.split.splitSource,
+    authorPenName: initialPenName,
   };
 }
 
@@ -67,6 +88,14 @@ export function NewStoryFromNovelAIDialog({ open, onOpenChange }: Props) {
   const [stories, setStories] = useState<StoryFormState[]>([]);
   const [saving, setSaving] = useState(false);
   const router = useRouter();
+  // Gate the SWR key on `open` so we don't fetch /api/settings on every
+  // home-page mount when the dialog is closed. SWR treats `null` as skip.
+  const { data: settings } = useSWR<SettingsLite>(
+    open ? "/api/settings" : null,
+    jsonFetcher,
+    { revalidateOnFocus: false },
+  );
+  const profiles = settings?.penNameProfiles;
 
   const reset = useCallback(() => {
     setStage({ kind: "idle" });
@@ -88,14 +117,16 @@ export function NewStoryFromNovelAIDialog({ open, onOpenChange }: Props) {
         return;
       }
       setStage({ kind: "preview" });
-      setStories(body.data.stories.map(toForm));
+      setStories(body.data.stories.map((p) => toForm(p, profiles)));
     } catch (err) {
       setStage({
         kind: "error",
         message: err instanceof Error ? err.message : "Import failed — try again.",
       });
     }
-  }, []);
+    // `profiles` must stay in deps so toForm sees the resolved map post-SWR.
+    // It looks unused by the body but is read inside the toForm closure.
+  }, [profiles]);
 
   function updateStoryAt(i: number, patch: Partial<StoryFormState>) {
     setStories((prev) =>
@@ -125,6 +156,7 @@ export function NewStoryFromNovelAIDialog({ open, onOpenChange }: Props) {
               .split(",")
               .map((k) => k.trim())
               .filter(Boolean),
+            authorPenName: s.authorPenName,
           },
           bible: s.bible,
           chapters: s.chapters,
@@ -216,6 +248,7 @@ export function NewStoryFromNovelAIDialog({ open, onOpenChange }: Props) {
           <StoryCard
             story={stories[0]}
             onChange={(patch) => updateStoryAt(0, patch)}
+            profiles={profiles}
           />
         )}
 
@@ -248,6 +281,7 @@ export function NewStoryFromNovelAIDialog({ open, onOpenChange }: Props) {
                 <StoryCardBody
                   story={s}
                   onChange={(patch) => updateStoryAt(i, patch)}
+                  profiles={profiles}
                 />
               </div>
             ))}
@@ -284,14 +318,16 @@ export function NewStoryFromNovelAIDialog({ open, onOpenChange }: Props) {
 function StoryCard({
   story,
   onChange,
+  profiles,
 }: {
   story: StoryFormState;
   onChange: (patch: Partial<StoryFormState>) => void;
+  profiles: Record<string, PenNameProfile> | undefined;
 }) {
   return (
     <div className="grid grid-cols-[320px_1fr_320px] flex-1 min-h-0">
       <div className="p-4 border-r border-border flex flex-col gap-3">
-        <MetadataFields story={story} onChange={onChange} />
+        <MetadataFields story={story} onChange={onChange} profiles={profiles} />
       </div>
 
       <div className="p-4 overflow-auto">
@@ -314,14 +350,16 @@ function StoryCard({
 function StoryCardBody({
   story,
   onChange,
+  profiles,
 }: {
   story: StoryFormState;
   onChange: (patch: Partial<StoryFormState>) => void;
+  profiles: Record<string, PenNameProfile> | undefined;
 }) {
   return (
     <div className="grid grid-cols-[280px_1fr] gap-4 p-3">
       <div className="flex flex-col gap-3">
-        <MetadataFields story={story} onChange={onChange} />
+        <MetadataFields story={story} onChange={onChange} profiles={profiles} />
         <BiblePreviewCompact bible={story.bible} />
       </div>
       <div className="overflow-auto">
@@ -338,9 +376,11 @@ function StoryCardBody({
 function MetadataFields({
   story,
   onChange,
+  profiles,
 }: {
   story: StoryFormState;
   onChange: (patch: Partial<StoryFormState>) => void;
+  profiles: Record<string, PenNameProfile> | undefined;
 }) {
   return (
     <>
@@ -349,6 +389,16 @@ function MetadataFields({
         <Input
           value={story.title}
           onChange={(e) => onChange({ title: e.target.value })}
+        />
+      </div>
+      <div>
+        <div className="text-xs uppercase text-muted-foreground mb-1">
+          Author pen name
+        </div>
+        <PenNamePicker
+          profiles={profiles}
+          value={story.authorPenName}
+          onChange={(next) => onChange({ authorPenName: next })}
         />
       </div>
       <div>
