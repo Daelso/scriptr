@@ -88,8 +88,10 @@ export function NewStoryFromNovelAIDialog({ open, onOpenChange }: Props) {
   const [stories, setStories] = useState<StoryFormState[]>([]);
   const [saving, setSaving] = useState(false);
   const router = useRouter();
+  // Gate the SWR key on `open` so we don't fetch /api/settings on every
+  // home-page mount when the dialog is closed. SWR treats `null` as skip.
   const { data: settings } = useSWR<SettingsLite>(
-    "/api/settings",
+    open ? "/api/settings" : null,
     jsonFetcher,
     { revalidateOnFocus: false },
   );
