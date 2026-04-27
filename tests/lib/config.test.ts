@@ -88,6 +88,37 @@ describe("config", () => {
       expect(cfg.styleDefaults).toBeUndefined();
     });
   });
+
+  it("loadConfig reads defaultExportDir from disk when present", async () => {
+    await withTemp(async (dir) => {
+      await writeFile(
+        join(dir, "config.json"),
+        JSON.stringify({ defaultExportDir: "/Users/chase/Books" }),
+      );
+      const cfg = await loadConfig(dir);
+      expect(cfg.defaultExportDir).toBe("/Users/chase/Books");
+    });
+  });
+
+  it("loadConfig treats empty-string defaultExportDir as unset", async () => {
+    await withTemp(async (dir) => {
+      await writeFile(
+        join(dir, "config.json"),
+        JSON.stringify({ defaultExportDir: "" }),
+      );
+      const cfg = await loadConfig(dir);
+      expect(cfg.defaultExportDir).toBeUndefined();
+    });
+  });
+
+  it("saveConfig persists defaultExportDir; clearing with undefined drops the field", async () => {
+    await withTemp(async (dir) => {
+      await saveConfig(dir, { defaultExportDir: "/Users/chase/Books" });
+      expect((await loadConfig(dir)).defaultExportDir).toBe("/Users/chase/Books");
+      await saveConfig(dir, { defaultExportDir: undefined });
+      expect((await loadConfig(dir)).defaultExportDir).toBeUndefined();
+    });
+  });
 });
 
 describe("config — updates settings", () => {
