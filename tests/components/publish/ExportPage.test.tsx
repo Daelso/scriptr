@@ -485,3 +485,103 @@ describe("ExportPage — output location section", () => {
     }
   });
 });
+
+describe("ExportPage — success card actions", () => {
+  beforeEach(() => {
+    mockFetch.mockClear();
+    (toast.error as ReturnType<typeof vi.fn>).mockClear();
+    (toast.success as ReturnType<typeof vi.fn>).mockClear();
+    delete (window as unknown as { scriptr?: unknown }).scriptr;
+  });
+
+  async function buildOnce(buildPath: string) {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          ok: true,
+          data: { isElectron: true, defaultExportDir: undefined },
+        }),
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({
+          ok: true,
+          data: { path: buildPath, bytes: 12345, version: 3, warnings: [] },
+        }),
+      } as unknown as Response);
+
+    let result!: ReturnType<typeof mount>;
+    await act(async () => {
+      result = mount(<ExportPage story={baseStory} chapterCount={1} wordCount={500} />);
+    });
+    const buildBtn = result.container.querySelector<HTMLButtonElement>(
+      '[data-testid="export-build"]',
+    );
+    await act(async () => {
+      buildBtn!.click();
+    });
+    return result;
+  }
+
+  it("Reveal/Open buttons are hidden when window.scriptr is absent", async () => {
+    const result = await buildOnce("/Users/chase/Books/x-epub3.epub");
+    try {
+      expect(result.container.querySelector('[data-testid="export-reveal-3"]')).toBeNull();
+      expect(result.container.querySelector('[data-testid="export-open-3"]')).toBeNull();
+      // Copy path is always present
+      expect(result.container.querySelector('[data-testid="export-copy-path-3"]')).not.toBeNull();
+    } finally {
+      result.unmount();
+    }
+  });
+
+  it("Reveal/Open buttons are present when window.scriptr exists, and call the bridge", async () => {
+    const revealInFolder = vi.fn().mockResolvedValue(undefined);
+    const openFile = vi.fn().mockResolvedValue(undefined);
+    (window as unknown as { scriptr: unknown }).scriptr = {
+      pickFolder: vi.fn(),
+      revealInFolder,
+      openFile,
+    };
+    const result = await buildOnce("/Users/chase/Books/x-epub3.epub");
+    try {
+      const reveal = result.container.querySelector<HTMLButtonElement>(
+        '[data-testid="export-reveal-3"]',
+      );
+      const open = result.container.querySelector<HTMLButtonElement>(
+        '[data-testid="export-open-3"]',
+      );
+      expect(reveal).not.toBeNull();
+      expect(open).not.toBeNull();
+      await act(async () => { reveal!.click(); });
+      expect(revealInFolder).toHaveBeenCalledWith("/Users/chase/Books/x-epub3.epub");
+      await act(async () => { open!.click(); });
+      expect(openFile).toHaveBeenCalledWith("/Users/chase/Books/x-epub3.epub");
+    } finally {
+      result.unmount();
+    }
+  });
+
+  it("Copy path writes to clipboard and toasts", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const result = await buildOnce("/Users/chase/Books/x-epub3.epub");
+    try {
+      const copy = result.container.querySelector<HTMLButtonElement>(
+        '[data-testid="export-copy-path-3"]',
+      );
+      await act(async () => { copy!.click(); });
+      expect(writeText).toHaveBeenCalledWith("/Users/chase/Books/x-epub3.epub");
+      expect((toast.success as ReturnType<typeof vi.fn>).mock.calls.some(
+        (c) => /[Cc]opied/.test(String(c[0])),
+      )).toBe(true);
+    } finally {
+      result.unmount();
+    }
+  });
+});
