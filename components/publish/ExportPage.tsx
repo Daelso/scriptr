@@ -95,6 +95,13 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ version: selectedVersion }),
       });
+      if (!res.ok) {
+        // Tolerate HTML 500 bodies. The server returns JSON for 4xx errors;
+        // a 500 from an unhandled exception comes back as Next's error HTML.
+        const text = await res.text();
+        toast.error(`Build failed (${res.status}): ${text.slice(0, 200)}`);
+        return;
+      }
       const body = await res.json();
       if (!body.ok) {
         toast.error(body.error ?? "Build failed");
@@ -102,7 +109,9 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
       }
       const built: LastBuild = body.data;
       setLastBuildByVersion((prev) => ({ ...prev, [built.version]: built }));
-      toast.success("EPUB built.");
+      toast.success(`EPUB ${built.version} saved to ${built.path}`);
+    } catch (err) {
+      toast.error(`Build failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setBuilding(false);
     }
