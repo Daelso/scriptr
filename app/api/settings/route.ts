@@ -9,7 +9,7 @@ import {
   type UpdatesConfig,
 } from "@/lib/config";
 import type { StyleRules } from "@/lib/style";
-import { probeWritableDir } from "@/lib/storage/dir-probe";
+import { probeWritableDir, probeFailDetail } from "@/lib/storage/dir-probe";
 
 function mask(key?: string) {
   if (!key) return undefined;
@@ -311,15 +311,7 @@ export async function PUT(req: NextRequest) {
     } else if (typeof body.defaultExportDir === "string") {
       const probe = await probeWritableDir(body.defaultExportDir);
       if (!probe.ok) {
-        const detail =
-          probe.reason === "not-absolute"
-            ? "must be an absolute path"
-            : probe.reason === "not-found"
-            ? "directory does not exist"
-            : probe.reason === "not-a-directory"
-            ? "path is not a directory"
-            : "directory is not writable";
-        return fail(`defaultExportDir ${detail}`, 400);
+        return fail(`defaultExportDir ${probeFailDetail(probe.reason)}`, 400);
       }
       patch.defaultExportDir = body.defaultExportDir;
     } else {
