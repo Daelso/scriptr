@@ -189,6 +189,38 @@ jobs:
             npx --yes @electron/fuses read --app "$target"
           done
 
+      # Actually launch the packaged binary briefly and fail the job if
+      # it emits a FATAL log line or exits early. This catches startup
+      # crashes that the unit tests can't see — for example, a fuse set
+      # to a value that points the browser process at a snapshot file
+      # we don't ship (v0.3.0/v0.4.0/v0.4.1 all shipped this exact bug).
+      # The fuses check above only verifies values were baked; only an
+      # actual launch tells us the bytes work.
+      #
+      # Linux needs a virtual display because Electron creates a
+      # BrowserWindow at startup. ubuntu-latest runners ship xvfb-run,
+      # so we don't need to install it. Windows and macOS runners can
+      # run GUI apps directly.
+      #
+      # matrix.os is GitHub-controlled (one of the strings in setup's
+      # `matrix` output, which is itself populated from a hardcoded
+      # allowlist), not user-controlled — safe to interpolate into a
+      # `case` selector. No event payload data is interpolated here.
+      - name: Smoke launch packaged binary
+        shell: bash
+        env:
+          MATRIX_OS: ${{ matrix.os }}
+        run: |
+          case "$MATRIX_OS" in
+            ubuntu-latest)
+              xvfb-run -a --server-args="-screen 0 1280x720x24" \
+                node tests/electron/smoke-launch.mjs
+              ;;
+            *)
+              node tests/electron/smoke-launch.mjs
+              ;;
+          esac
+
       # Upload installers as workflow artifacts so manual runs are useful.
       # On tag push these are duplicated by the GitHub Release upload; harmless.
       - name: Upload installers as workflow artifact
