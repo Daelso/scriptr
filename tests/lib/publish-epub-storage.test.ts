@@ -99,4 +99,43 @@ describe("epub-storage", () => {
     });
     expect(returned).toBe(existing);
   });
+
+  it("writeEpub with opts.outputDir writes to the override dir, not exports/", async () => {
+    const story = await createStory(dir, { title: "Book" });
+    const overrideDir = await mkdtemp(join(tmpdir(), "scriptr-override-"));
+    try {
+      const bytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3]);
+      const path = await writeEpub(dir, story.slug, 3, bytes, { outputDir: overrideDir });
+      expect(path).toBe(join(overrideDir, `${story.slug}-epub3.epub`));
+      const stats = await stat(path);
+      expect(stats.size).toBe(bytes.length);
+      // The default exports/ dir must NOT have a stray file.
+      const defaultPath = join(dir, "stories", story.slug, "exports", `${story.slug}-epub3.epub`);
+      await expect(stat(defaultPath)).rejects.toThrow();
+    } finally {
+      await rm(overrideDir, { recursive: true, force: true });
+    }
+  });
+
+  it("writeEpub with opts.outputDir creates the dir if it doesn't exist yet", async () => {
+    const story = await createStory(dir, { title: "Book" });
+    const overrideRoot = await mkdtemp(join(tmpdir(), "scriptr-override-"));
+    const nested = join(overrideRoot, "nested", "subdir");
+    try {
+      const bytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 9]);
+      const path = await writeEpub(dir, story.slug, 2, bytes, { outputDir: nested });
+      expect(path).toBe(join(nested, `${story.slug}-epub2.epub`));
+      const stats = await stat(path);
+      expect(stats.size).toBe(bytes.length);
+    } finally {
+      await rm(overrideRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("writeEpub without opts.outputDir writes to exports/ as today (regression)", async () => {
+    const story = await createStory(dir, { title: "Book" });
+    const bytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1]);
+    const path = await writeEpub(dir, story.slug, 3, bytes);
+    expect(path.endsWith(`/exports/${story.slug}-epub3.epub`)).toBe(true);
+  });
 });
