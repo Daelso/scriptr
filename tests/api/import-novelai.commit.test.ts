@@ -119,6 +119,74 @@ describe("POST /api/import/novelai/commit — new-story mode (single)", () => {
     expect(body.error).toMatch(/at least one story/i);
   });
 
+  it("persists authorPenName when provided", async () => {
+    const { POST } = await import("@/app/api/import/novelai/commit/route");
+    const res = await POST(
+      makeJsonReq("http://localhost/api/import/novelai/commit", {
+        target: "new-story",
+        stories: [
+          {
+            story: {
+              title: "Pen Named Book",
+              description: "",
+              keywords: [],
+              authorPenName: "Sarah Thorne",
+            },
+            bible: EMPTY_BIBLE,
+            chapters: [{ title: "One", body: "body" }],
+          },
+        ],
+      })
+    );
+    expect(res.status).toBe(200);
+    const story = await getStory(tmp, "pen-named-book");
+    expect(story?.authorPenName).toBe("Sarah Thorne");
+  });
+
+  it("defaults authorPenName to empty string when omitted (backwards-compat)", async () => {
+    const { POST } = await import("@/app/api/import/novelai/commit/route");
+    const res = await POST(
+      makeJsonReq("http://localhost/api/import/novelai/commit", {
+        target: "new-story",
+        stories: [
+          {
+            story: { title: "No Pen Name", description: "", keywords: [] },
+            bible: EMPTY_BIBLE,
+            chapters: [{ title: "One", body: "body" }],
+          },
+        ],
+      })
+    );
+    expect(res.status).toBe(200);
+    const story = await getStory(tmp, "no-pen-name");
+    expect(story?.authorPenName).toBe("");
+  });
+
+  it("rejects authorPenName when not a string", async () => {
+    const { POST } = await import("@/app/api/import/novelai/commit/route");
+    const res = await POST(
+      makeJsonReq("http://localhost/api/import/novelai/commit", {
+        target: "new-story",
+        stories: [
+          {
+            story: {
+              title: "Bad Pen Name",
+              description: "",
+              keywords: [],
+              authorPenName: 42,
+            },
+            bible: EMPTY_BIBLE,
+            chapters: [{ title: "One", body: "body" }],
+          },
+        ],
+      })
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/authorPenName must be a string/);
+  });
+
   it("auto-suffixes the slug on collision", async () => {
     const { POST } = await import("@/app/api/import/novelai/commit/route");
     const first = await POST(

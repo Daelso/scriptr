@@ -35,7 +35,12 @@ function chapterBodyToSections(body: string): string[] {
 }
 
 type NewStoryEntry = {
-  story: { title: string; description: string; keywords: string[] };
+  story: {
+    title: string;
+    description: string;
+    keywords: string[];
+    authorPenName?: string;
+  };
   bible: Bible;
   chapters: ProposedChapter[];
 };
@@ -108,6 +113,17 @@ async function handleNewStory(
         400
       );
     }
+    if (
+      s.story.authorPenName !== undefined &&
+      typeof s.story.authorPenName !== "string"
+    ) {
+      return fail(
+        body.stories.length === 1
+          ? "authorPenName must be a string"
+          : `authorPenName must be a string (story ${i + 1})`,
+        400
+      );
+    }
   }
 
   const dataDir = effectiveDataDir();
@@ -116,7 +132,10 @@ async function handleNewStory(
 
   try {
     for (const entry of body.stories) {
-      const story = await createStory(dataDir, { title: entry.story.title });
+      const story = await createStory(dataDir, {
+        title: entry.story.title,
+        authorPenName: entry.story.authorPenName,
+      });
       createdSlugs.push(story.slug);
 
       await updateStory(dataDir, story.slug, {
