@@ -3,9 +3,10 @@
 // must stay that way. The no-telemetry ESLint rule cannot enforce this
 // because `crashReporter` is a named export of "electron" rather than its
 // own package — see Task 1.7's note.
-import { app, BrowserWindow, Menu, dialog, shell, session } from "electron";
+import { app, BrowserWindow, Menu, dialog, shell, session, ipcMain } from "electron";
 import type { RenderProcessGoneDetails } from "electron";
 import { join } from "node:path";
+import { isAbsolute, resolve as resolvePath, sep } from "node:path";
 import { resolveDataDir, StartupCancelledError } from "./migrate";
 import { startNextServer, type ServerHandle, type ServerExitInfo } from "./server";
 import { installNetworkFilter } from "./network-filter";
@@ -78,6 +79,70 @@ app.on("will-quit", async (e) => {
 // below; this is a global fallback.
 app.on("web-contents-created", (_, contents) => {
   contents.setWindowOpenHandler(() => ({ action: "deny" }));
+});
+
+// ─── IPC handlers (renderer → main) ──────────────────────────────────────────
+//
+// Three handlers expose folder picking and shell-level reveal/open so the
+// export page can offer desktop-native UX. All renderer→main inputs are
+// validated here. Path-accepting handlers restrict targets to roots the user
+// has already chosen (the data dir or their configured defaultExportDir) so
+// a compromised renderer can't ask Electron to reveal/open arbitrary system
+// files. Registered globally; harmless when scriptr's own renderer isn't the
+// caller because no other origin can reach ipcMain.
+
+ipcMain.handle("dialog:pickFolder", async () => {
+  const targetWindow = mainWindow ?? undefined;
+  const result = await (targetWindow
+    ? dialog.showOpenDialog(targetWindow, {
+        properties: ["openDirectory", "createDirectory"],
+        title: "Choose EPUB output folder",
+      })
+    : dialog.showOpenDialog({
+        properties: ["openDirectory", "createDirectory"],
+        title: "Choose EPUB output folder",
+      }));
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0];
+});
+
+async function pathIsUnderAllowedRoot(target: string): Promise<boolean> {
+  if (typeof target !== "string" || !isAbsolute(target)) return false;
+  // appDataDir is set once during `main()` after `resolveDataDir(...)` resolves.
+  // If a renderer somehow calls reveal/open BEFORE that — there should be no
+  // window yet, so this would only fire for an unexpected pre-window IPC —
+  // we conservatively reject. Once the window is open, appDataDir is always
+  // populated, so this is effectively a tightening for an impossible case.
+  if (!appDataDir) return false;
+  const normalized = resolvePath(target);
+  const roots: string[] = [resolvePath(appDataDir)];
+  // Re-read config every call so a freshly-saved defaultExportDir is honored
+  // without requiring the renderer to reload.
+  try {
+    const cfg = await loadConfig(appDataDir);
+    if (cfg.defaultExportDir) roots.push(resolvePath(cfg.defaultExportDir));
+  } catch {
+    // Config read failures fall through; only data-dir is allowed.
+  }
+  return roots.some((root) => normalized === root || normalized.startsWith(root + sep));
+}
+
+ipcMain.handle("shell:revealInFolder", async (_e, target: unknown) => {
+  if (typeof target !== "string") throw new Error("path must be a string");
+  if (!(await pathIsUnderAllowedRoot(target))) {
+    throw new Error("path is outside allowed roots");
+  }
+  shell.showItemInFolder(target);
+});
+
+ipcMain.handle("shell:openFile", async (_e, target: unknown) => {
+  if (typeof target !== "string") throw new Error("path must be a string");
+  if (!(await pathIsUnderAllowedRoot(target))) {
+    throw new Error("path is outside allowed roots");
+  }
+  const errMsg = await shell.openPath(target);
+  // shell.openPath returns "" on success and an error message string on failure.
+  if (errMsg !== "") throw new Error(errMsg);
 });
 
 // ─── Crash handlers ─────────────────────────────────────────────────────────
@@ -192,6 +257,7 @@ async function createMainWindow(
     backgroundColor: "#ffffff",
     show: false, // wait for ready-to-show to avoid blank flash
     webPreferences: {
+      preload: join(__dirname, "preload.js"),
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
