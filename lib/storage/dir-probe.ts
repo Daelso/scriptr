@@ -37,3 +37,24 @@ export async function probeWritableDir(dir: string): Promise<ProbeResult> {
   }
   return { ok: true };
 }
+
+type ProbeFailReason = Exclude<ProbeResult, { ok: true }>["reason"];
+
+/**
+ * Map a probe failure reason to a human-readable detail suitable for use in
+ * a 400 response. Shared by every caller of `probeWritableDir` so a new
+ * reason added to `ProbeResult` is a compile error here, surfacing it
+ * everywhere it's used.
+ */
+export function probeFailDetail(reason: ProbeFailReason): string {
+  switch (reason) {
+    case "not-absolute":
+      return "must be an absolute path";
+    case "not-found":
+      return "directory does not exist";
+    case "not-a-directory":
+      return "path is not a directory";
+    case "not-writable":
+      return "directory is not writable";
+  }
+}
