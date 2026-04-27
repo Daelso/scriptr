@@ -5,7 +5,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NewStoryFromNovelAIDialog } from "@/components/import/NewStoryFromNovelAIDialog";
+import { SWRConfig } from "swr";
+import { NewStoryFromNovelAIDialog, toForm } from "@/components/import/NewStoryFromNovelAIDialog";
 
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
@@ -21,9 +22,16 @@ function mount(el: React.ReactElement): Mounted {
   const container = document.createElement("div");
   document.body.appendChild(container);
   let root!: Root;
+  // Wrap each render in a fresh SWRConfig so per-test fetch mocks aren't
+  // shadowed by SWR's module-level cache from earlier tests.
+  const wrapped = React.createElement(
+    SWRConfig,
+    { value: { provider: () => new Map() } },
+    el,
+  );
   act(() => {
     root = createRoot(container);
-    root.render(el);
+    root.render(wrapped);
   });
   return {
     container,
@@ -164,8 +172,9 @@ describe("NewStoryFromNovelAIDialog", () => {
   });
 
   it("parses the file and renders the single-story preview on upload", async () => {
-    global.fetch = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify(fakeSingleStoryResponse()), { status: 200 })
+    global.fetch = vi.fn().mockImplementation(
+      async () =>
+        new Response(JSON.stringify(fakeSingleStoryResponse()), { status: 200 })
     ) as unknown as typeof fetch;
 
     const { container, unmount } = mount(
@@ -200,8 +209,9 @@ describe("NewStoryFromNovelAIDialog", () => {
   });
 
   it("renders one story-card per story when multi-story", async () => {
-    global.fetch = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify(fakeMultiStoryResponse()), { status: 200 })
+    global.fetch = vi.fn().mockImplementation(
+      async () =>
+        new Response(JSON.stringify(fakeMultiStoryResponse()), { status: 200 })
     ) as unknown as typeof fetch;
 
     const { container, unmount } = mount(
@@ -230,8 +240,9 @@ describe("NewStoryFromNovelAIDialog", () => {
   });
 
   it("removes a story-card when its 'Remove' button is clicked", async () => {
-    global.fetch = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify(fakeMultiStoryResponse()), { status: 200 })
+    global.fetch = vi.fn().mockImplementation(
+      async () =>
+        new Response(JSON.stringify(fakeMultiStoryResponse()), { status: 200 })
     ) as unknown as typeof fetch;
 
     const { container, unmount } = mount(
@@ -348,8 +359,9 @@ describe("NewStoryFromNovelAIDialog", () => {
   });
 
   it("Remove button is hidden/disabled when only one story is present (single-story mode)", async () => {
-    global.fetch = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify(fakeSingleStoryResponse()), { status: 200 })
+    global.fetch = vi.fn().mockImplementation(
+      async () =>
+        new Response(JSON.stringify(fakeSingleStoryResponse()), { status: 200 })
     ) as unknown as typeof fetch;
 
     const { container, unmount } = mount(
@@ -371,20 +383,24 @@ describe("NewStoryFromNovelAIDialog", () => {
   });
 
   it("commits and navigates to the first slug on 'Create story' (single)", async () => {
-    global.fetch = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify(fakeSingleStoryResponse()), { status: 200 })
-      )
-      .mockResolvedValueOnce(
-        new Response(
+    global.fetch = vi.fn().mockImplementation(async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith("/parse")) {
+        return new Response(JSON.stringify(fakeSingleStoryResponse()), {
+          status: 200,
+        });
+      }
+      if (u.endsWith("/commit")) {
+        return new Response(
           JSON.stringify({
             ok: true,
             data: { slugs: ["garden-at-dusk"], chapterIds: ["a", "b"] },
           }),
           { status: 200 }
-        )
-      ) as unknown as typeof fetch;
+        );
+      }
+      return new Response("", { status: 404 });
+    }) as unknown as typeof fetch;
 
     const { container, unmount } = mount(
       <NewStoryFromNovelAIDialog open onOpenChange={() => {}} />
@@ -470,14 +486,15 @@ describe("NewStoryFromNovelAIDialog", () => {
   });
 
   it("shows the parse error and a 'Choose a different file' button on parse failure", async () => {
-    global.fetch = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          ok: false,
-          error: "Unsupported NovelAI format version: got 99, expected 1.",
-        }),
-        { status: 400 }
-      )
+    global.fetch = vi.fn().mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            ok: false,
+            error: "Unsupported NovelAI format version: got 99, expected 1.",
+          }),
+          { status: 400 }
+        )
     ) as unknown as typeof fetch;
 
     const { container, unmount } = mount(
@@ -494,5 +511,131 @@ describe("NewStoryFromNovelAIDialog", () => {
       buttons.some((b) => /choose a different file/i.test(b.textContent ?? ""))
     ).toBe(true);
     unmount();
+  });
+
+  it("commit payload includes authorPenName when picker has selection", async () => {
+    let commitBody: unknown = null;
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(async (url: unknown, init?: { body?: string }) => {
+        const u = String(url);
+        if (u.endsWith("/api/settings")) {
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              data: {
+                penNameProfiles: {
+                  "Sarah Thorne": {
+                    email: "",
+                    mailingListUrl: "",
+                    defaultMessageHtml: "",
+                  },
+                },
+              },
+            }),
+            { status: 200 }
+          );
+        }
+        if (u.endsWith("/parse")) {
+          return new Response(JSON.stringify(fakeSingleStoryResponse()), {
+            status: 200,
+          });
+        }
+        if (u.endsWith("/commit")) {
+          commitBody = JSON.parse(init?.body ?? "{}");
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              // Use the slug that matches whatever fakeSingleStoryResponse()
+              // produces. Doesn't affect the assertions below — the test only
+              // inspects commitBody — but keeps the mocked response coherent.
+              data: { slugs: ["story-slug"], chapterIds: ["c1"] },
+            }),
+            { status: 200 }
+          );
+        }
+        return new Response("", { status: 404 });
+      });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { container, unmount } = mount(
+      <NewStoryFromNovelAIDialog open onOpenChange={() => {}} />
+    );
+    // Let SWR resolve /api/settings before kicking off the parse so that
+    // toForm sees the profiles map and auto-selects the only key.
+    await flush();
+    await flush();
+    const fileInput = container.querySelector(
+      'input[type="file"]'
+    ) as HTMLInputElement;
+    setFileOnInput(fileInput, new File([new Uint8Array([1])], "x.txt"));
+    await flush();
+    await flush();
+
+    // With exactly one profile, picker auto-selects it. Commit straight away.
+    const buttons = Array.from(container.querySelectorAll("button"));
+    const createBtn = buttons.find((b) =>
+      /^create story$/i.test(b.textContent ?? "")
+    ) as HTMLButtonElement;
+    act(() => {
+      createBtn.click();
+    });
+    await flush();
+    await flush();
+
+    expect(commitBody).toBeTruthy();
+    const payload = commitBody as {
+      stories: Array<{ story: { authorPenName?: string } }>;
+    };
+    expect(payload.stories[0].story.authorPenName).toBe("Sarah Thorne");
+
+    unmount();
+  });
+});
+
+describe("toForm — pen-name init rule", () => {
+  // Minimal StoryProposal shaped just enough for toForm.
+  const proposal = (title = "T") => ({
+    split: { chapters: [], splitSource: "marker" as const },
+    proposed: {
+      story: { title, description: "", keywords: [] },
+      bible: {
+        characters: [],
+        setting: "",
+        pov: "third-limited" as const,
+        tone: "",
+        styleNotes: "",
+        nsfwPreferences: "",
+      },
+    },
+  });
+
+  const profile = () => ({
+    email: "",
+    mailingListUrl: "",
+    defaultMessageHtml: "",
+  });
+
+  it("sets authorPenName to '' when profiles is undefined", () => {
+    const f = toForm(proposal(), undefined);
+    expect(f.authorPenName).toBe("");
+  });
+
+  it("sets authorPenName to '' when profiles is empty", () => {
+    const f = toForm(proposal(), {});
+    expect(f.authorPenName).toBe("");
+  });
+
+  it("sets authorPenName to the only key when exactly one profile exists", () => {
+    const f = toForm(proposal(), { "Sarah Thorne": profile() });
+    expect(f.authorPenName).toBe("Sarah Thorne");
+  });
+
+  it("sets authorPenName to '' when more than one profile exists", () => {
+    const f = toForm(proposal(), {
+      "Sarah Thorne": profile(),
+      "Natalie Knot": profile(),
+    });
+    expect(f.authorPenName).toBe("");
   });
 });
