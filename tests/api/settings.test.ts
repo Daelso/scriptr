@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { NextRequest } from "next/server";
@@ -259,5 +259,104 @@ describe("/api/settings", () => {
     const body = await res.json();
     expect(body.ok).toBe(false);
     expect(body.error).toMatch(/reserved key/i);
+  });
+
+  it("PUT { defaultExportDir: <valid abs writable dir> } persists, GET returns it", async () => {
+    const out = await mkdtemp(join(tmpdir(), "scriptr-out-"));
+    try {
+      const putRes = await PUT(new Request("http://localhost/api/settings", {
+        method: "PUT",
+        body: JSON.stringify({ defaultExportDir: out }),
+        headers: { "content-type": "application/json" },
+      }) as unknown as NextRequest);
+      expect(putRes.status).toBe(200);
+      const putBody = await putRes.json();
+      expect(putBody.ok).toBe(true);
+      expect(putBody.data.defaultExportDir).toBe(out);
+
+      const getRes = await GET();
+      const getBody = await getRes.json();
+      expect(getBody.data.defaultExportDir).toBe(out);
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  });
+
+  it("PUT { defaultExportDir: null } clears the setting", async () => {
+    const out = await mkdtemp(join(tmpdir(), "scriptr-out-"));
+    try {
+      // First, set it.
+      await PUT(new Request("http://localhost/api/settings", {
+        method: "PUT",
+        body: JSON.stringify({ defaultExportDir: out }),
+        headers: { "content-type": "application/json" },
+      }) as unknown as NextRequest);
+      // Then clear.
+      const clearRes = await PUT(new Request("http://localhost/api/settings", {
+        method: "PUT",
+        body: JSON.stringify({ defaultExportDir: null }),
+        headers: { "content-type": "application/json" },
+      }) as unknown as NextRequest);
+      expect(clearRes.status).toBe(200);
+      const clearBody = await clearRes.json();
+      expect(clearBody.data.defaultExportDir).toBeNull();
+
+      const getRes = await GET();
+      const getBody = await getRes.json();
+      expect(getBody.data.defaultExportDir).toBeUndefined();
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  });
+
+  it("PUT rejects relative paths with 400", async () => {
+    const res = await PUT(new Request("http://localhost/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({ defaultExportDir: "./relative" }),
+      headers: { "content-type": "application/json" },
+    }) as unknown as NextRequest);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/absolute/i);
+  });
+
+  it("PUT rejects nonexistent paths with 400", async () => {
+    const res = await PUT(new Request("http://localhost/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({ defaultExportDir: join(tmpDir, "does-not-exist") }),
+      headers: { "content-type": "application/json" },
+    }) as unknown as NextRequest);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/not exist|not found|enoent/i);
+  });
+
+  it("PUT rejects non-directory paths (file) with 400", async () => {
+    const f = join(tmpDir, "regular-file");
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(f, "x");
+    const res = await PUT(new Request("http://localhost/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({ defaultExportDir: f }),
+      headers: { "content-type": "application/json" },
+    }) as unknown as NextRequest);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/directory/i);
+  });
+
+  it("PUT rejects non-string non-null with 400", async () => {
+    const res = await PUT(new Request("http://localhost/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({ defaultExportDir: 42 }),
+      headers: { "content-type": "application/json" },
+    }) as unknown as NextRequest);
+    expect(res.status).toBe(400);
+  });
+
+  it("GET on fresh install returns defaultExportDir as undefined", async () => {
+    const res = await GET();
+    const body = await res.json();
+    expect(body.data.defaultExportDir).toBeUndefined();
   });
 });
