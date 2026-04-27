@@ -1,7 +1,7 @@
 import { mkdir, writeFile, rename, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import sharp from "sharp";
-import { coverPath, customEpubPath, epubPath, exportsDir, type EpubVersion } from "@/lib/storage/paths";
+import { coverPath, customEpubPath, epubPath, type EpubVersion } from "@/lib/storage/paths";
 
 export async function writeEpub(
   dataDir: string,
