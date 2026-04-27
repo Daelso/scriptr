@@ -7,6 +7,7 @@ import { buildEpubBytes, validateEpub } from "@/lib/publish/epub";
 import { resolveAuthorNote } from "@/lib/publish/author-note";
 import { ensureCoverOrFallback, writeEpub } from "@/lib/publish/epub-storage";
 import type { EpubVersion } from "@/lib/storage/paths";
+import { probeWritableDir } from "@/lib/storage/dir-probe";
 
 type Ctx = { params: Promise<{ slug: string }> };
 
@@ -14,8 +15,9 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   const { slug } = await ctx.params;
   const dataDir = effectiveDataDir();
 
-  // Parse optional body { version?: 2 | 3 }. Empty body must not 400.
+  // Parse optional body { version?: 2 | 3; outputDir?: string }. Empty body must not 400.
   let version: EpubVersion = 3;
+  let bodyOutputDir: string | undefined;
   const rawBody = await req.text();
   if (rawBody.trim() !== "") {
     let parsed: unknown;
@@ -27,12 +29,18 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
       return fail("request body must be an object", 400);
     }
-    const body = parsed as { version?: unknown };
+    const body = parsed as { version?: unknown; outputDir?: unknown };
     if (body.version !== undefined) {
       if (body.version !== 2 && body.version !== 3) {
         return fail("version must be 2 or 3", 400);
       }
       version = body.version as EpubVersion;
+    }
+    if (body.outputDir !== undefined && body.outputDir !== null) {
+      if (typeof body.outputDir !== "string") {
+        return fail("outputDir must be a string", 400);
+      }
+      bodyOutputDir = body.outputDir;
     }
   }
 
@@ -50,6 +58,24 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   });
 
   const cfg = await loadConfig(dataDir);
+
+  // Effective output dir: explicit body → config default → data-dir fallback (undefined here).
+  const effectiveOutputDir = bodyOutputDir ?? cfg.defaultExportDir;
+  if (effectiveOutputDir !== undefined) {
+    const probe = await probeWritableDir(effectiveOutputDir);
+    if (!probe.ok) {
+      const detail =
+        probe.reason === "not-absolute"
+          ? "must be an absolute path"
+          : probe.reason === "not-found"
+          ? "directory does not exist"
+          : probe.reason === "not-a-directory"
+          ? "path is not a directory"
+          : "directory is not writable";
+      return fail(`outputDir ${detail}`, 400);
+    }
+  }
+
   const profile = cfg.penNameProfiles?.[story.authorPenName];
   const authorNote = resolveAuthorNote(story, profile) ?? undefined;
 
@@ -69,7 +95,9 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     throw err;
   }
   const { warnings: validationWarnings } = await validateEpub(bytes);
-  const path = await writeEpub(dataDir, slug, version, bytes);
+  const path = await writeEpub(dataDir, slug, version, bytes, {
+    outputDir: effectiveOutputDir,
+  });
 
   return ok({ path, bytes: bytes.byteLength, version, warnings: validationWarnings });
 }

@@ -230,4 +230,87 @@ describe("/api/stories/[slug]/export/epub POST", () => {
     expect(body.ok).toBe(false);
     expect(body.error).toMatch(/mailing list URL is too long/i);
   });
+
+  it("writes to body.outputDir when provided", async () => {
+    const out = await mkdtemp(join(tmpdir(), "scriptr-out-"));
+    try {
+      const story = await createStory(tmpDir, { title: "Book" });
+      await createImportedChapter(tmpDir, story.slug, {
+        title: "One",
+        sectionContents: ["Hello, world."],
+      });
+      const res = await callPost(story.slug, { version: 3, outputDir: out });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.ok).toBe(true);
+      expect(body.data.path).toBe(join(out, `${story.slug}-epub3.epub`));
+      const s = await stat(body.data.path);
+      expect(s.isFile()).toBe(true);
+      // Default location must NOT have been written.
+      await expect(stat(epubPath(tmpDir, story.slug, 3))).rejects.toThrow();
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to config.defaultExportDir when body.outputDir absent", async () => {
+    const out = await mkdtemp(join(tmpdir(), "scriptr-out-"));
+    try {
+      await saveConfig(tmpDir, { defaultExportDir: out });
+      const story = await createStory(tmpDir, { title: "Book" });
+      await createImportedChapter(tmpDir, story.slug, {
+        title: "One",
+        sectionContents: ["Hello, world."],
+      });
+      const res = await callPost(story.slug, { version: 3 });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.data.path).toBe(join(out, `${story.slug}-epub3.epub`));
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  });
+
+  it("body.outputDir takes precedence over config.defaultExportDir", async () => {
+    const cfgOut = await mkdtemp(join(tmpdir(), "scriptr-cfg-"));
+    const bodyOut = await mkdtemp(join(tmpdir(), "scriptr-body-"));
+    try {
+      await saveConfig(tmpDir, { defaultExportDir: cfgOut });
+      const story = await createStory(tmpDir, { title: "Book" });
+      await createImportedChapter(tmpDir, story.slug, {
+        title: "One",
+        sectionContents: ["Hi"],
+      });
+      const res = await callPost(story.slug, { version: 3, outputDir: bodyOut });
+      const body = await res.json();
+      expect(body.data.path).toBe(join(bodyOut, `${story.slug}-epub3.epub`));
+      await expect(stat(join(cfgOut, `${story.slug}-epub3.epub`))).rejects.toThrow();
+    } finally {
+      await rm(cfgOut, { recursive: true, force: true });
+      await rm(bodyOut, { recursive: true, force: true });
+    }
+  });
+
+  it("returns 400 when body.outputDir is invalid", async () => {
+    const story = await createStory(tmpDir, { title: "Book" });
+    await createImportedChapter(tmpDir, story.slug, {
+      title: "One",
+      sectionContents: ["Hi"],
+    });
+    const res = await callPost(story.slug, { version: 3, outputDir: "./nope" });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/absolute/i);
+  });
+
+  it("with no outputDir set anywhere, falls back to data-dir/exports/ (regression)", async () => {
+    const story = await createStory(tmpDir, { title: "Book" });
+    await createImportedChapter(tmpDir, story.slug, {
+      title: "One",
+      sectionContents: ["Hi"],
+    });
+    const res = await callPost(story.slug, { version: 3 });
+    const body = await res.json();
+    expect(body.data.path).toBe(epubPath(tmpDir, story.slug, 3));
+  });
 });
