@@ -26,7 +26,7 @@ A small Electron preload + IPC layer is added so the renderer can call `dialog.s
 - **Diagnosing why the route currently 500s in packaged Electron.** Once the client surfaces the actual error string, the cause (likely sharp's native binding or an `epub-gen-memory` transitive dep failing to load from the Next standalone bundle) will be visible. Fixing it is a follow-up. This spec deliberately does not investigate native-module bundling without evidence.
 - **Per-story output overrides.** A single global default is sufficient for the publish-to-one-place workflow. Adding `outputDir` to `Story` is easy to do later if a real need surfaces.
 - **Custom filenames.** Stays `<slug>-epub<version>.epub`. The path being user-controlled is enough — the filename naming convention is load-bearing for collision behavior across rebuilds.
-- **Filename-collision UI** (overwrite confirm, increment, etc.). Today's behavior overwrites silently; that stays.
+- **Filename-collision UI** (overwrite confirm, increment, etc.). Today's behavior overwrites silently; that stays. The new success toast (which now reads "EPUB N saved to /full/path") makes the overwrite visible to the user — sufficient signal without prompting.
 - **File System Access API path.** `showDirectoryPicker()` was considered and rejected — it forces the renderer to do the file write (bypassing `writeEpub`), needs IndexedDB-backed handle persistence, and forks the architecture from "all I/O server-side" to "Electron one way, web another." The IPC path keeps the server-side write pattern.
 - **Filename-customization UI on a per-build basis.** The design saves the folder, not the file.
 - **Surfacing the data-dir copy alongside the user's chosen location.** When `defaultExportDir` is set, only the user's chosen path receives the EPUB. Writing two copies risks silently diverging if one write fails.
@@ -84,6 +84,7 @@ The renderer sees only these three methods. No filesystem access, no node primit
 ### Wired into `electron/main.ts`
 
 - BrowserWindow `webPreferences` gains `preload: join(__dirname, "preload.js")`. All other security flags unchanged (`contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`).
+- `electron/tsconfig.json` already compiles `electron/**/*.ts` into `dist/electron/`; `electron/preload.ts` is picked up automatically. `electron-builder.yml`'s `files` glob already includes `dist/electron/**/*`, so the compiled preload ships in the asar with no config change. The `afterPack.cjs` fuse hook is unaffected.
 - Three new `ipcMain.handle` registrations, set up once at app start (before the window is created so the channels exist by the time preload fires):
   - `dialog:pickFolder` — calls `dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'], title: 'Choose EPUB output folder' })`. Returns `result.canceled ? null : result.filePaths[0] ?? null`.
   - `shell:revealInFolder` — string-validated path, must be absolute. Calls `shell.showItemInFolder(path)`.
@@ -130,10 +131,13 @@ The `mkdir` switches from `exportsDir(...)` to `dirname(finalPath)` so it works 
 
 **`app/api/settings/route.ts`** — PUT accepts `defaultExportDir`:
 - `null` or `""` → clear (`patch.defaultExportDir = undefined`).
-- string → must be absolute (`path.isAbsolute`); must exist, be a directory, and be writable (validated server-side via `fs.stat` + `fs.access(W_OK)`). Failures: `fail("...", 400)` with a precise reason.
+- string → must be absolute (`path.isAbsolute`); must exist, be a directory, and be writable. Failures: `fail("...", 400)` with a precise reason.
 - Anything else: `fail("defaultExportDir must be a string or null", 400)`.
+- On success, the PUT response body now also returns `defaultExportDir` (the persisted value, or `null` if cleared) alongside the existing `hasKey`/`keyPreview` fields, so the client can resync without a follow-up GET.
 
-Validation lives in the route, not in `lib/config.ts`, because filesystem-touching validation isn't appropriate for the pure-config layer (which has unit tests that don't expect to touch disk). The route is the boundary that knows it's running where the filesystem matters.
+**Writability probe.** `fs.access(W_OK)` is unreliable on Windows (it consults the file's read-only attribute, not effective NTFS ACLs). Use a temp-file probe everywhere instead: write a 0-byte file to `<dir>/.scriptr-write-probe-<random>`, then `unlink` it. Failure of either step → "output directory is not writable". This is the same check on both the settings route (when `defaultExportDir` is set) and the export route (when an explicit `body.outputDir` is set or a configured default is in use).
+
+Validation lives in the route, not in `lib/config.ts`, because filesystem-touching validation isn't appropriate for the pure-config layer (which has unit tests that don't expect to touch disk). The route is the boundary that knows it's running where the filesystem matters. The probe is extracted into a small helper (e.g. `lib/storage/dir-probe.ts::probeWritableDir(path)`) so both routes share one implementation and one set of tests.
 
 **`app/api/stories/[slug]/export/epub/route.ts`** — body grows optional `outputDir`:
 - Resolution: `body.outputDir ?? config.defaultExportDir ?? undefined` → passed as `opts?.outputDir` to `writeEpub`.
@@ -166,9 +170,9 @@ New section between Cover and Build:
     }}>Choose folder…</Button>
   )}
   {outputDirDraft && (
-    <button onClick={() => { setOutputDirDraft(""); void saveOutputDir(null); }}>
+    <Button variant="ghost" size="sm" onClick={() => { setOutputDirDraft(""); void saveOutputDir(null); }}>
       Reset to default
-    </button>
+    </Button>
   )}
   {!outputDirDraft && (
     <p className="text-xs text-muted-foreground">
@@ -180,7 +184,7 @@ New section between Cover and Build:
 
 `isElectron` comes from `GET /api/settings`. We don't sniff `navigator.userAgent`. The feature flag is server-side, set once in `electron/main.ts` boot, and matches reality: only Electron exposes the picker.
 
-`saveOutputDir(value)` PUTs `/api/settings`. On 400, surfaces the validation message as a toast and rolls back the draft to the previously-saved value (so the user sees both the bad input and the explanation before deciding what to fix).
+`saveOutputDir(value)` PUTs `/api/settings`. ExportPage keeps a `savedOutputDir` ref (the last value that successfully persisted, hydrated from the initial `GET /api/settings` and updated on each successful PUT). On 400, the toast surfaces the validation message and `outputDirDraft` rolls back to `savedOutputDir` — the user sees both the bad input (in the toast) and the last good state (in the input). On 200, `savedOutputDir` updates from the PUT response's `defaultExportDir` field.
 
 `handleBuild` is rewritten to surface failures (full version in spec discussion above):
 
@@ -235,7 +239,7 @@ No migration: missing field is interpreted as undefined by the existing normaliz
 - **`tests/api/settings.test.ts`** (or wherever the existing settings test lives) — PUT `defaultExportDir`: valid absolute writable dir saves; relative path 400s; nonexistent path 400s; non-directory 400s; non-writable 400s; `null` clears.
 - **`tests/api/export.epub.test.ts`** (extending) — POST with explicit `outputDir` writes there; with config-set default writes there; with neither falls back to data-dir; invalid outputDir 400s.
 - **`tests/components/publish/ExportPage.test.tsx`** (extending) — Choose folder button hidden when `isElectron === false`; visible and callable when true; Reveal/Open buttons visibility matches `window.scriptr`. Build failure toast fires on 500 HTML response.
-- **`tests/privacy/no-external-egress.test.ts`** — Add a PUT to `/api/settings` with `defaultExportDir` to the route exercise list. Already exercised by the settings test, but the egress test verifies no fetch fired.
+- **`tests/privacy/no-external-egress.test.ts`** — Add a `PUT /api/settings` call with `{ defaultExportDir: null }` (a clear) to the route exercise list. Using `null` avoids needing the test's mock data dir to contain a real writable directory; the validation is short-circuited and the route still runs end-to-end. The point of the egress test is to verify no `fetch` fires, not to exercise the happy path of every input shape.
 - **`tests/electron/preload-bridge.test.ts`** (new, small) — Verify `electron/preload.ts` only exposes the three methods. Pure unit-level — instantiate the contextBridge mock and assert the surface.
 - **Electron e2e** — out of scope for this spec; the existing test suite doesn't exercise the packaged Electron build, and adding that infra is its own project.
 
@@ -248,4 +252,4 @@ No migration: missing field is interpreted as undefined by the existing normaliz
 
 ## Open questions
 
-None blocking; happy to revise during implementation if the validation messaging in the settings route turns out to be awkward (e.g. "writable" check semantics on Windows differ from POSIX — `fs.access(W_OK)` is best-effort on Windows and may need a fallback to "try to create a temp file in the dir").
+None blocking. The Windows writability concern from the previous draft is now resolved by the temp-file probe described under the route validation section.
