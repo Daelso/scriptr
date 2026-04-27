@@ -472,7 +472,7 @@ describe("ExportPage — output location section", () => {
         )!.set!;
         setter.call(input, "/does/not/exist");
         input!.dispatchEvent(new Event("input", { bubbles: true }));
-        input!.dispatchEvent(new Event("blur", { bubbles: true }));
+        input!.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
       });
       // Drain the PUT's .then() chain so the rollback setState lands.
       await act(async () => { await Promise.resolve(); });
