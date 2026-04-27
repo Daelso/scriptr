@@ -418,6 +418,48 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
               <div className="font-mono text-green-300 break-all mt-1">
                 {build.path}
               </div>
+              <div className="flex flex-wrap gap-2 mt-2">
+                {isElectron && typeof window !== "undefined" && window.scriptr?.revealInFolder && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    data-testid={`export-reveal-${v}`}
+                    onClick={() => {
+                      void window.scriptr!.revealInFolder(build.path).catch((err) => {
+                        toast.error(`Reveal failed: ${err instanceof Error ? err.message : String(err)}`);
+                      });
+                    }}
+                  >
+                    Reveal
+                  </Button>
+                )}
+                {isElectron && typeof window !== "undefined" && window.scriptr?.openFile && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    data-testid={`export-open-${v}`}
+                    onClick={() => {
+                      void window.scriptr!.openFile(build.path).catch((err) => {
+                        toast.error(`Open failed: ${err instanceof Error ? err.message : String(err)}`);
+                      });
+                    }}
+                  >
+                    Open
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  data-testid={`export-copy-path-${v}`}
+                  onClick={() => {
+                    void navigator.clipboard.writeText(build.path).then(() => {
+                      toast.success("Copied path");
+                    });
+                  }}
+                >
+                  Copy path
+                </Button>
+              </div>
               {build.warnings.length > 0 && (
                 <details className="mt-2">
                   <summary>{build.warnings.length} warning(s)</summary>
