@@ -24,6 +24,7 @@ export type Config = {
   styleDefaults?: StyleRules;
   updates?: UpdatesConfig;
   penNameProfiles?: Record<string, PenNameProfile>;
+  defaultExportDir?: string;
 };
 
 export const DEFAULT_CONFIG: Config = {
@@ -187,6 +188,10 @@ function normalizeConfigFromFile(value: unknown): Partial<Config> {
   const profiles = normalizePenNameProfilesLoose(value.penNameProfiles);
   if (profiles !== undefined) out.penNameProfiles = profiles;
 
+  if (typeof value.defaultExportDir === "string" && value.defaultExportDir.trim().length > 0) {
+    out.defaultExportDir = value.defaultExportDir;
+  }
+
   return out;
 }
 
@@ -249,6 +254,9 @@ function mergeConfig(current: Config, partial: Partial<Config>): Config {
   }
   if (hasOwn(partial, "penNameProfiles")) {
     next.penNameProfiles = partial.penNameProfiles;
+  }
+  if (hasOwn(partial, "defaultExportDir")) {
+    next.defaultExportDir = partial.defaultExportDir;
   }
   return next;
 }
