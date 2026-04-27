@@ -197,3 +197,91 @@ describe("ExportPage — EPUB version toggle roving tabindex", () => {
     }
   });
 });
+
+import { toast } from "sonner";
+
+describe("ExportPage — handleBuild error visibility", () => {
+  beforeEach(() => {
+    mockFetch.mockClear();
+    (toast.error as ReturnType<typeof vi.fn>).mockClear();
+    (toast.success as ReturnType<typeof vi.fn>).mockClear();
+  });
+
+  it("toasts an error when the export route returns 500 with an HTML body", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      text: () => Promise.resolve("<html>boom: epub-gen-memory exploded</html>"),
+    } as unknown as Response);
+
+    const { container, unmount } = mount(
+      <ExportPage story={baseStory} chapterCount={1} wordCount={500} />,
+    );
+    try {
+      const buildBtn = container.querySelector<HTMLButtonElement>(
+        '[data-testid="export-build"]',
+      );
+      expect(buildBtn).not.toBeNull();
+      await act(async () => {
+        buildBtn!.click();
+      });
+      // sonner is mocked; check that toast.error fired with status + body excerpt
+      const errCalls = (toast.error as ReturnType<typeof vi.fn>).mock.calls;
+      expect(errCalls.length).toBeGreaterThan(0);
+      expect(String(errCalls[0][0])).toMatch(/500/);
+      expect(String(errCalls[0][0])).toMatch(/boom/);
+      expect((toast.success as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0);
+    } finally {
+      unmount();
+    }
+  });
+
+  it("toasts an error when fetch itself rejects (network failure)", async () => {
+    mockFetch.mockRejectedValueOnce(new Error("Failed to fetch"));
+
+    const { container, unmount } = mount(
+      <ExportPage story={baseStory} chapterCount={1} wordCount={500} />,
+    );
+    try {
+      const buildBtn = container.querySelector<HTMLButtonElement>(
+        '[data-testid="export-build"]',
+      );
+      await act(async () => {
+        buildBtn!.click();
+      });
+      const errCalls = (toast.error as ReturnType<typeof vi.fn>).mock.calls;
+      expect(errCalls.length).toBeGreaterThan(0);
+      expect(String(errCalls[0][0])).toMatch(/Failed to fetch/);
+    } finally {
+      unmount();
+    }
+  });
+
+  it("toasts success with the saved path when the route returns ok", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({
+        ok: true,
+        data: { path: "/Users/chase/Books/x-epub3.epub", bytes: 12345, version: 3, warnings: [] },
+      }),
+    } as unknown as Response);
+
+    const { container, unmount } = mount(
+      <ExportPage story={baseStory} chapterCount={1} wordCount={500} />,
+    );
+    try {
+      const buildBtn = container.querySelector<HTMLButtonElement>(
+        '[data-testid="export-build"]',
+      );
+      await act(async () => {
+        buildBtn!.click();
+      });
+      const succCalls = (toast.success as ReturnType<typeof vi.fn>).mock.calls;
+      expect(succCalls.length).toBe(1);
+      expect(String(succCalls[0][0])).toMatch(/x-epub3\.epub/);
+    } finally {
+      unmount();
+    }
+  });
+});
