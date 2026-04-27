@@ -6,11 +6,13 @@ import {
   chaptersDir,
   chapterFile,
   exportsDir,
+  epubPath,
   coverPath,
   lastPayloadFile,
   logsDir,
   blockedRequestsLog,
   crashesLog,
+  customEpubPath,
 } from "@/lib/storage/paths";
 
 describe("storage paths", () => {
@@ -40,6 +42,24 @@ describe("storage paths", () => {
 
   it("builds the crashes log path under <dataDir>/logs/", () => {
     expect(crashesLog(dataDir)).toBe("/tmp/fakedata/logs/crashes.log");
+  });
+
+  it("customEpubPath joins output dir with the slug+version filename", () => {
+    expect(customEpubPath("/Users/chase/Books", "the-meeting", 3)).toBe(
+      "/Users/chase/Books/the-meeting-epub3.epub",
+    );
+    expect(customEpubPath("/Users/chase/Books", "the-meeting", 2)).toBe(
+      "/Users/chase/Books/the-meeting-epub2.epub",
+    );
+  });
+
+  it("customEpubPath uses the same filename pattern as epubPath", () => {
+    // The two helpers diverge only in their parent dir, never in the filename.
+    // This guards against future code switching between override and default
+    // and producing a different filename.
+    const slugTest = "x";
+    expect(customEpubPath("/out", slugTest, 3).split("/").pop())
+      .toBe(epubPath(dataDir, slugTest, 3).split("/").pop());
   });
 });
 

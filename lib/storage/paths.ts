@@ -25,6 +25,9 @@ export function exportsDir(dataDir: string, storySlug: string) {
 export function epubPath(dataDir: string, storySlug: string, version: EpubVersion) {
   return join(exportsDir(dataDir, storySlug), `${storySlug}-epub${version}.epub`);
 }
+export function customEpubPath(outputDir: string, storySlug: string, version: EpubVersion) {
+  return join(outputDir, `${storySlug}-epub${version}.epub`);
+}
 export function coverPath(dataDir: string, storySlug: string) {
   return join(storyDir(dataDir, storySlug), "cover.jpg");
 }
