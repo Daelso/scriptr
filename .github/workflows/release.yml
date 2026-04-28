@@ -80,15 +80,23 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $GITHUB_REF_NAME already exists; matrix jobs will upload to it."
-          else
-            gh release create "$GITHUB_REF_NAME" \
-              --repo "$GITHUB_REPOSITORY" \
-              --draft \
-              --title "$GITHUB_REF_NAME" \
-              --notes ""
-          fi
+          state=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft 2>/dev/null || echo "missing")
+          case "$state" in
+            true)
+              echo "Draft $GITHUB_REF_NAME already exists; matrix jobs will upload to it."
+              ;;
+            false)
+              echo "::error ::Release $GITHUB_REF_NAME is already published; refusing to upload to it. Delete or re-tag."
+              exit 1
+              ;;
+            missing)
+              gh release create "$GITHUB_REF_NAME" \
+                --repo "$GITHUB_REPOSITORY" \
+                --draft \
+                --title "$GITHUB_REF_NAME" \
+                --notes ""
+              ;;
+          esac
 
   build:
     needs: setup
