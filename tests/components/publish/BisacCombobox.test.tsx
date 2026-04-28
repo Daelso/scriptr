@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { SWRConfig } from "swr";
 
 import type { BisacEntry } from "@/lib/publish/bisac-types";
 
@@ -43,7 +44,9 @@ function mount(element: React.ReactElement): Mounted {
   let root!: Root;
   act(() => {
     root = createRoot(container);
-    root.render(element);
+    root.render(
+      <SWRConfig value={{ provider: () => new Map() }}>{element}</SWRConfig>,
+    );
   });
   return {
     container,

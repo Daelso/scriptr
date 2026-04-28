@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import useSWR, { SWRConfig } from "swr";
+import useSWR from "swr";
 import { Combobox } from "@base-ui/react/combobox";
 
 import { cn } from "@/lib/utils";
@@ -35,17 +35,7 @@ function findEntry(
   return entries.find((e) => e.c === code);
 }
 
-export function BisacCombobox(props: Props) {
-  // Each instance uses its own SWR cache so tests (and future multi-instance
-  // pages) can't leak stale BISAC fixtures into each other.
-  return (
-    <SWRConfig value={{ provider: () => new Map() }}>
-      <BisacComboboxInner {...props} />
-    </SWRConfig>
-  );
-}
-
-function BisacComboboxInner({ value, onChange, disabled }: Props) {
+export function BisacCombobox({ value, onChange, disabled }: Props) {
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState("");
 
