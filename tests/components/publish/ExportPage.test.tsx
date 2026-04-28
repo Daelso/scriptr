@@ -254,6 +254,43 @@ describe("ExportPage — handleBuild error visibility", () => {
     }
   });
 
+  it("surfaces the body.error string when the export route returns 500 with a JSON body", async () => {
+    // The route's outer try/catch returns `{ ok: false, error: "<msg>" }`
+    // for any non-4xx failure. The UI must parse the JSON instead of
+    // text-slicing it, so the user sees the actionable message instead of
+    // `Build failed (500): {"ok":false,"error":"<msg>...`.
+    const detailedMessage =
+      "EPUB export failed: Cannot read property 'foo' of undefined. Full stack written to /home/u/data/logs/api-errors.log";
+    mockFetch
+      .mockResolvedValueOnce(settingsGetMock)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve(JSON.stringify({ ok: false, error: detailedMessage })),
+      } as unknown as Response);
+
+    const { container, unmount } = mount(
+      <ExportPage story={baseStory} chapterCount={1} wordCount={500} />,
+    );
+    try {
+      const buildBtn = container.querySelector<HTMLButtonElement>(
+        '[data-testid="export-build"]',
+      );
+      await act(async () => {
+        buildBtn!.click();
+      });
+      const errCalls = (toast.error as ReturnType<typeof vi.fn>).mock.calls;
+      expect(errCalls.length).toBeGreaterThan(0);
+      const message = String(errCalls[0][0]);
+      expect(message).toMatch(/500/);
+      expect(message).toContain(detailedMessage);
+      // No raw JSON braces should leak into the toast.
+      expect(message).not.toContain('"ok":false');
+    } finally {
+      unmount();
+    }
+  });
+
   it("toasts an error when fetch itself rejects (network failure)", async () => {
     mockFetch
       .mockResolvedValueOnce(settingsGetMock)
