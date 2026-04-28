@@ -44,7 +44,7 @@ Tags published:
 
 ### Base image
 
-Both build and runtime stages use `node:20-slim` (Debian-based, glibc).
+Both build and runtime stages use `node:22-slim` (Debian-based, glibc). Node 22 is current active LTS through April 2027; Node 20 enters maintenance the same month this work ships, so we start on the longer-supported line.
 
 - `sharp@0.34` and its `@img/sharp-*` prebuilts work on the well-trodden glibc path; no `libvips-dev` or `python3` toolchain needed. The Windows-only `outputFileTracingIncludes` glob in `next.config.ts` is a no-op on Linux — `sharp` ships libvips for `linux/amd64` and `linux/arm64-glibc` via the separate `@img/sharp-libvips-*` packages, which Next's NFT pass walks normally.
 - A real shell is available for `docker exec -it scriptr bash` debugging, which the operator will eventually need.
@@ -64,7 +64,7 @@ Three stages in one Dockerfile:
 - `npm run build` → produces `.next/standalone/`, `.next/static/`, and `public/`.
 
 **Stage 3 — `runner`** (the only stage in the final image)
-- `FROM node:20-slim`
+- `FROM node:22-slim`
 - `WORKDIR /app`
 - `ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0 SCRIPTR_DATA_DIR=/data`
 - `RUN mkdir -p /data && chown -R node:node /data /app`
@@ -100,6 +100,7 @@ New files added in this work:
 - **`.env.example`** — `XAI_API_KEY=` (required), `SCRIPTR_DEFAULT_MODEL=grok-4-latest` (commented optional). `SCRIPTR_DATA_DIR` is intentionally not user-tunable in this setup; it's pinned to `/data` inside the container, and the host path is configured via the compose volume.
 - **`app/api/health/route.ts`** — `GET /api/health` returning `{ ok: true }` with no auth, no data access. Needed for the compose healthcheck and as a probe target for reverse proxies. The egress test exercises every non-generate route; this route gets added to that loop so we observe it makes no outbound calls.
 - **`.github/workflows/docker.yml`** — multi-arch GHCR publish.
+- **`.github/dependabot.yml`** (new, or extended if it exists) — `github-actions` ecosystem entry so the SHA-pinned actions in the docker workflow get update PRs.
 - **`README.md` additions** — new "Docker (browser hosting)" section before the Privacy section.
 
 ## docker-compose.yml
@@ -131,7 +132,7 @@ services:
 
 Deliberate choices:
 
-- **Healthcheck via `node -e fetch(...)`.** `node:20-slim` ships neither `curl` nor `wget`; Node 20's global `fetch` already has what we need.
+- **Healthcheck via `node -e fetch(...)`.** `node:22-slim` ships neither `curl` nor `wget`; Node 20's global `fetch` already has what we need.
 - **`restart: unless-stopped`** rather than `always` — respects an explicit `docker compose down`.
 - **`container_name: scriptr`** for predictable `docker logs` / `docker exec` ergonomics. Forfeits replica scaling, which we don't want anyway (file-based storage).
 - **No `networks:`** block — single service, default bridge is enough.
@@ -146,17 +147,17 @@ Triggers:
 
 Permissions: `contents: read`, `packages: write`, `id-token: write` (the last is unused in v1 but cheap to leave for future cosign signing).
 
-Steps:
+Steps (each action pinned to a full commit SHA, not a major-version tag — supply-chain hardening that fits the privacy posture; Dependabot keeps them current):
 
-1. `actions/checkout@v4`
-2. `docker/setup-qemu-action@v3` — required for arm64 emulation on amd64 runners.
-3. `docker/setup-buildx-action@v3`
-4. `docker/login-action@v3` against `ghcr.io` with `${{ github.actor }}` + `${{ secrets.GITHUB_TOKEN }}`.
-5. `docker/metadata-action@v5` to compute tags and OCI labels:
+1. `actions/checkout` (pin SHA matching the latest v4 release at implementation time)
+2. `docker/setup-qemu-action` (pin SHA matching latest v3) — required for arm64 emulation on amd64 runners.
+3. `docker/setup-buildx-action` (pin SHA matching latest v3)
+4. `docker/login-action` (pin SHA matching latest v3) against `ghcr.io` with `${{ github.actor }}` + `${{ secrets.GITHUB_TOKEN }}`.
+5. `docker/metadata-action` (pin SHA matching latest v5) to compute tags and OCI labels:
    - `type=ref,event=branch` (with main → `edge`)
    - `type=semver,pattern={{version}}`, `{{major}}.{{minor}}`, `{{major}}`
    - `type=sha,prefix=sha-`
-6. `docker/build-push-action@v6`:
+6. `docker/build-push-action` (pin SHA matching latest v6):
    - `platforms: linux/amd64,linux/arm64`
    - `push: true`
    - `tags: ${{ steps.meta.outputs.tags }}`
@@ -165,6 +166,8 @@ Steps:
      - `org.opencontainers.image.description=Local-first AI writing app`
      - `org.opencontainers.image.licenses=MIT`
    - `cache-from: type=gha`, `cache-to: type=gha,mode=max`
+
+Each pinned action carries an inline comment with the human-readable version (e.g. `# v4.2.2`) so a reviewer can read intent without resolving SHAs. A `.github/dependabot.yml` entry for `package-ecosystem: github-actions` is added so SHA bumps arrive as PRs rather than rotting silently.
 
 No tests run inside this workflow. Lint, typecheck, unit, and e2e already run on the existing CI for every PR and tag; re-running them inside the Docker build doubles wall time without new signal. The build either succeeds or fails as its own check.
 
