@@ -102,7 +102,7 @@ function renderUpdateStatus(state: UpdateState, justFinishedNoUpdate: boolean): 
     case "downloaded":
       return `Version ${state.version} downloaded. Restart to install.`;
     case "error":
-      return "Couldn't reach update server. Check your connection and try again.";
+      return `Update check failed: ${sanitizeUpdateError(state.message)}`;
     case "idle":
       if (justFinishedNoUpdate) {
         return `You're on the latest version (${state.currentVersion}).`;
@@ -110,6 +110,18 @@ function renderUpdateStatus(state: UpdateState, justFinishedNoUpdate: boolean): 
       if (!state.lastCheckedAt) return "Never checked.";
       return `Last checked: ${formatRelativeTime(state.lastCheckedAt)}.`;
   }
+}
+
+// electron-updater error messages can embed full filesystem paths
+// (`C:\Users\<name>\AppData\...`, `/home/<name>/...`) and serialized
+// HTTP response headers. We surface the message so users can self-diagnose,
+// but redact home-directory paths to avoid leaking the OS username, and cap
+// length so a multi-KB headers blob doesn't trash the layout.
+function sanitizeUpdateError(message: string): string {
+  return message
+    .replace(/[A-Za-z]:\\Users\\[^\\/"'\s]+/g, "~")
+    .replace(/\/(?:Users|home)\/[^/"'\s]+/g, "~")
+    .slice(0, 200);
 }
 
 function formatRelativeTime(iso: string): string {
