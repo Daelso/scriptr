@@ -46,7 +46,7 @@ Tags published:
 
 Both build and runtime stages use `node:20-slim` (Debian-based, glibc).
 
-- `sharp@0.34` and its `@img/sharp-*` prebuilts work on the well-trodden glibc path; no `libvips-dev` or `python3` toolchain needed.
+- `sharp@0.34` and its `@img/sharp-*` prebuilts work on the well-trodden glibc path; no `libvips-dev` or `python3` toolchain needed. The Windows-only `outputFileTracingIncludes` glob in `next.config.ts` is a no-op on Linux — `sharp` ships libvips for `linux/amd64` and `linux/arm64-glibc` via the separate `@img/sharp-libvips-*` packages, which Next's NFT pass walks normally.
 - A real shell is available for `docker exec -it scriptr bash` debugging, which the operator will eventually need.
 - Final image lands around ~180 MB. Alpine (~90 MB) and distroless (~120 MB) were rejected: the size win doesn't pay for the support risk on `sharp` (Alpine) or the loss of debug ergonomics (distroless), and our threat model — single-user, single allowlisted egress — doesn't benefit much from a smaller attack surface in the runtime.
 
@@ -73,6 +73,10 @@ Three stages in one Dockerfile:
 - `EXPOSE 3000`
 - `CMD ["node", "server.js"]`
 
+### Standalone output layout inside the image
+
+`next.config.ts` pins `outputFileTracingRoot` to the project directory specifically so the standalone output lands flat at `.next/standalone/server.js` (not nested under a parent-lockfile path). Inside the `builder` stage, source is copied to `/app` with no parent lockfile present, so the output reliably lands at `/app/.next/standalone/server.js`. The `runner` stage's copy commands and `CMD ["node", "server.js"]` rely on this flatness.
+
 ### Why `HOSTNAME=0.0.0.0` is correct here
 
 `HOSTNAME=0.0.0.0` binds the Next.js standalone server to all interfaces *inside the container's network namespace*. The container's interfaces are isolated; what reaches the host depends entirely on the `ports:` mapping in compose. Defaulting that mapping to `127.0.0.1:3000:3000` is what keeps the app off the LAN — not the in-container bind address.
@@ -91,10 +95,10 @@ We deliberately do not ship an entrypoint that `chown`s `/data` at startup, beca
 New files added in this work:
 
 - **`Dockerfile`** — three-stage build described above.
-- **`.dockerignore`** — excludes `.next/`, `node_modules/`, `data/`, `.worktrees/`, `dist/`, `out/`, `coverage/`, `tests/`, `playwright-report/`, `.git/`, `electron/`, `.env*`, `.codex/`, OS junk (`.DS_Store`, etc.). Goal: keep the build context lean and ensure no host `data/` is ever baked into a layer.
+- **`.dockerignore`** — excludes `.next/`, `node_modules/`, `data/`, `.worktrees/`, `dist/`, `out/`, `coverage/`, `tests/`, `playwright-report/`, `.git/`, `electron/`, `.env`, `.env.local`, `.env.*.local`, `.codex/`, OS junk (`.DS_Store`, etc.). Note the `.env` patterns are explicit so `.env.example` is *not* excluded — it's part of the source tree even though we never `COPY` it into the image (users fetch it via `curl` per the README). Goal: keep the build context lean and ensure no host `data/` or real secrets are ever baked into a layer.
 - **`docker-compose.yml`** — single `scriptr` service.
 - **`.env.example`** — `XAI_API_KEY=` (required), `SCRIPTR_DEFAULT_MODEL=grok-4-latest` (commented optional). `SCRIPTR_DATA_DIR` is intentionally not user-tunable in this setup; it's pinned to `/data` inside the container, and the host path is configured via the compose volume.
-- **`app/api/health/route.ts`** — `GET /api/health` returning `{ ok: true }` with no auth, no data access. Needed for the compose healthcheck and as a probe target for reverse proxies. Must be added to the egress test allowlist (or, more accurately, the egress test should observe it makes no outbound calls — same shape as the existing assertions).
+- **`app/api/health/route.ts`** — `GET /api/health` returning `{ ok: true }` with no auth, no data access. Needed for the compose healthcheck and as a probe target for reverse proxies. The egress test exercises every non-generate route; this route gets added to that loop so we observe it makes no outbound calls.
 - **`.github/workflows/docker.yml`** — multi-arch GHCR publish.
 - **`README.md` additions** — new "Docker (browser hosting)" section before the Privacy section.
 
@@ -171,7 +175,7 @@ Minimal handler:
 ```ts
 import { NextResponse } from "next/server";
 
-export const dynamic = "force-static";
+export const dynamic = "force-dynamic";
 
 export function GET() {
   return NextResponse.json({ ok: true });
@@ -180,10 +184,11 @@ export function GET() {
 
 Rationale:
 
-- Fixed `force-static` so it never trips the streaming/SSE path or pulls in any storage helper.
+- The handler imports nothing from `lib/storage/*`, `lib/grok*`, or `lib/recap`, so it can't accidentally pull in disk or network code paths. Keeping the import surface trivial is the actual safety, not the `dynamic` directive.
+- `force-dynamic` is the conservative choice for a liveness probe — we want a fresh response per request, not a build-time-cached static asset.
 - Returns 200 as long as the Next.js server is up; we explicitly do not check downstream xAI reachability, because a missing/invalid API key is an operator concern, not a "container is unhealthy" concern.
 
-The egress test (`tests/privacy/no-external-egress.test.ts`) needs an entry exercising this route to assert it makes no outbound calls — same shape as existing entries, no allowlist exemption needed.
+The egress test (`tests/privacy/no-external-egress.test.ts`) gets a new entry exercising this route — same shape as existing route cases (e.g., `/api/settings`), no allowlist exemption needed.
 
 ## README additions
 
@@ -244,3 +249,4 @@ None at design time. License confirmed as MIT.
 - **Bind-mount UID mismatch frustrates first-time users.** Mitigation: documented under Quick Start, two simple workarounds, no fragile chown-at-startup entrypoint.
 - **GHCR image gets stale relative to source.** Mitigation: `:edge` tag tracks `main`; release process tags new versions which auto-publish.
 - **`sharp` prebuilt arm64 binary regresses in a future bump.** Mitigation: same CI build catches it for both architectures before publish; we already have a precedent (the Windows libvips DLL fix in v0.5.1) for handling sharp's packaging surprises.
+- **Reverse-proxy `X-Forwarded-*` quirks.** Operators putting Caddy/nginx in front may discover that absolute URLs (e.g., in EPUB exports or author-note QR codes) don't round-trip the proxy's canonical host/scheme. Mitigation: out of scope for v1 since the in-app surfaces that emit absolute URLs are narrow; flag in the README troubleshooting section so operators know where to look first.
