@@ -8,6 +8,7 @@ import {
   readCoverPath,
   writeCoverJpeg,
   ensureCoverOrFallback,
+  isSharpLoadError,
 } from "@/lib/publish/epub-storage";
 
 describe("epub-storage", () => {
@@ -80,8 +81,9 @@ describe("epub-storage", () => {
       title: "Test Book",
       author: "J. Doe",
     });
-    expect(path.endsWith("/cover.jpg")).toBe(true);
-    const bytes = await readFile(path);
+    expect(path).not.toBeNull();
+    expect(path!.endsWith("/cover.jpg")).toBe(true);
+    const bytes = await readFile(path!);
     expect(bytes[0]).toBe(0xff);
     expect(bytes[1]).toBe(0xd8);
   });
@@ -98,6 +100,36 @@ describe("epub-storage", () => {
       author: "A",
     });
     expect(returned).toBe(existing);
+  });
+
+  describe("isSharpLoadError", () => {
+    it("matches ERR_DLOPEN_FAILED errors", () => {
+      const err = new Error("dlopen failed: libvips-42.dll not found") as NodeJS.ErrnoException;
+      err.code = "ERR_DLOPEN_FAILED";
+      expect(isSharpLoadError(err)).toBe(true);
+    });
+
+    it("matches sharp's constructed help message", () => {
+      const err = new Error('Could not load the "sharp" module using the win32-x64 runtime');
+      expect(isSharpLoadError(err)).toBe(true);
+    });
+
+    it("matches messages naming sharp-win32-x64.node", () => {
+      const err = new Error("Cannot find module sharp-win32-x64.node");
+      expect(isSharpLoadError(err)).toBe(true);
+    });
+
+    it("matches messages naming a libvips DLL", () => {
+      const err = new Error("The specified module could not be found: libvips-42.dll");
+      expect(isSharpLoadError(err)).toBe(true);
+    });
+
+    it("does not match unrelated errors", () => {
+      expect(isSharpLoadError(new Error("ENOENT: file not found"))).toBe(false);
+      expect(isSharpLoadError(new Error("invalid JSON"))).toBe(false);
+      expect(isSharpLoadError("string error")).toBe(false);
+      expect(isSharpLoadError(undefined)).toBe(false);
+    });
   });
 
   it("writeEpub with opts.outputDir writes to the override dir, not exports/", async () => {
