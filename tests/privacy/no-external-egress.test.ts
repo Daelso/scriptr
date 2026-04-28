@@ -35,6 +35,7 @@
  *
  * ─── ROUTES EXERCISED ───────────────────────────────────────────────────────
  *
+ *   GET  /api/health
  *   GET  /api/settings
  *   PUT  /api/settings  (×2: one with apiKey/style fields, one to clear defaultExportDir)
  *   GET  /api/stories
@@ -258,6 +259,13 @@ describe("no external egress from API routes", () => {
     // Clear any recordings from the seed helpers (there shouldn't be any,
     // but be defensive).
     recorded = [];
+
+    // ── GET /api/health ─────────────────────────────────────────────────────
+    {
+      const { GET } = await import("@/app/api/health/route");
+      const res = GET();
+      expect(res.status).toBe(200);
+    }
 
     // ── GET /api/settings ──────────────────────────────────────────────────
     {
