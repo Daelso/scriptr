@@ -70,7 +70,7 @@ export function BisacCombobox({ value, onChange, disabled }: Props) {
     value && data && !matched ? "not in current BISAC list" : null;
 
   return (
-    <Combobox.Root
+    <Combobox.Root<BisacEntry>
       items={visible}
       open={open}
       onOpenChange={setOpen}
@@ -78,21 +78,15 @@ export function BisacCombobox({ value, onChange, disabled }: Props) {
       onInputValueChange={(v) => setQuery(v)}
       value={matched ?? null}
       onValueChange={(item) => {
-        if (item && typeof item === "object" && "c" in item) {
-          onChange((item as BisacEntry).c);
+        if (item) {
+          onChange(item.c);
           setOpen(false);
           setQuery("");
         }
       }}
-      itemToStringLabel={(item) =>
-        (item as BisacEntry | null) ? formatLabel(item as BisacEntry) : ""
-      }
-      itemToStringValue={(item) =>
-        (item as BisacEntry | null) ? (item as BisacEntry).c : ""
-      }
-      isItemEqualToValue={(a, b) =>
-        Boolean(a && b && (a as BisacEntry).c === (b as BisacEntry).c)
-      }
+      itemToStringLabel={(item) => (item ? formatLabel(item) : "")}
+      itemToStringValue={(item) => (item ? item.c : "")}
+      isItemEqualToValue={(a, b) => Boolean(a && b && a.c === b.c)}
     >
       <Combobox.Trigger
         data-testid="bisac-combobox-trigger"
