@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef, type KeyboardEvent } from "react";
 import { toast } from "sonner";
 
+import { BisacCombobox } from "@/components/publish/BisacCombobox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -261,10 +262,12 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
           </Field>
         </div>
         <Field label="BISAC category">
-          <Input
-            type="text"
-            defaultValue={draft.bisacCategory}
-            onBlur={(e) => handleBlur("bisacCategory", e.target.value)}
+          <BisacCombobox
+            value={draft.bisacCategory}
+            onChange={(code) => {
+              if (draft.bisacCategory === code) return;
+              void patch({ bisacCategory: code });
+            }}
           />
         </Field>
         <Field label="Keywords (comma-separated, up to 7)">
