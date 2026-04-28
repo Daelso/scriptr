@@ -55,8 +55,11 @@ type Props = {
 **Trigger (collapsed):**
 
 - Visually matches the existing `<Input>` (same `Input` className from `components/ui/input.tsx`) so the export page layout doesn't shift.
-- Displays the formatted label of the currently-selected code: `FIC027000 — Fiction / Romance / Erotica`.
-- If `value` is not in the loaded JSON (rare edge case — retired or non-standard code), shows the raw code in muted color and an inline hint: `not in current BISAC list`. The value is preserved (no auto-clear, no data loss).
+- Three display states based on `value`:
+  1. `value` is empty: shows muted placeholder text `Select BISAC category…`.
+  2. `value` matches an entry in the loaded JSON: shows `CODE — Label`, e.g. `FIC027000 — Fiction / Romance / Erotica`.
+  3. `value` is non-empty but not in the loaded JSON (retired or non-standard code): shows the raw code in muted color with an inline hint `not in current BISAC list`. Value is preserved — no auto-clear, no data loss.
+- Before the JSON has loaded for the first time, fall back to displaying the raw `value` so the trigger never flashes empty.
 - Clicking the trigger opens the popover.
 
 **Popover (expanded):**
@@ -67,6 +70,7 @@ type Props = {
 - Each row: a single line in option-A format from brainstorming — `FIC027000 — Fiction / Romance / Erotica`.
 - Empty-state row when no matches: `No BISAC codes match — try a different term.`
 - Loading state on first open before JSON arrives: `Loading BISAC list…`. SWR caches it for the page session, so subsequent opens are instant.
+- Error state if the SWR fetch fails (corrupt file, dev mid-build, etc.): `Failed to load BISAC list — try reopening.` The trigger remains usable in its raw-code fallback display state.
 - Keyboard:
   - Arrow up/down navigates highlight.
   - Enter selects the highlighted row.
@@ -113,16 +117,17 @@ with:
 
 1. Trim and lowercase the query.
 2. Split on whitespace into tokens.
-3. An entry matches if **either**:
-   - The first token is a prefix of the entry's code (lowercased), OR
-   - **Every** token appears as a substring somewhere in the entry's lowercased label.
+3. An entry qualifies if **either** branch matches:
+   - **Code-prefix branch:** the first token is a prefix of the entry's lowercased code. (Other tokens, if any, are ignored on this branch.)
+   - **Label-tokens branch:** every token appears as a substring somewhere in the entry's lowercased label.
+   The two branches are evaluated independently — an entry passes if either branch returns true.
 4. Examples:
-   - `erotica` → matches `FIC027000` (label contains "erotica").
-   - `fic027` → matches `FIC027000` (code prefix).
-   - `romance erot` → matches `FIC027000` (both tokens in label).
-   - `fic000 fiction` → matches `FIC000000` (code prefix on first token; label-token check uses other tokens). Implementation note: when the first token is a code prefix match, that single rule alone qualifies the entry — we do not also require the rest to match the label.
+   - `erotica` → matches `FIC027000` via label-tokens.
+   - `fic027` → matches `FIC027000` via code-prefix.
+   - `romance erot` → matches `FIC027000` via label-tokens (both tokens appear in the label).
+   - `fic000 fiction` → matches `FIC000000` via code-prefix (first token `fic000` prefixes the code; the second token is ignored on this branch).
 
-The exact precedence above keeps the rules predictable. A more sophisticated fuzzy matcher (Levenshtein, scoring) is YAGNI; substring + prefix is what users will actually type.
+A more sophisticated fuzzy matcher (Levenshtein, scoring) is YAGNI; substring + prefix is what users will actually type.
 
 **Performance / capping:**
 
@@ -155,6 +160,8 @@ Format — array of `{ c, l }` objects (short keys to keep size down):
 
 **Committed to git, not gitignored.** Annual updates will produce a clear, reviewable diff.
 
+**Must NOT be statically imported.** Do not use `import bisac from "../public/bisac-codes.json"` from any client component — that would inline ~400 KB into the editor's JS bundle and defeat the lazy-fetch design. Access the file only via `fetch("/bisac-codes.json")` (SWR-wrapped) inside `BisacCombobox`. A grep for `bisac-codes.json` outside the combobox component and tests should return nothing.
+
 ### `scripts/data/bisac-source.csv`
 
 The raw source CSV from a public BISAC mirror, committed alongside the build script. The exact mirror URL is intentionally not locked in this spec — the implementer should select a reputable public source (e.g., a known open-source mirror) and document the provenance in a comment at the top of `scripts/build-bisac-codes.ts`. A reasonable default is one of the publicly maintained MIT-licensed BISAC datasets on GitHub; the implementer must confirm license compatibility before committing.
@@ -186,8 +193,12 @@ Covers:
 - Typing a single label token filters by substring (`erotica` → `FIC027000`).
 - Typing multiple label tokens requires all to match (`romance erot` → `FIC027000`).
 - An impossible query shows the empty-state row.
-- Selecting a row calls `onChange` with the code.
+- A simulated fetch failure shows the error-state row.
+- Selecting a row calls `onChange` with the code; the trigger then displays the new selection's formatted label.
+- After selecting and reopening the popover, the previously-selected row is highlighted/focused on open.
+- Keyboard-only flow: open popover, type to filter, ArrowDown to highlight, Enter selects (and `onChange` fires).
 - The 200-cap footer appears when the un-narrowed list exceeds 200.
+- The empty-string `value` case renders the placeholder (`Select BISAC category…`) on the trigger.
 
 The test mocks the `fetch` of `/bisac-codes.json` with a small fixture (~10 entries) — we don't need the real list to test the component.
 
