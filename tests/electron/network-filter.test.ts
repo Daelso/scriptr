@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { shouldAllow } from "@/electron/network-filter";
 
 describe("network-filter — shouldAllow", () => {
-  const base = { loopbackPort: 54321, updatesEnabled: false };
+  const base = { loopbackPort: 54321 };
 
   it("allows loopback to the configured port", () => {
     expect(shouldAllow(new URL("http://127.0.0.1:54321/api/stories"), base)).toBe(true);
@@ -32,22 +32,20 @@ describe("network-filter — shouldAllow", () => {
     expect(shouldAllow(new URL("http://api.x.ai/v1/chat"), base)).toBe(false);
   });
 
-  it("blocks update hosts when updates disabled", () => {
-    expect(shouldAllow(new URL("https://api.github.com/repos/x/y/releases/latest"), base)).toBe(false);
-    expect(shouldAllow(new URL("https://github.com/Daelso/scriptr/releases/download/v1/latest.yml"), base)).toBe(false);
-    expect(shouldAllow(new URL("https://objects.githubusercontent.com/abc/def"), base)).toBe(false);
+  it("allows update hosts (api.github.com, github.com, objects.githubusercontent.com) over https", () => {
+    expect(shouldAllow(new URL("https://api.github.com/repos/x/y/releases/latest"), base)).toBe(true);
+    expect(shouldAllow(new URL("https://github.com/Daelso/scriptr/releases/download/v1/latest.yml"), base)).toBe(true);
+    expect(shouldAllow(new URL("https://objects.githubusercontent.com/abc/def"), base)).toBe(true);
   });
 
-  it("allows update hosts (api.github.com, github.com, objects.githubusercontent.com) when updates enabled", () => {
-    const on = { ...base, updatesEnabled: true };
-    expect(shouldAllow(new URL("https://api.github.com/repos/x/y/releases/latest"), on)).toBe(true);
-    expect(shouldAllow(new URL("https://github.com/Daelso/scriptr/releases/download/v1/latest.yml"), on)).toBe(true);
-    expect(shouldAllow(new URL("https://objects.githubusercontent.com/abc/def"), on)).toBe(true);
+  it("blocks update hosts over http (https-only)", () => {
+    expect(shouldAllow(new URL("http://api.github.com/repos/x/y/releases/latest"), base)).toBe(false);
+    expect(shouldAllow(new URL("http://objects.githubusercontent.com/abc"), base)).toBe(false);
   });
 
   it("blocks arbitrary hosts", () => {
     expect(shouldAllow(new URL("https://evil.example.com/"), base)).toBe(false);
-    expect(shouldAllow(new URL("https://www.google-analytics.com/collect"), { ...base, updatesEnabled: true })).toBe(false);
+    expect(shouldAllow(new URL("https://www.google-analytics.com/collect"), base)).toBe(false);
   });
 
   it("allows internal Electron/Chromium schemes (devtools, chrome, chrome-extension)", () => {

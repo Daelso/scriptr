@@ -1,9 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 /**
- * Verify that electron/preload.ts exposes ONLY the three documented methods
- * via contextBridge. The renderer's privileged surface is the preload bridge
- * — anything exposed here is reachable from a compromised renderer.
+ * Verify that electron/preload.ts exposes ONLY the documented bridges via
+ * contextBridge. The renderer's privileged surface is the preload bridge —
+ * anything exposed here is reachable from a compromised renderer.
+ *
+ * Two bridges are expected: `scriptr` (folder picker / shell helpers from
+ * PR #14) and `scriptrUpdates` (manual update flow). The `scriptrUpdates`
+ * surface is verified in detail in tests/electron/preload.test.ts.
  */
 describe("electron/preload bridge", () => {
   let exposed: Record<string, unknown> = {};
@@ -23,9 +27,9 @@ describe("electron/preload bridge", () => {
     }));
   });
 
-  it("exposes only `scriptr` to the main world, with three methods", async () => {
+  it("exposes `scriptr` (folder/shell helpers) and `scriptrUpdates` (update flow)", async () => {
     await import("../../electron/preload");
-    expect(Object.keys(exposed)).toEqual(["scriptr"]);
+    expect(Object.keys(exposed).sort()).toEqual(["scriptr", "scriptrUpdates"]);
     const api = exposed.scriptr as Record<string, unknown>;
     expect(typeof api.pickFolder).toBe("function");
     expect(typeof api.revealInFolder).toBe("function");
