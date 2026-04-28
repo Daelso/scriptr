@@ -46,7 +46,9 @@ next-env.d.ts
 # scriptr-specific
 .superpowers/
 .worktrees/
-data/
+# Runtime user data (anchored to repo root so we don't accidentally ignore
+# scripts/data/ or fixtures/data/ committed to the repo).
+/data/
 .playwright-mcp/
 
 # scriptr runtime artifacts
