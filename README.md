@@ -70,17 +70,18 @@ authelia/authentik all work the same way.
 
 ### Building from source
 
-If you'd rather build the image locally than pull from GHCR:
+If you'd rather build the image locally than pull from GHCR, edit
+`docker-compose.yml` in place — comment the `image:` line and uncomment
+the `build: .` line below it:
 
-```yaml
-services:
-  scriptr:
-    # image: ghcr.io/daelso/scriptr:latest
-    build: .
-    # …rest of the service…
+```diff
+-    image: ghcr.io/daelso/scriptr:latest
+-    # build: .            # uncomment (and comment image:) to build from source
++    # image: ghcr.io/daelso/scriptr:latest
++    build: .
 ```
 
-Then `docker compose up --build`.
+Then `docker compose up -d --build`.
 
 ### Updating
 
@@ -90,6 +91,9 @@ docker compose pull && docker compose up -d
 
 `:latest` follows tagged releases. To track main HEAD, change
 `docker-compose.yml` to use `ghcr.io/daelso/scriptr:edge`.
+
+(Note: `ghcr.io/daelso/...` is lowercase even though the GitHub org is
+`Daelso` — GHCR namespaces are forced lowercase.)
 
 ### Backups
 
