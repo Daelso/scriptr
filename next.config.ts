@@ -9,17 +9,11 @@ import { dirname } from "node:path";
 // need the standalone output flat so electron-builder can ship it.
 const projectRoot = dirname(fileURLToPath(import.meta.url));
 
-// When running under Electron with update checks enabled, the main process
-// passes SCRIPTR_UPDATES_CHECK=1. We include GitHub releases in connect-src
-// only then — keeping the web build's egress surface unchanged.
-const updatesEnabled = process.env.SCRIPTR_UPDATES_CHECK === "1";
-
+// CSP `connect-src` only governs renderer-originated requests. Update
+// checks run in the Electron main process via Node's https, never the
+// renderer's fetch, so GitHub doesn't belong here. Main-process egress
+// is gated by electron/network-filter.ts (UPDATE_HOSTS).
 const connectSrc = ["'self'", "https://api.x.ai"];
-if (updatesEnabled) {
-  // electron-updater walks api.github.com → github.com (redirect target) →
-  // objects.githubusercontent.com (artifact CDN). All three need CSP.
-  connectSrc.push("https://api.github.com", "https://github.com", "https://objects.githubusercontent.com");
-}
 
 // `unsafe-eval` is needed for Next.js dev server (HMR / fast refresh) but
 // never for the production bundle. Dropping it in prod removes the most

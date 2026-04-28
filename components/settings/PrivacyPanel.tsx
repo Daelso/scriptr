@@ -56,7 +56,10 @@ export function PrivacyPanel() {
       </h2>
 
       {settings?.isElectron && (() => {
-        // checkOnLaunch defaults to true — only `false` should render as "disabled".
+        // Under Electron, GitHub update hosts are always reachable (the
+        // network filter allows them unconditionally so the manual "Check
+        // for updates" button works regardless of the launch toggle). The
+        // toggle now governs *automatic* timing only.
         const updatesOn = settings.updates?.checkOnLaunch !== false;
         return (
           <div className="rounded-md border border-border/60 bg-muted/30 p-4">
@@ -64,14 +67,10 @@ export function PrivacyPanel() {
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
               <dt className="text-muted-foreground">Allowed destinations</dt>
               <dd>
-                <code>https://api.x.ai</code> (generation)
-                {updatesOn && (
-                  <>
-                    , <code>github.com</code> + <code>objects.githubusercontent.com</code> (update check &amp; downloads)
-                  </>
-                )}
+                <code>https://api.x.ai</code> (generation),{" "}
+                <code>github.com</code> + <code>objects.githubusercontent.com</code> (update checks — manual or automatic)
               </dd>
-              <dt className="text-muted-foreground">Update check on launch</dt>
+              <dt className="text-muted-foreground">Auto-check on launch</dt>
               <dd>{updatesOn ? "enabled" : "disabled"}</dd>
               <dt className="text-muted-foreground">Last check</dt>
               <dd>{settings.updates?.lastCheckedAt ?? "never"}</dd>

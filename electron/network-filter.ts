@@ -4,7 +4,6 @@ import { dirname } from "node:path";
 
 export type FilterOptions = {
   loopbackPort: number;
-  updatesEnabled: boolean;
 };
 
 // Loopback hostnames that all resolve to the local machine. We bind the
@@ -24,7 +23,12 @@ const ALLOWED_INTERNAL_SCHEMES = new Set([
 ]);
 
 // GitHub destinations electron-updater touches when checking + downloading
-// updates. We only allow these when updates are enabled.
+// updates. Allowed unconditionally under Electron — the manual "Check for
+// updates" button must reach GitHub regardless of the launch toggle, and
+// `electron-updater` runs in the main process via Node's https (not the
+// renderer's fetch), so this allowance is main-process only. The launch
+// toggle still gates *whether* we automatically initiate a check; this
+// allowance just means GitHub is reachable when we do.
 const UPDATE_HOSTS = new Set([
   "api.github.com", // release metadata JSON
   "github.com", // release YAML feed + redirect target
@@ -48,12 +52,8 @@ export function shouldAllow(url: URL, opts: FilterOptions): boolean {
   // xAI API — only over https
   if (url.protocol === "https:" && url.hostname === "api.x.ai") return true;
 
-  // GitHub update flow — only when updates enabled, only over https
-  if (
-    opts.updatesEnabled &&
-    url.protocol === "https:" &&
-    UPDATE_HOSTS.has(url.hostname)
-  ) {
+  // GitHub update flow — only over https
+  if (url.protocol === "https:" && UPDATE_HOSTS.has(url.hostname)) {
     return true;
   }
 

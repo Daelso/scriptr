@@ -20,6 +20,8 @@ import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { StyleRulesPreview } from "@/components/settings/StyleRulesPreview";
 import { DEFAULT_STYLE, type StyleRules } from "@/lib/style";
+import { useUpdates } from "@/hooks/useUpdates";
+import type { UpdateState } from "@/lib/update-state";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -91,6 +93,44 @@ function diffAgainstDefault(current: Required<StyleRules>): StyleRules {
   return out;
 }
 
+function renderUpdateStatus(state: UpdateState, justFinishedNoUpdate: boolean): string {
+  switch (state.kind) {
+    case "checking":
+      return "Checking…";
+    case "downloading":
+      return `Downloading version ${state.version}…`;
+    case "downloaded":
+      return `Version ${state.version} downloaded. Restart to install.`;
+    case "error":
+      return "Couldn't reach update server. Check your connection and try again.";
+    case "idle":
+      if (justFinishedNoUpdate) {
+        return `You're on the latest version (${state.currentVersion}).`;
+      }
+      if (!state.lastCheckedAt) return "Never checked.";
+      return `Last checked: ${formatRelativeTime(state.lastCheckedAt)}.`;
+  }
+}
+
+function formatRelativeTime(iso: string): string {
+  // Minimal relative formatter — avoids pulling in date-fns. Falls back
+  // to the ISO string if anything goes sideways.
+  try {
+    const then = new Date(iso).getTime();
+    if (Number.isNaN(then)) return iso;
+    const diffMs = Date.now() - then;
+    const m = Math.round(diffMs / 60000);
+    if (m < 1) return "just now";
+    if (m < 60) return `${m} minute${m === 1 ? "" : "s"} ago`;
+    const h = Math.round(m / 60);
+    if (h < 24) return `${h} hour${h === 1 ? "" : "s"} ago`;
+    const d = Math.round(h / 24);
+    return `${d} day${d === 1 ? "" : "s"} ago`;
+  } catch {
+    return iso;
+  }
+}
+
 // ─── Fetcher ──────────────────────────────────────────────────────────────────
 
 const fetcher = async (url: string): Promise<SettingsData> => {
@@ -120,6 +160,8 @@ export function SettingsForm() {
     // Don't re-sync after the user has started editing (revalidate on focus would overwrite their changes)
     revalidateOnFocus: false,
   });
+
+  const updates = useUpdates();
 
   const search = useSearchParams();
   const router = useRouter();
@@ -562,10 +604,10 @@ export function SettingsForm() {
             </h2>
             <div className="flex items-center justify-between gap-4">
               <div className="flex flex-col gap-0.5">
-                <Label htmlFor="update-check-on-launch">Check for updates on launch</Label>
+                <Label htmlFor="update-check-on-launch">Auto-check on launch</Label>
                 <p className="text-xs text-muted-foreground">
-                  Queries GitHub Releases when the app starts. Disable to make zero
-                  network calls outside of generation.
+                  Queries GitHub Releases when the app starts. Disable to make
+                  zero automatic network calls outside of generation.
                 </p>
               </div>
               <Switch
@@ -574,9 +616,44 @@ export function SettingsForm() {
                 onCheckedChange={(v) => patch({ updateCheckOnLaunch: v })}
               />
             </div>
-            <div className="text-xs text-muted-foreground">
-              Last checked: {data.updates?.lastCheckedAt ?? "never"}
-            </div>
+
+            {updates.checkNow && updates.state && (
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void updates.checkNow!()}
+                    disabled={updates.state.kind === "checking" || updates.state.kind === "downloading"}
+                  >
+                    Check for updates
+                  </Button>
+                  <a
+                    href="https://github.com/Daelso/scriptr/releases"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                  >
+                    View on GitHub ↗
+                  </a>
+                </div>
+
+                <div className="text-xs text-muted-foreground" role="status" aria-live="polite">
+                  {renderUpdateStatus(updates.state, updates.justFinishedNoUpdate)}
+                </div>
+
+                {updates.state.kind === "downloaded" && (
+                  <Button
+                    type="button"
+                    variant="default"
+                    className="self-start"
+                    onClick={() => void updates.installNow!()}
+                  >
+                    Restart and install
+                  </Button>
+                )}
+              </div>
+            )}
           </section>
         </>
       )}

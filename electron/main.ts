@@ -9,8 +9,10 @@ import { join } from "node:path";
 import { isAbsolute, resolve as resolvePath, sep } from "node:path";
 import { resolveDataDir, StartupCancelledError } from "./migrate";
 import { startNextServer, type ServerHandle, type ServerExitInfo } from "./server";
+import { autoUpdater } from "electron-updater";
 import { installNetworkFilter } from "./network-filter";
-import { configureUpdater, isCheckEnabled } from "./update";
+import { isCheckEnabled } from "./update";
+import { createUpdateController, type UpdateController } from "./update-controller";
 import { buildAppMenu } from "./menu";
 import { GITHUB_REPO_PATH } from "./repo";
 import { loadConfig } from "../lib/config";
@@ -21,8 +23,8 @@ const isDev = !app.isPackaged;
 let serverHandle: ServerHandle | null = null;
 let mainWindow: BrowserWindow | null = null;
 let appDataDir: string | null = null;
-let appNeedsOnboarding = false;
 let appUpdatesEnabled = false;
+let updateController: UpdateController | null = null;
 // Set true once we've decided to quit on purpose. The `serverHandle.onExit`
 // listener checks this synchronously to distinguish "user quit → child
 // killed cleanly" from "child died on its own". Ordering matters: we set
@@ -336,20 +338,30 @@ async function createMainWindow(
   const landing = needsOnboarding ? "/settings?onboarding=1" : "/";
   await win.loadURL(serverHandle.url + landing);
 
-  // 6. Updates: gated behind did-finish-load so the check doesn't compete
-  //    with first paint. updatesEnabled reflects the user's explicit
-  //    Settings toggle (set in step 2); no onboarding gate.
-  if (updatesEnabled) {
-    const runCheck = configureUpdater({
+  // 6. Updates: instantiate the controller once per session (it captures the
+  //    data dir and the autoUpdater singleton). Auto-check fires after the
+  //    window finishes loading, only if launch checks are enabled.
+  //    The broadcast callback reads from the module-level `mainWindow` rather
+  //    than closing over the local `win` so that on macOS, when the original
+  //    window is closed and a new one is created via dock-icon activate, the
+  //    controller broadcasts to the live window — not the destroyed one.
+  if (!updateController) {
+    updateController = createUpdateController({
       dataDir,
-      onUpdateReady: (version) => {
-        win.webContents.executeJavaScript(
-          `window.dispatchEvent(new CustomEvent("scriptr:update-ready", { detail: ${JSON.stringify(version)} }))`,
-        ).catch(() => { /* swallow — notification UX is best-effort */ });
+      autoUpdater,
+      getCurrentVersion: () => app.getVersion(),
+      broadcast: (state) => {
+        const target = mainWindow;
+        if (!target || target.isDestroyed()) return;
+        void target.webContents.executeJavaScript(
+          `window.dispatchEvent(new CustomEvent("scriptr:update-state", { detail: ${JSON.stringify(state)} }))`,
+        ).catch(() => { /* swallow — renderer notification is best-effort */ });
       },
     });
+  }
+  if (updatesEnabled) {
     win.webContents.once("did-finish-load", () => {
-      void runCheck();
+      void updateController!.checkOnLaunch();
     });
   }
 }
@@ -366,7 +378,6 @@ async function main(): Promise<void> {
   if (serverHandle && appDataDir) {
     const cfg = await loadConfig(appDataDir);
     const needsOnboarding = !cfg.apiKey;
-    appNeedsOnboarding = needsOnboarding;
     await createMainWindow(appDataDir, needsOnboarding, appUpdatesEnabled);
     return;
   }
@@ -387,23 +398,20 @@ async function main(): Promise<void> {
   process.env.SCRIPTR_DATA_DIR = dataDir;
   appDataDir = dataDir;
 
-  // 2. Read config to decide CSP shape + onboarding posture. Both must be
-  //    settled BEFORE Next boots — Next reads SCRIPTR_UPDATES_CHECK at startup
-  //    to bake the connect-src directive.
-  //    Update checks run independently of onboarding state. Many users will
-  //    write/edit and import (e.g. NovelAI) without ever configuring an xAI
-  //    key, and they still deserve app updates from GitHub. The only gate is
-  //    the user's explicit Settings toggle (cfg.updates.checkOnLaunch).
+  // 2. Read config to decide onboarding posture. The renderer's CSP no
+  //    longer needs to be shaped per-launch — GitHub egress for updates
+  //    happens in the main process via electron-updater (Node's https),
+  //    not the renderer's fetch, so connect-src is irrelevant for the
+  //    update flow.
+  //    Update checks run independently of onboarding state (PR #13). The
+  //    Settings "Auto-check on launch" toggle decides whether the controller
+  //    fires a check at launch; the new manual button reaches GitHub via
+  //    the same controller regardless. The network filter allows GitHub
+  //    update hosts unconditionally under Electron — see network-filter.ts.
   const cfg = await loadConfig(dataDir);
   const needsOnboarding = !cfg.apiKey;
   const updatesEnabled = await isCheckEnabled(dataDir);
-  appNeedsOnboarding = needsOnboarding;
   appUpdatesEnabled = updatesEnabled;
-  if (updatesEnabled) {
-    process.env.SCRIPTR_UPDATES_CHECK = "1";
-  } else {
-    delete process.env.SCRIPTR_UPDATES_CHECK;
-  }
 
   // 3. Boot the Next.js server (Next standalone bundle) on an ephemeral port.
   //    In dev the standalone bundle lives at <cwd>/.next/standalone after
@@ -421,7 +429,6 @@ async function main(): Promise<void> {
   // 4. Install the main-process network filter
   installNetworkFilter(session.defaultSession, {
     loopbackPort: serverHandle.port,
-    updatesEnabled,
     logPath: blockedRequestsLog(dataDir),
   });
 
@@ -435,6 +442,15 @@ async function main(): Promise<void> {
     callback(false);
   });
 
-  // 5. Create the window — application menu set once for all platforms.
+  // 5. Register IPC handlers for the manual update flow once, before any
+  //    window opens. The controller is instantiated lazily inside
+  //    createMainWindow() — the null-coalesce below is the safety net for
+  //    the (theoretical) gap between handler registration and the first
+  //    createMainWindow call.
+  ipcMain.handle("updates:check", () => updateController?.checkNow() ?? null);
+  ipcMain.handle("updates:install", () => updateController?.installNow() ?? null);
+  ipcMain.handle("updates:get-state", () => updateController?.getState() ?? null);
+
+  // 6. Create the window — application menu set once for all platforms.
   await createMainWindow(dataDir, needsOnboarding, updatesEnabled);
 }
