@@ -130,7 +130,6 @@ const ENV_PASSTHROUGH = new Set([
   // scriptr-specific:
   "XAI_API_KEY", // honored by lib/config.ts as an apiKey override
   "SCRIPTR_DATA_DIR",
-  "SCRIPTR_UPDATES_CHECK",
   "SCRIPTR_DEFAULT_MODEL",
   // NOTE: NODE_OPTIONS is intentionally NOT passed through. The
   // `enableNodeOptionsEnvironmentVariable: false` fuse blocks it on the

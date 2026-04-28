@@ -15,7 +15,6 @@ describe("server — buildChildEnv", () => {
     APPDATA: "C:\\Users\\X\\AppData\\Roaming",
     XAI_API_KEY: "xai-secret",
     SCRIPTR_DATA_DIR: "/data",
-    SCRIPTR_UPDATES_CHECK: "1",
     NODE_OPTIONS: "--max-old-space-size=4096",
     LANG: "en_US.UTF-8",
     // sensitive parent vars that must NOT propagate
@@ -36,7 +35,6 @@ describe("server — buildChildEnv", () => {
     expect(env.APPDATA).toBe("C:\\Users\\X\\AppData\\Roaming");
     expect(env.XAI_API_KEY).toBe("xai-secret");
     expect(env.SCRIPTR_DATA_DIR).toBe("/data");
-    expect(env.SCRIPTR_UPDATES_CHECK).toBe("1");
     expect(env.LANG).toBe("en_US.UTF-8");
   });
 
