@@ -337,8 +337,8 @@ async function createMainWindow(
   await win.loadURL(serverHandle.url + landing);
 
   // 6. Updates: gated behind did-finish-load so the check doesn't compete
-  //    with first paint. updatesEnabled is already false during onboarding
-  //    (set in step 2), so no extra check needed here.
+  //    with first paint. updatesEnabled reflects the user's explicit
+  //    Settings toggle (set in step 2); no onboarding gate.
   if (updatesEnabled) {
     const runCheck = configureUpdater({
       dataDir,
@@ -390,12 +390,13 @@ async function main(): Promise<void> {
   // 2. Read config to decide CSP shape + onboarding posture. Both must be
   //    settled BEFORE Next boots — Next reads SCRIPTR_UPDATES_CHECK at startup
   //    to bake the connect-src directive.
-  //    During first-run onboarding (no API key) we force updates off so the
-  //    very first launch makes zero network calls until the user has
-  //    configured the app — even at the CSP layer.
+  //    Update checks run independently of onboarding state. Many users will
+  //    write/edit and import (e.g. NovelAI) without ever configuring an xAI
+  //    key, and they still deserve app updates from GitHub. The only gate is
+  //    the user's explicit Settings toggle (cfg.updates.checkOnLaunch).
   const cfg = await loadConfig(dataDir);
   const needsOnboarding = !cfg.apiKey;
-  const updatesEnabled = !needsOnboarding && (await isCheckEnabled(dataDir));
+  const updatesEnabled = await isCheckEnabled(dataDir);
   appNeedsOnboarding = needsOnboarding;
   appUpdatesEnabled = updatesEnabled;
   if (updatesEnabled) {
