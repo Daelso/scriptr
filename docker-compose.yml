@@ -1,0 +1,29 @@
+# Scriptr — single-user, local-first browser hosting.
+#
+# THERE IS NO AUTHENTICATION. The default ports binding (127.0.0.1:3000)
+# limits exposure to the host machine. Change to 0.0.0.0:3000:3000 only
+# if you trust everything on your LAN, and put a reverse proxy with auth
+# in front before exposing to the internet. See README → Docker section.
+
+services:
+  scriptr:
+    image: ghcr.io/daelso/scriptr:latest
+    # build: .            # uncomment (and comment image:) to build from source
+    container_name: scriptr
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/data
+    healthcheck:
+      test:
+        - "CMD"
+        - "node"
+        - "-e"
+        - "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
