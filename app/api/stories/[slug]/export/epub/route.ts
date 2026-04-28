@@ -5,9 +5,14 @@ import { listChapters } from "@/lib/storage/chapters";
 import { effectiveDataDir, loadConfig } from "@/lib/config";
 import { buildEpubBytes, validateEpub } from "@/lib/publish/epub";
 import { resolveAuthorNote } from "@/lib/publish/author-note";
-import { ensureCoverOrFallback, writeEpub } from "@/lib/publish/epub-storage";
+import {
+  ensureCoverOrFallback,
+  isSharpLoadError,
+  writeEpub,
+} from "@/lib/publish/epub-storage";
 import type { EpubVersion } from "@/lib/storage/paths";
 import { probeWritableDir, probeFailDetail } from "@/lib/storage/dir-probe";
+import { logger } from "@/lib/logger";
 
 type Ctx = { params: Promise<{ slug: string }> };
 
@@ -52,11 +57,6 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     return fail("story has no chapters to export", 400);
   }
 
-  const coverPath = await ensureCoverOrFallback(dataDir, slug, {
-    title: story.title,
-    author: story.authorPenName,
-  });
-
   const cfg = await loadConfig(dataDir);
 
   // Effective output dir: explicit body → config default → data-dir fallback (undefined here).
@@ -68,28 +68,60 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     }
   }
 
+  // Cover resolution: returns null if no cover on disk AND sharp can't render
+  // a fallback (e.g. the Windows standalone build is missing libvips DLLs).
+  // Null cleanly degrades to a coverless EPUB instead of a bare 500.
+  const coverPath = await ensureCoverOrFallback(dataDir, slug, {
+    title: story.title,
+    author: story.authorPenName,
+  });
+  if (!coverPath) {
+    logger.warn(
+      "epub-export: building without a cover (no on-disk cover and sharp/libvips unavailable)",
+      { slug, version },
+    );
+  }
+
   const profile = cfg.penNameProfiles?.[story.authorPenName];
   const authorNote = resolveAuthorNote(story, profile) ?? undefined;
 
-  // Wrap buildEpubBytes to intercept QR-encoder overflow errors. The qrcode
-  // library throws "The amount of data is too big to be stored in a QR Code"
-  // when a mailing-list URL exceeds QR capacity (~2953 chars alphanumeric).
-  // Surface those as a clean 400 instead of letting them 500. Other errors
-  // rethrow so unrelated bugs surface normally.
-  let bytes: Uint8Array;
+  // Single try/catch around the build/validate/write block so any exception
+  // becomes a JSON 500 with a useful message — not a bare HTML 500. The
+  // export UI's `res.text()` fallback only renders the first 200 chars of
+  // the body, so without this the user sees a slice of Next.js's stock
+  // error page and we get no signal back from the field.
   try {
-    bytes = await buildEpubBytes({ story, chapters, coverPath, version, authorNote });
+    const bytes = await buildEpubBytes({
+      story,
+      chapters,
+      coverPath: coverPath ?? undefined,
+      version,
+      authorNote,
+    });
+    const { warnings: validationWarnings } = await validateEpub(bytes);
+    const path = await writeEpub(dataDir, slug, version, bytes, {
+      outputDir: effectiveOutputDir,
+    });
+    return ok({ path, bytes: bytes.byteLength, version, warnings: validationWarnings });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    // QR overflow is a user-input problem (mailing-list URL too long) — kept
+    // as a 400 with its existing copy.
     if (/too big to be stored in a QR/i.test(msg)) {
       return fail("mailing list URL is too long to encode as a QR code", 400);
     }
-    throw err;
+    // Sharp / libvips dlopen failures: surface install guidance instead of a
+    // generic message. Historically this was the bare-500 mode the Windows
+    // DLL fix targeted; keep the diagnostic so a future packaging
+    // regression is immediately legible to the user.
+    if (isSharpLoadError(err)) {
+      logger.error("epub-export: sharp module failed to load", err);
+      return fail(
+        "Image processing module (sharp) failed to load. This is a Windows packaging bug — please reinstall scriptr or report at https://github.com/Daelso/scriptr/issues with this message.",
+        500,
+      );
+    }
+    logger.error("epub-export: unexpected build failure", err);
+    return fail(`EPUB build failed: ${msg}`, 500);
   }
-  const { warnings: validationWarnings } = await validateEpub(bytes);
-  const path = await writeEpub(dataDir, slug, version, bytes, {
-    outputDir: effectiveOutputDir,
-  });
-
-  return ok({ path, bytes: bytes.byteLength, version, warnings: validationWarnings });
 }
