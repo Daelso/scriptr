@@ -89,8 +89,10 @@ Then `docker compose up -d --build`.
 docker compose pull && docker compose up -d
 ```
 
-`:latest` follows tagged releases. To track main HEAD, change
-`docker-compose.yml` to use `ghcr.io/daelso/scriptr:edge`.
+`:edge` follows main HEAD (the compose default while we're pre-1.0).
+For a stable pin, change `docker-compose.yml` to use
+`ghcr.io/daelso/scriptr:latest` (most recent tagged release) or a
+specific version like `ghcr.io/daelso/scriptr:0.7.0`.
 
 (Note: `ghcr.io/daelso/...` is lowercase even though the GitHub org is
 `Daelso` — GHCR namespaces are forced lowercase.)
@@ -107,7 +109,13 @@ Stop the container (or take a filesystem snapshot) and `tar` the
 - **Port 3000 already in use** — change the host side of the port
   mapping (e.g., `"127.0.0.1:3001:3000"`).
 - **Container restarts in a loop** — check `docker logs scriptr`. The
-  most common cause is a missing or invalid `XAI_API_KEY` in `.env`.
+  most common cause is bind-mount permission errors writing to `/data`
+  (see the `chown` / `user:` note above). Less commonly: port conflict
+  on the host side of the mapping, or an OOM kill.
+- **Generation returns 500** — check `XAI_API_KEY` in `.env` is set
+  and valid. The container itself stays healthy in this case (the
+  healthcheck doesn't depend on the key); only generation routes fail.
+  Edit `.env` and `docker compose restart` to pick up the change.
 - **Absolute URLs (EPUB exports, author-note QR codes) point at the
   wrong host behind a reverse proxy** — make sure your proxy is
   forwarding `X-Forwarded-Host` and `X-Forwarded-Proto` correctly. If

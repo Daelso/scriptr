@@ -7,7 +7,7 @@
 
 services:
   scriptr:
-    image: ghcr.io/daelso/scriptr:latest
+    image: ghcr.io/daelso/scriptr:edge  # pinned to :edge (main HEAD) until first tagged release; switch to :latest or :vX.Y.Z afterward
     # build: .            # uncomment (and comment image:) to build from source
     container_name: scriptr
     restart: unless-stopped
