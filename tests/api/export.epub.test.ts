@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,8 @@ import { createStory, updateStory } from "@/lib/storage/stories";
 import { createImportedChapter } from "@/lib/storage/chapters";
 import { epubPath } from "@/lib/storage/paths";
 import { saveConfig } from "@/lib/config";
+import * as epubModule from "@/lib/publish/epub";
+import * as epubStorage from "@/lib/publish/epub-storage";
 
 async function unzipXhtmls(bytes: Buffer | Uint8Array): Promise<Record<string, string>> {
   const zip = await JSZip.loadAsync(bytes);
@@ -312,5 +314,74 @@ describe("/api/stories/[slug]/export/epub POST", () => {
     const res = await callPost(story.slug, { version: 3 });
     const body = await res.json();
     expect(body.data.path).toBe(epubPath(tmpDir, story.slug, 3));
+  });
+
+  // ── Diagnostic surfacing ──────────────────────────────────────────────────
+  // Pre-fix: any unhandled exception out of buildEpubBytes / validateEpub /
+  // writeEpub became a bare HTML 500, which the export UI surfaces as
+  // "Build failed (500): <slice of HTML>". These tests pin the JSON shape so
+  // the user (and we) get an actionable message in the field.
+
+  describe("error surfacing", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("returns JSON 500 with the underlying message when buildEpubBytes throws", async () => {
+      const story = await createStory(tmpDir, { title: "Book" });
+      await createImportedChapter(tmpDir, story.slug, {
+        title: "One",
+        sectionContents: ["Hi."],
+      });
+      vi.spyOn(epubModule, "buildEpubBytes").mockRejectedValueOnce(
+        new Error("synthetic failure: jszip blew up"),
+      );
+      const res = await callPost(story.slug, { version: 3 });
+      expect(res.status).toBe(500);
+      expect(res.headers.get("content-type")).toMatch(/application\/json/);
+      const body = await res.json();
+      expect(body.ok).toBe(false);
+      expect(body.error).toMatch(/EPUB build failed/i);
+      expect(body.error).toMatch(/synthetic failure/);
+    });
+
+    it("returns sharp-specific guidance when buildEpubBytes throws ERR_DLOPEN_FAILED", async () => {
+      const story = await createStory(tmpDir, { title: "Book" });
+      await createImportedChapter(tmpDir, story.slug, {
+        title: "One",
+        sectionContents: ["Hi."],
+      });
+      const dlopenErr = new Error(
+        "The specified module could not be found. \\\\?\\C:\\path\\sharp-win32-x64.node",
+      ) as NodeJS.ErrnoException;
+      dlopenErr.code = "ERR_DLOPEN_FAILED";
+      vi.spyOn(epubModule, "buildEpubBytes").mockRejectedValueOnce(dlopenErr);
+      const res = await callPost(story.slug, { version: 3 });
+      expect(res.status).toBe(500);
+      expect(res.headers.get("content-type")).toMatch(/application\/json/);
+      const body = await res.json();
+      expect(body.ok).toBe(false);
+      expect(body.error).toMatch(/Image processing module .*sharp.* failed to load/i);
+      expect(body.error).toMatch(/Windows packaging bug/i);
+    });
+
+    it("a null cover (sharp unavailable) still produces a valid EPUB", async () => {
+      const story = await createStory(tmpDir, { title: "Book" });
+      await createImportedChapter(tmpDir, story.slug, {
+        title: "One",
+        sectionContents: ["Hi."],
+      });
+      vi.spyOn(epubStorage, "ensureCoverOrFallback").mockResolvedValueOnce(null);
+      const res = await callPost(story.slug, { version: 3 });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.ok).toBe(true);
+      const bytes = await readFile(body.data.path);
+      const zip = await JSZip.loadAsync(bytes);
+      // No cover.* file in the archive (epub-gen-memory writes cover.<ext>
+      // only when options.cover is provided).
+      const coverEntries = Object.keys(zip.files).filter((p) => /(^|\/)cover\.[a-z0-9]+$/i.test(p));
+      expect(coverEntries).toEqual([]);
+    });
   });
 });
