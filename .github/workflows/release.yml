@@ -68,6 +68,36 @@ jobs:
           fi
           IFS=, ; echo "matrix=[${oses[*]}]" >> "$GITHUB_OUTPUT"
 
+      # Pre-create the draft release so the parallel build matrix doesn't
+      # race to create it. electron-builder's "find or create draft" lookup
+      # is not atomic — without this step, two runners that both see "no
+      # draft" each create one, and artifacts split across duplicate drafts
+      # (~50% reproduction on three-OS builds). With a draft already in
+      # place, every matrix job's `--publish always` finds it and uploads
+      # to the same release. Idempotent on workflow re-run.
+      - name: Pre-create draft release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          state=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft 2>/dev/null || echo "missing")
+          case "$state" in
+            true)
+              echo "Draft $GITHUB_REF_NAME already exists; matrix jobs will upload to it."
+              ;;
+            false)
+              echo "::error ::Release $GITHUB_REF_NAME is already published; refusing to upload to it. Delete or re-tag."
+              exit 1
+              ;;
+            missing)
+              gh release create "$GITHUB_REF_NAME" \
+                --repo "$GITHUB_REPOSITORY" \
+                --draft \
+                --title "$GITHUB_REF_NAME" \
+                --notes ""
+              ;;
+          esac
+
   build:
     needs: setup
     strategy:
