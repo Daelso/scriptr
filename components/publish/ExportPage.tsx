@@ -171,10 +171,16 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
         body: JSON.stringify({ version: selectedVersion }),
       });
       if (!res.ok) {
-        // Tolerate HTML 500 bodies. The server returns JSON for 4xx errors;
-        // a 500 from an unhandled exception comes back as Next's error HTML.
+        // Prefer JSON `{ ok: false, error }` from the route's outer
+        // try/catch — falls back to truncated text for the (rare)
+        // unhandled bare-500 case where Next's stock HTML is the body.
         const text = await res.text();
-        toast.error(`Build failed (${res.status}): ${text.slice(0, 200)}`);
+        let detail = text.slice(0, 280);
+        try {
+          const parsed = JSON.parse(text);
+          if (parsed && typeof parsed.error === "string") detail = parsed.error;
+        } catch { /* not JSON — keep the truncated text */ }
+        toast.error(`Build failed (${res.status}): ${detail}`);
         return;
       }
       const body = await res.json();

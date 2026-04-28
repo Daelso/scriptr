@@ -341,8 +341,54 @@ describe("/api/stories/[slug]/export/epub POST", () => {
       expect(res.headers.get("content-type")).toMatch(/application\/json/);
       const body = await res.json();
       expect(body.ok).toBe(false);
-      expect(body.error).toMatch(/EPUB build failed/i);
+      expect(body.error).toMatch(/EPUB export failed/i);
       expect(body.error).toMatch(/synthetic failure/);
+      // Outer try/catch references the on-disk log path so the user can
+      // share the full stack in a bug report.
+      expect(body.error).toMatch(/api-errors\.log/);
+    });
+
+    it("returns JSON 500 with the underlying message when getStory throws (pre-build path)", async () => {
+      // getStory failing used to escape the inner try/catch and become a
+      // bare HTML 500 ("Internal Server Error") in v0.6.1. The outer
+      // try/catch now catches it.
+      const story = await createStory(tmpDir, { title: "Book" });
+      await createImportedChapter(tmpDir, story.slug, {
+        title: "One",
+        sectionContents: ["Hi."],
+      });
+      const storiesMod = await import("@/lib/storage/stories");
+      vi.spyOn(storiesMod, "getStory").mockRejectedValueOnce(
+        new Error("synthetic getStory failure: EBUSY on story.json"),
+      );
+      const res = await callPost(story.slug, { version: 3 });
+      expect(res.status).toBe(500);
+      expect(res.headers.get("content-type")).toMatch(/application\/json/);
+      const body = await res.json();
+      expect(body.ok).toBe(false);
+      expect(body.error).toMatch(/EPUB export failed/i);
+      expect(body.error).toMatch(/synthetic getStory failure/);
+    });
+
+    it("writes a paper-trail entry to api-errors.log on failure", async () => {
+      const story = await createStory(tmpDir, { title: "Book" });
+      await createImportedChapter(tmpDir, story.slug, {
+        title: "One",
+        sectionContents: ["Hi."],
+      });
+      vi.spyOn(epubModule, "buildEpubBytes").mockRejectedValueOnce(
+        new Error("synthetic failure: file logger check"),
+      );
+      const res = await callPost(story.slug, { version: 3 });
+      expect(res.status).toBe(500);
+      const logPath = join(tmpDir, "logs", "api-errors.log");
+      const log = await readFile(logPath, "utf-8");
+      const lines = log.trim().split("\n");
+      const entry = JSON.parse(lines[lines.length - 1]);
+      expect(entry.route).toBe("POST /api/stories/[slug]/export/epub");
+      expect(entry.error.message).toMatch(/file logger check/);
+      expect(typeof entry.error.stack).toBe("string");
+      expect(entry.context).toMatchObject({ slug: story.slug, version: 3 });
     });
 
     it("returns sharp-specific guidance when buildEpubBytes throws ERR_DLOPEN_FAILED", async () => {
