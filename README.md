@@ -1,8 +1,8 @@
 # scriptr
 
-scriptr is a local-first writer for AI-assisted short stories. It runs on your machine and sends prose only to xAI's Grok when you tell it to.
+scriptr is a local-first writer's workshop for producing publishable books — typically AI-assisted serial fiction — with a built-in EPUB exporter targeting both KDP/modern readers (EPUB3) and Smashwords (EPUB2). The AI writing flow is a means to an end; the end is a clean, store-ready EPUB sitting in your `data/` directory, ready to upload.
 
-Everything else — your story files, your bible, your chapter drafts, your API key — stays on disk, in `./data/`, and never leaves unless you choose to share it. This is a solo-user app. You own your data.
+Privacy is a design pillar, not an afterthought. The app runs entirely on your machine: prose is sent to xAI's Grok only when you trigger generation, and only the prose. Your story files, bible, chapter drafts, cover images, EPUB exports, and API key stay on disk in `./data/` and never leave unless you choose to share them. No cloud, no accounts, no telemetry, no analytics. Single-user app. You own your data.
 
 ---
 
@@ -25,7 +25,7 @@ Everything else — your story files, your bible, your chapter drafts, your API 
 
 1. **No telemetry libraries.** Zero Sentry, PostHog, Vercel Analytics, Google Analytics, etc. Custom ESLint rule blocks these imports; build fails if one sneaks in.
 2. **No external runtime CDNs.** Fonts, CSS, JS all bundled locally. `next.config.js` sets a Content-Security-Policy that restricts `script-src`, `font-src`, `connect-src` to `self` plus `https://api.x.ai`.
-3. **No background network calls.** No update checks, version pings, status pollers. Network only on explicit user action.
+3. **One scheduled network call: the update check.** With "Check for updates on launch" enabled in Settings (default-on; toggleable any time), the desktop app contacts GitHub's release feed exactly once per launch — looking for a new version of scriptr itself. Nothing on a timer, nothing per-keystroke, nothing in the renderer. There are no analytics, version pings, or status pollers. The update check runs independently of whether you've configured an xAI key, so write/edit-only users and NovelAI importers still get app updates. Every other request is on explicit user action.
 4. **Default bind localhost.** `npm run dev` binds `127.0.0.1:3000`. Separate `npm run dev:lan` opts into `0.0.0.0` for conscious sharing.
 5. **`data/` gitignored.** Also `.env.local`, `cover*.jpg`, `exports/`. A `.gitignore` template ships with the repo.
 6. **API key never logged.** Custom logger redacts anything matching `xai-*` or a configured pattern list. Covered by test.
@@ -50,7 +50,7 @@ The privacy receipt is also available on disk at `data/stories/<slug>/.last-payl
 Requires Node.js 20+.
 
 ```
-git clone <repo>
+git clone https://github.com/Daelso/scriptr.git
 cd scriptr
 npm install
 ```
@@ -102,7 +102,46 @@ From the app: **File → Reveal Data Folder** opens it. Back up this folder to p
 
 Update checks are **enabled by default but easy to turn off** in Settings. When enabled, the app fetches release metadata from GitHub on launch and downloads new versions in the background; they install on next quit. The Privacy panel under Settings always shows what destinations the desktop app is contacting.
 
-**Integrity model — read this before relying on auto-updates.** Releases are unsigned, so we can't verify them via OS code-signing. `electron-updater` does verify the SHA512 of each downloaded artifact against the manifest published in the GitHub release, but the **chain of trust ends at the GitHub repo**: if our GitHub account, a maintainer's PAT, or the CI release token were compromised, an attacker could publish a backdoored release whose manifest matches its (malicious) artifact, and your install would auto-apply it on next quit. If you'd rather not accept that risk, **turn off "Check for updates on launch" in Settings** and update manually from the Releases page on a cadence you control.
+**Integrity model — read this before relying on auto-updates.** Releases are unsigned, so we can't verify them via OS code-signing. `electron-updater` does verify the SHA512 of each downloaded artifact against the manifest published in the GitHub release, but the **chain of trust ends at the GitHub repo**: if our GitHub account, a maintainer's PAT, or the CI release token were compromised, an attacker could publish a backdoored release whose manifest matches its (malicious) artifact, and your install would auto-apply it on next quit. If you'd rather not accept that risk, **turn off "Check for updates on launch" in Settings** and update manually from the Releases page on a cadence you control. Or, better, build your own installer from source — see below.
+
+---
+
+## Building installers from source
+
+If you'd rather not trust prebuilt binaries, you can produce your own — the same artifacts the GitHub release workflow ships. The build is fully local; npm pulls dependencies, but no remote build steps run on your behalf.
+
+Prerequisites:
+
+- Node.js 20+ and npm
+- ~3 GB free disk for Electron, dependencies, and build output
+- Native packaging tools for your platform (none extra on Linux/Windows; macOS needs Xcode Command Line Tools)
+- Cross-compiling is not supported — build each target on its native OS
+
+```
+git clone https://github.com/Daelso/scriptr.git
+cd scriptr
+npm install
+npm run package:electron
+```
+
+Output lands in `release/`:
+
+- **Windows** — `scriptr-Setup-<version>.exe` (NSIS installer)
+- **macOS** — `scriptr-<version>.dmg` (x64) and `scriptr-<version>-arm64.dmg` (Apple Silicon)
+- **Linux** — `scriptr-<version>.AppImage` and `scriptr_<version>_amd64.deb`
+
+The `electron-builder.yml` config sets `forceCodeSigning: false` on purpose — binaries are unsigned. Compile-time security fuses are baked into the packaged Electron binary at package time via [`electron/afterPack.cjs`](electron/afterPack.cjs); `tests/electron/fuses.test.ts` asserts the fuse layout. Run `npm test` before trusting your build.
+
+For day-to-day development without the desktop wrapper, `npm run dev` (covered above) runs the Next server alone. To run Electron against a freshly built dev tree without packaging an installer, use `npm run dev:electron`.
+
+### Cutting a release
+
+The release workflow at [`.github/workflows/release.yml`](.github/workflows/release.yml) runs on tag push (`v*.*.*`) and publishes to GitHub Releases. Steps:
+
+1. Bump `version` in [`package.json`](package.json).
+2. Commit, tag, and push: `git tag v0.x.y && git push --tags`.
+3. CI builds Windows / macOS / Linux artifacts on their native runners and attaches them to the release, along with the `latest*.yml` manifests `electron-updater` reads.
+4. The release lands as a **draft** (per `electron-builder.yml`'s `releaseType: draft`). Review the artifacts, then publish from the GitHub UI when ready — published-not-draft is what triggers auto-update notifications for installed clients.
 
 ---
 
@@ -142,6 +181,26 @@ Generation streams via Server-Sent Events. While a stream is running, two contro
 
 ---
 
+## Publishing — EPUB output
+
+The end goal of a draft in scriptr isn't a chapter list; it's a polished EPUB you can upload to a store. The publishing pipeline lives in [`lib/publish/`](lib/publish/) and produces both EPUB profiles in one click — entirely on your machine, with no network calls:
+
+- **EPUB3** — for Kindle Direct Publishing, Apple Books, Google Play Books, Kobo, and any modern reader. Supports rich CSS, custom typography, and inline SVG.
+- **EPUB2** — for Smashwords, which still rejects EPUB3 uploads. Same content, downgraded markup.
+
+Each export bundles:
+
+- A title page and copyright page generated from the story metadata.
+- A cover image, if you've uploaded one — stored locally at `data/stories/<slug>/cover.jpg`.
+- Per-chapter content with section breaks preserved.
+- Optionally, **"A note from the author"** — a per-pen-name afterword with sanitized HTML and a QR code linking to a URL of your choice (newsletter, next book in a series, mailing list). Pen-name profiles live in `data/config.json` under `penNameProfiles`.
+
+Both EPUB profiles are produced together and written to `data/stories/<slug>/exports/`, so you can stage one for KDP and the other for Smashwords without re-running the build. Trigger an export from the editor's Publish dialog or via the local API: `POST /api/stories/[slug]/export/epub`.
+
+Cover images, paste-imports, and exported files never leave your machine — see Privacy above.
+
+---
+
 ## File layout under `data/`
 
 ```
@@ -157,7 +216,7 @@ data/
         │   ├── 001-opening.json
         │   ├── 002-the-twist.json
         │   └── …
-        └── exports/            # populated by publishing kit (future)
+        └── exports/            # EPUB2 + EPUB3 output from the publishing kit
 ```
 
 `data/` is gitignored entirely. `.last-payload.json` stores only `{ model, mode, system, user }` — no headers, no key.
@@ -170,7 +229,8 @@ Override the data directory with the `SCRIPTR_DATA_DIR` environment variable.
 
 - **Grok may refuse some content.** xAI enforces a content policy; generation requests that trip it will fail. scriptr surfaces the error message; it does not retry silently or alter your prompt.
 - **xAI retention policies apply to transmitted prose.** Anything sent to Grok is subject to xAI's terms (retention, training use, etc.). Local-only generation alternatives are not supported in v1.
-- **No export yet.** The MVP is write-only; the publishing kit (EPUB, DOCX, PDF) is planned for a later release.
+- **EPUB validation is currently non-functional.** [`@likecoin/epubcheck-ts`](https://www.npmjs.com/package/@likecoin/epubcheck-ts) is wired into the export pipeline but crashes under Next.js 16, so we ship without invoking it. If validation matters to you, run the standalone `epubcheck` JAR or your store's pre-upload validator against the file in `data/stories/<slug>/exports/` before uploading.
+- **DOCX and PDF exports are not implemented.** Only EPUB2 and EPUB3 are produced. PDF in particular is unlikely to land — every store that matters ingests EPUB.
 - **No authentication.** The app assumes single-user / trusted-machine. Do not expose it to the public internet.
 - **Theme selection not yet applied at runtime.** Dark/light/system preference appears in settings and persists, but the theme provider has not been wired up. Cosmetic only.
 
@@ -178,4 +238,4 @@ Override the data directory with the `SCRIPTR_DATA_DIR` environment variable.
 
 ## License
 
-License: TBD.
+[MIT](LICENSE) — Copyright (c) 2026 Daelso.
