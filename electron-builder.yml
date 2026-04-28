@@ -59,8 +59,9 @@ win:
       arch: [x64]
   # No publisherName: installers are unsigned (forceCodeSigning: false), and
   # setting one makes electron-updater run Get-AuthenticodeSignature against
-  # the downloaded installer post-download — which fails with NotSigned and
-  # surfaces as a generic update error. Re-add only if/when we sign.
+  # the downloaded installer post-download — which returns Status=NotSigned
+  # and aborts auto-update with ERR_UPDATER_INVALID_SIGNATURE. Re-add only
+  # if/when we sign.
 
 nsis:
   oneClick: false

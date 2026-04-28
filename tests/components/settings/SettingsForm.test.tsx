@@ -193,10 +193,28 @@ describe("SettingsForm — Updates section", () => {
   });
 
   it("surfaces the actual error message on error state", async () => {
-    setBridge({ kind: "error", message: "ENOTFOUND" });
+    setBridge({
+      kind: "error",
+      message:
+        "New version 0.6.2 is not signed by the application owner: publisherNames: scriptr",
+    });
     mounted = mount();
     await waitForLoaded(mounted.container);
-    expect(mounted.container.textContent).toMatch(/update check failed: ENOTFOUND/i);
+    expect(mounted.container.textContent).toMatch(
+      /update check failed: New version 0\.6\.2 is not signed/i,
+    );
+  });
+
+  it("redacts user-home paths in the surfaced error", async () => {
+    setBridge({
+      kind: "error",
+      message:
+        "Cannot pipe \"C:\\Users\\alice\\AppData\\Local\\scriptr-updater\\installer.exe\" — disk full",
+    });
+    mounted = mount();
+    await waitForLoaded(mounted.container);
+    expect(mounted.container.textContent).not.toMatch(/alice/);
+    expect(mounted.container.textContent).toMatch(/~\\AppData\\Local\\scriptr-updater/);
   });
 
   it('shows "You\'re on the latest version (X)" after a checking → idle transition', async () => {
