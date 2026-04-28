@@ -192,11 +192,11 @@ describe("SettingsForm — Updates section", () => {
     expect(installNow).toHaveBeenCalledTimes(1);
   });
 
-  it('shows "Couldn\'t reach update server" on error state', async () => {
+  it("surfaces the actual error message on error state", async () => {
     setBridge({ kind: "error", message: "ENOTFOUND" });
     mounted = mount();
     await waitForLoaded(mounted.container);
-    expect(mounted.container.textContent).toMatch(/couldn't reach update server/i);
+    expect(mounted.container.textContent).toMatch(/update check failed: ENOTFOUND/i);
   });
 
   it('shows "You\'re on the latest version (X)" after a checking → idle transition', async () => {

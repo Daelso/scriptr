@@ -102,7 +102,7 @@ function renderUpdateStatus(state: UpdateState, justFinishedNoUpdate: boolean): 
     case "downloaded":
       return `Version ${state.version} downloaded. Restart to install.`;
     case "error":
-      return "Couldn't reach update server. Check your connection and try again.";
+      return `Update check failed: ${state.message}`;
     case "idle":
       if (justFinishedNoUpdate) {
         return `You're on the latest version (${state.currentVersion}).`;

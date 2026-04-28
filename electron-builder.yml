@@ -57,7 +57,10 @@ win:
   target:
     - target: nsis
       arch: [x64]
-  publisherName: scriptr
+  # No publisherName: installers are unsigned (forceCodeSigning: false), and
+  # setting one makes electron-updater run Get-AuthenticodeSignature against
+  # the downloaded installer post-download — which fails with NotSigned and
+  # surfaces as a generic update error. Re-add only if/when we sign.
 
 nsis:
   oneClick: false
