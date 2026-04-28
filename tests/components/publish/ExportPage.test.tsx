@@ -13,10 +13,21 @@ import type { Root } from "react-dom/client";
 // Mock sonner so toast calls don't blow up in jsdom.
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() } }));
 
-// Mock fetch — ExportPage may fire patch calls on blur; stub to avoid errors.
-const mockFetch = vi.fn().mockResolvedValue({
-  json: () => Promise.resolve({ ok: true }),
-} as unknown as Response);
+// Mock fetch — ExportPage may fire patch calls on blur, plus the new
+// BisacCombobox fires a /bisac-codes.json fetch on render. Short-circuit
+// the BISAC fetch so it doesn't consume mockResolvedValueOnce slots that
+// individual tests reserve for /api/settings, /api/stories, etc.
+const mockFetch = vi.fn().mockImplementation((url: string) => {
+  if (typeof url === "string" && url.includes("bisac-codes.json")) {
+    return Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve([]),
+    } as unknown as Response);
+  }
+  return Promise.resolve({
+    json: () => Promise.resolve({ ok: true }),
+  } as unknown as Response);
+});
 vi.stubGlobal("fetch", mockFetch);
 
 import { ExportPage } from "@/components/publish/ExportPage";
