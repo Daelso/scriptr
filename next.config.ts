@@ -51,6 +51,15 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   output: "standalone",
   outputFileTracingRoot: projectRoot,
+  // sharp 0.34+ ships libvips DLLs as siblings of the .node file in
+  // node_modules/@img/sharp-win32-x64/lib/ with no package.json or require()
+  // reference — so Next's NFT trace includes the .node but not the DLLs, and
+  // dlopen fails on Windows with ERR_DLOPEN_FAILED. Linux/macOS get their
+  // libvips through the separate sharp-libvips-* packages that NFT walks
+  // normally, so this glob is a no-op there.
+  outputFileTracingIncludes: {
+    "/*": ["node_modules/@img/sharp-*/**/*.dll"],
+  },
   async headers() {
     return [
       {
