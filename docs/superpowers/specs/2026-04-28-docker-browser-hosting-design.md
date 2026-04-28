@@ -81,6 +81,8 @@ Three stages in one Dockerfile:
 
 `HOSTNAME=0.0.0.0` binds the Next.js standalone server to all interfaces *inside the container's network namespace*. The container's interfaces are isolated; what reaches the host depends entirely on the `ports:` mapping in compose. Defaulting that mapping to `127.0.0.1:3000:3000` is what keeps the app off the LAN — not the in-container bind address.
 
+Footgun acknowledgement: setting `HOSTNAME=0.0.0.0` shadows the conventional shell `HOSTNAME` variable that some base images populate with the container ID. Harmless for Next.js (it's the documented standalone bind variable) but can confuse a future operator running shell commands inside the container.
+
 ### Bind-mount UID handling
 
 The container runs as `node` (UID 1000). If the host user owns `./data` as some other UID, writes will fail with `EACCES`. Two documented workarounds, no custom entrypoint:
@@ -97,7 +99,7 @@ New files added in this work:
 - **`Dockerfile`** — three-stage build described above.
 - **`.dockerignore`** — excludes `.next/`, `node_modules/`, `data/`, `.worktrees/`, `dist/`, `out/`, `coverage/`, `tests/`, `playwright-report/`, `.git/`, `electron/`, `.env`, `.env.local`, `.env.*.local`, `.codex/`, OS junk (`.DS_Store`, etc.). Note the `.env` patterns are explicit so `.env.example` is *not* excluded — it's part of the source tree even though we never `COPY` it into the image (users fetch it via `curl` per the README). Goal: keep the build context lean and ensure no host `data/` or real secrets are ever baked into a layer.
 - **`docker-compose.yml`** — single `scriptr` service.
-- **`.env.example`** — `XAI_API_KEY=` (required), `SCRIPTR_DEFAULT_MODEL=grok-4-latest` (commented optional). `SCRIPTR_DATA_DIR` is intentionally not user-tunable in this setup; it's pinned to `/data` inside the container, and the host path is configured via the compose volume.
+- **`.env.example`** — `XAI_API_KEY=` (the **only required** field; everything else is commented optional), `SCRIPTR_DEFAULT_MODEL=grok-4-latest` (commented). The file's leading comment says exactly that ("only `XAI_API_KEY` is required") so users don't waste time poking at the rest. `SCRIPTR_DATA_DIR` is intentionally not user-tunable in this setup; it's pinned to `/data` inside the container, and the host path is configured via the compose volume.
 - **`app/api/health/route.ts`** — `GET /api/health` returning `{ ok: true }` with no auth, no data access. Needed for the compose healthcheck and as a probe target for reverse proxies. The egress test exercises every non-generate route; this route gets added to that loop so we observe it makes no outbound calls.
 - **`.github/workflows/docker.yml`** — multi-arch GHCR publish.
 - **`.github/dependabot.yml`** (new, or extended if it exists) — `github-actions` ecosystem entry so the SHA-pinned actions in the docker workflow get update PRs.
@@ -132,7 +134,7 @@ services:
 
 Deliberate choices:
 
-- **Healthcheck via `node -e fetch(...)`.** `node:22-slim` ships neither `curl` nor `wget`; Node 20's global `fetch` already has what we need.
+- **Healthcheck via `node -e fetch(...)`.** `node:22-slim` ships neither `curl` nor `wget`; Node 22's global `fetch` already has what we need. The `fetch` target is the **container's** loopback (`127.0.0.1` inside the network namespace), not the host's, so the healthcheck works the same whether the host port mapping is `127.0.0.1:3000:3000` or `0.0.0.0:3000:3000`.
 - **`restart: unless-stopped`** rather than `always` — respects an explicit `docker compose down`.
 - **`container_name: scriptr`** for predictable `docker logs` / `docker exec` ergonomics. Forfeits replica scaling, which we don't want anyway (file-based storage).
 - **No `networks:`** block — single service, default bridge is enough.
@@ -166,6 +168,7 @@ Steps (each action pinned to a full commit SHA, not a major-version tag — supp
      - `org.opencontainers.image.description=Local-first AI writing app`
      - `org.opencontainers.image.licenses=MIT`
    - `cache-from: type=gha`, `cache-to: type=gha,mode=max`
+   - `provenance: true` and `sbom: true` — generates SLSA provenance attestations and an SPDX SBOM and pushes them to GHCR alongside the image. Free, no extra steps, and rounds out the supply-chain story to match the SHA-pinned actions.
 
 Each pinned action carries an inline comment with the human-readable version (e.g. `# v4.2.2`) so a reviewer can read intent without resolving SHAs. A `.github/dependabot.yml` entry for `package-ecosystem: github-actions` is added so SHA bumps arrive as PRs rather than rotting silently.
 
