@@ -56,8 +56,18 @@ export function BisacCombobox({ value, onChange, disabled }: Props) {
     return bisacFilter(data, query);
   }, [data, query]);
 
-  const visible = filtered.slice(0, RENDER_CAP);
-  const overflow = filtered.length - visible.length;
+  const visible = React.useMemo(() => {
+    const sliced = filtered.slice(0, RENDER_CAP);
+    if (
+      matched &&
+      filtered.some((e) => e.c === matched.c) &&     // matched survived the filter
+      !sliced.some((e) => e.c === matched.c)         // but is past the cap
+    ) {
+      return [matched, ...sliced.slice(0, RENDER_CAP - 1)];
+    }
+    return sliced;
+  }, [filtered, matched]);
+  const overflow = Math.max(0, filtered.length - RENDER_CAP);
 
   const triggerText = (() => {
     if (!value) return "Select BISAC category…";

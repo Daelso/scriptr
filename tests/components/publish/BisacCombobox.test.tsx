@@ -311,6 +311,39 @@ describe("BisacCombobox — popover and selection", () => {
     }
   });
 
+  it("prepends the selected entry when it would be past the 200-cap", async () => {
+    // Build a 250-entry fixture where the saved value sorts past index 199.
+    const big: BisacEntry[] = Array.from({ length: 250 }, (_, i) => ({
+      c: `FIC${String(i).padStart(6, "0")}`,
+      l: `FICTION / Test ${i}`,
+    }));
+    const TARGET = "FIC000245"; // index 245 — past the 200-cap
+    fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(big),
+    } as unknown as Response);
+
+    const { container, unmount } = mount(
+      <BisacCombobox value={TARGET} onChange={() => {}} />,
+    );
+    try {
+      await flushPromises();
+      const trigger = container.querySelector<HTMLButtonElement>(
+        '[data-testid="bisac-combobox-trigger"]',
+      );
+      act(() => trigger!.click());
+      await flushPromises();
+      const target = document.querySelector<HTMLElement>(
+        `[data-testid="bisac-combobox-option-${TARGET}"]`,
+      );
+      expect(target).not.toBeNull();
+      // Cap is still 200.
+      expect(getOptionRows().length).toBe(200);
+    } finally {
+      unmount();
+    }
+  });
+
   it("keyboard-only flow: type, ArrowDown, Enter selects", async () => {
     const onChange = vi.fn();
     const { container, unmount } = mount(
