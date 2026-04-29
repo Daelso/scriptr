@@ -8,6 +8,10 @@ export type UseUpdatesResult = {
   justFinishedNoUpdate: boolean;
   checkNow: (() => Promise<UpdateState>) | null;
   installNow: (() => Promise<void>) | null;
+  // Opens data/logs/updates.log in the OS default text editor (via the
+  // existing shell:openFile IPC handler, which restricts opens to
+  // data-dir-rooted paths). Null in the web build.
+  openUpdateLog: (() => Promise<void>) | null;
 };
 
 /**
@@ -78,10 +82,22 @@ export function useUpdates(): UseUpdatesResult {
     return bridge.installNow();
   }, [bridge]);
 
+  const openUpdateLog = useCallback(async () => {
+    if (!bridge) throw new Error("scriptrUpdates bridge is not available");
+    const path = await bridge.getLogPath();
+    // Defer to the existing shell:openFile bridge so we reuse its
+    // pathIsUnderAllowedRoot guard rather than introducing a second one.
+    if (typeof window === "undefined" || !window.scriptr) {
+      throw new Error("scriptr bridge is not available");
+    }
+    await window.scriptr.openFile(path);
+  }, [bridge]);
+
   return {
     state,
     justFinishedNoUpdate,
     checkNow: bridge ? checkNow : null,
     installNow: bridge ? installNow : null,
+    openUpdateLog: bridge ? openUpdateLog : null,
   };
 }

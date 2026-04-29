@@ -20,4 +20,5 @@ contextBridge.exposeInMainWorld("scriptrUpdates", {
   checkNow: (): Promise<UpdateState> => ipcRenderer.invoke("updates:check"),
   installNow: (): Promise<void> => ipcRenderer.invoke("updates:install"),
   getState: (): Promise<UpdateState> => ipcRenderer.invoke("updates:get-state"),
+  getLogPath: (): Promise<string> => ipcRenderer.invoke("updates:get-log-path"),
 });

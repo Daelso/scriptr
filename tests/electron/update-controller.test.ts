@@ -201,4 +201,85 @@ describe("UpdateController", () => {
     const cfg = JSON.parse(await readFile(join(dir, "config.json"), "utf8"));
     expect(typeof cfg.updates.lastCheckedAt).toBe("string");
   });
+
+  // ── Logging + error surfacing (added with the v0.7.x update-debug fix) ──
+
+  it("error during checking surfaces the [code] suffix and 'while checking for updates'", async () => {
+    const p = controller.checkNow();
+    fakeUpdater.emit("error", Object.assign(new Error("getaddrinfo failed"), { code: "ENOTFOUND" }));
+    await p;
+    const s = controller.getState();
+    expect(s.kind).toBe("error");
+    if (s.kind === "error") {
+      expect(s.message).toContain("getaddrinfo failed");
+      expect(s.message).toContain("[ENOTFOUND]");
+      expect(s.message).toContain("while checking for updates");
+    }
+  });
+
+  it("error during downloading surfaces 'while downloading' so user sees the phase", async () => {
+    const p = controller.checkNow();
+    fakeUpdater.emit("update-available", { version: "9.9.9" });
+    expect(controller.getState().kind).toBe("downloading");
+    fakeUpdater.emit(
+      "error",
+      Object.assign(new Error("connection reset"), { code: "ECONNRESET" }),
+    );
+    await p;
+    const s = controller.getState();
+    expect(s.kind).toBe("error");
+    if (s.kind === "error") {
+      expect(s.message).toContain("connection reset");
+      expect(s.message).toContain("[ECONNRESET]");
+      expect(s.message).toContain("while downloading");
+    }
+  });
+
+  it("forwards every transition to the optional logger", async () => {
+    const lines: Array<{ level: string; msg: unknown }> = [];
+    const logger = {
+      info: (m: unknown) => lines.push({ level: "info", msg: m }),
+      warn: (m: unknown) => lines.push({ level: "warn", msg: m }),
+      error: (m: unknown) => lines.push({ level: "error", msg: m }),
+    };
+    const c = createUpdateController({
+      dataDir: dir,
+      autoUpdater: fakeUpdater,
+      getCurrentVersion: () => "0.3.0",
+      broadcast: () => {},
+      logger,
+    });
+
+    const p = c.checkNow();
+    fakeUpdater.emit("update-available", { version: "0.4.0" });
+    fakeUpdater.emit("download-progress", { percent: 50, transferred: 50, total: 100 });
+    fakeUpdater.emit("update-downloaded", { version: "0.4.0" });
+    await p;
+
+    const dump = lines.map((l) => `${l.level}: ${l.msg}`).join("\n");
+    expect(dump).toMatch(/info: checkNow starting/);
+    expect(dump).toMatch(/info: event: update-available/);
+    expect(dump).toMatch(/info: event: download-progress/);
+    expect(dump).toMatch(/info: event: update-downloaded/);
+  });
+
+  it("logs errors that arrive after settling (debugging breadcrumb), without re-transitioning", async () => {
+    const errors: unknown[] = [];
+    const c = createUpdateController({
+      dataDir: dir,
+      autoUpdater: fakeUpdater,
+      getCurrentVersion: () => "0.3.0",
+      broadcast: () => {},
+      logger: { info: () => {}, warn: () => {}, error: (m) => errors.push(m) },
+    });
+    const p = c.checkNow();
+    fakeUpdater.emit("update-not-available", { version: "0.3.0" });
+    await p;
+    // Late error after we've already settled to idle. Used to be silently
+    // swallowed; we now log it so the user has a breadcrumb when they
+    // open the log file.
+    fakeUpdater.emit("error", new Error("orphan late error"));
+    expect(c.getState().kind).toBe("idle");
+    expect(errors.some((e) => e instanceof Error && e.message === "orphan late error")).toBe(true);
+  });
 });
