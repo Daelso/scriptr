@@ -121,11 +121,25 @@ export function FindReplaceBar({ editor, mode, onModeChange, onClose }: FindRepl
   // the scroll silently no-ops. Manually scroll the active match's DOM node
   // instead. `block: "center"` also clears the sticky bar at the top of the
   // scroll container.
+  //
+  // We skip the scroll when the match is already comfortably visible —
+  // re-centering text the user can already see is more disruptive than
+  // helpful. The sticky find bar covers the top of the scroll pane, so
+  // matches whose top edge sits behind it are treated as "not visible"
+  // and still get scrolled.
   const scrollActiveMatchIntoView = useCallback(() => {
     const active = editor.view.dom.querySelector(".ProseMirror-active-search-match");
-    if (active instanceof HTMLElement) {
-      active.scrollIntoView({ block: "center", behavior: "auto" });
-    }
+    if (!(active instanceof HTMLElement)) return;
+
+    const doc = active.ownerDocument;
+    const viewportBottom = doc.defaultView?.innerHeight ?? doc.documentElement.clientHeight;
+    const findBar = doc.querySelector('[role="search"]');
+    const findBarBottom =
+      findBar instanceof HTMLElement ? findBar.getBoundingClientRect().bottom : 0;
+    const r = active.getBoundingClientRect();
+    if (r.top >= findBarBottom && r.bottom <= viewportBottom) return;
+
+    active.scrollIntoView({ block: "center", behavior: "auto" });
   }, [editor]);
 
   const next = useCallback(() => {

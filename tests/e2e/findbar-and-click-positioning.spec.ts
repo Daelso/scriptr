@@ -142,6 +142,18 @@ test("find bar Enter scrolls the next match into view even when focus is on the 
   // Find input should still own focus — the user shouldn't have to re-click
   // it to keep navigating. (Pre-fix, view.focus() stole it.)
   await expect(findInput).toBeFocused();
+
+  // Find bar must remain pinned to the top of the scroll container after
+  // the scroll — guards against future regressions to the sticky positioning
+  // (the bar covers the match if it's behind it, our scroll guard relies on
+  // the bar being where the user thinks it is).
+  const findBar = page.getByRole("search", { name: "Find in section" });
+  const findBarBox = await findBar.boundingBox();
+  const paneTop = await scrollHandle.evaluate(
+    (el) => el.getBoundingClientRect().top,
+  );
+  expect(findBarBox).not.toBeNull();
+  expect(Math.abs(findBarBox!.y - paneTop)).toBeLessThan(4);
 });
 
 test("clicking deep into a multi-paragraph section places the cursor at the click position", async ({
