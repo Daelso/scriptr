@@ -2,13 +2,13 @@
 
 # ─── Stage 1: deps ──────────────────────────────────────────────────────────
 # Cached on lockfile only. Includes devDeps because next build needs them.
-FROM node:22-slim AS deps
+FROM node:25-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
 # ─── Stage 2: builder ───────────────────────────────────────────────────────
-FROM node:22-slim AS builder
+FROM node:25-slim AS builder
 WORKDIR /app
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1
@@ -18,7 +18,7 @@ RUN npm run build
 
 # ─── Stage 3: runner ────────────────────────────────────────────────────────
 # Only this stage lands in the final image.
-FROM node:22-slim AS runner
+FROM node:25-slim AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production \
