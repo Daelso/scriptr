@@ -23,16 +23,23 @@ const ALLOWED_INTERNAL_SCHEMES = new Set([
 ]);
 
 // GitHub destinations electron-updater touches when checking + downloading
-// updates. Allowed unconditionally under Electron — the manual "Check for
-// updates" button must reach GitHub regardless of the launch toggle, and
-// `electron-updater` runs in the main process via Node's https (not the
-// renderer's fetch), so this allowance is main-process only. The launch
-// toggle still gates *whether* we automatically initiate a check; this
-// allowance just means GitHub is reachable when we do.
+// updates. electron-updater issues these requests through electron.net on a
+// partitioned session ("electron-updater") that this filter is NOT installed
+// on, so today the allowance below is belt-and-suspenders. Listing the
+// hosts here means a future Electron version, a proxy override, or anyone
+// wiring the filter onto every session won't silently break update
+// downloads.
+//
+// `release-assets.githubusercontent.com` is the current asset CDN — the
+// installer download from `github.com/<owner>/<repo>/releases/download/...`
+// 302-redirects to a signed URL on this host. The legacy
+// `objects.githubusercontent.com` host is still seen on older releases so
+// we keep both.
 const UPDATE_HOSTS = new Set([
   "api.github.com", // release metadata JSON
   "github.com", // release YAML feed + redirect target
-  "objects.githubusercontent.com", // CDN where artifacts actually download from
+  "objects.githubusercontent.com", // legacy asset CDN
+  "release-assets.githubusercontent.com", // current asset CDN
 ]);
 
 export function shouldAllow(url: URL, opts: FilterOptions): boolean {

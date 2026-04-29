@@ -648,6 +648,15 @@ export function SettingsForm() {
                   >
                     View on GitHub ↗
                   </a>
+                  {updates.openUpdateLog && (
+                    <button
+                      type="button"
+                      onClick={() => void updates.openUpdateLog!().catch(() => {})}
+                      className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                    >
+                      View update log
+                    </button>
+                  )}
                 </div>
 
                 <div className="text-xs text-muted-foreground" role="status" aria-live="polite">
