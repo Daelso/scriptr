@@ -1,0 +1,35 @@
+# Build artifacts and caches
+.next
+node_modules
+dist
+out
+coverage
+playwright-report
+
+# Local data — must never land in an image layer
+data
+.worktrees
+
+# Environments — .env.example deliberately NOT excluded so it stays in
+# the source tree (users curl it per the README); real secrets stay out.
+.env
+.env.local
+.env.*.local
+
+# Editor / agent metadata
+.codex
+.claude
+.vscode
+.idea
+
+# Source we don't need at runtime
+tests
+e2e
+docs
+.git
+.github
+electron
+
+# OS junk
+.DS_Store
+Thumbs.db
