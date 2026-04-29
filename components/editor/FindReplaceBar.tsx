@@ -114,27 +114,41 @@ export function FindReplaceBar({ editor, mode, onModeChange, onClose }: FindRepl
     [announce],
   );
 
+  // ProseMirror's built-in scrollIntoView (triggered by findNext's
+  // tr.scrollIntoView()) bails when the DOM selection's focusNode isn't
+  // inside view.dom — see prosemirror-view/src/index.ts scrollToSelection.
+  // While the user is typing in the find input, focus IS in the input, so
+  // the scroll silently no-ops. Manually scroll the active match's DOM node
+  // instead. `block: "center"` also clears the sticky bar at the top of the
+  // scroll container.
+  const scrollActiveMatchIntoView = useCallback(() => {
+    const active = editor.view.dom.querySelector(".ProseMirror-active-search-match");
+    if (active instanceof HTMLElement) {
+      active.scrollIntoView({ block: "center", behavior: "auto" });
+    }
+  }, [editor]);
+
   const next = useCallback(() => {
     if (query === "") return;
     findNext(editor.state, editor.view.dispatch);
-    editor.view.focus();
+    scrollActiveMatchIntoView();
     // Counter updates via useEditorState on the next paint; for the SR
     // announcement we read the post-transaction selection synchronously.
     const decos = getMatchHighlights(editor.state).find();
     const sel = editor.state.selection;
     const idx = decos.findIndex((d) => d.from === sel.from && d.to === sel.to);
     announceForCount(idx >= 0 ? idx + 1 : 0, decos.length);
-  }, [editor, query, announceForCount]);
+  }, [editor, query, announceForCount, scrollActiveMatchIntoView]);
 
   const prev = useCallback(() => {
     if (query === "") return;
     findPrev(editor.state, editor.view.dispatch);
-    editor.view.focus();
+    scrollActiveMatchIntoView();
     const decos = getMatchHighlights(editor.state).find();
     const sel = editor.state.selection;
     const idx = decos.findIndex((d) => d.from === sel.from && d.to === sel.to);
     announceForCount(idx >= 0 ? idx + 1 : 0, decos.length);
-  }, [editor, query, announceForCount]);
+  }, [editor, query, announceForCount, scrollActiveMatchIntoView]);
 
   const doReplace = useCallback(() => {
     if (query === "" || total === 0) return;
@@ -146,14 +160,16 @@ export function FindReplaceBar({ editor, mode, onModeChange, onClose }: FindRepl
     const onMatch = decos.some((d) => d.from === sel.from && d.to === sel.to);
     if (!onMatch) {
       findNext(editor.state, editor.view.dispatch);
+      scrollActiveMatchIntoView();
       announce(`Match 1 of ${decos.length}`);
       return;
     }
     replaceCurrent(editor.state, editor.view.dispatch);
     findNext(editor.state, editor.view.dispatch);
+    scrollActiveMatchIntoView();
     const after = getMatchHighlights(editor.state).find();
     announce(after.length === 0 ? "Replaced; no more matches" : `Replaced; ${after.length} remaining`);
-  }, [editor, query, total, announce]);
+  }, [editor, query, total, announce, scrollActiveMatchIntoView]);
 
   const doReplaceAll = useCallback(() => {
     if (query === "" || total === 0) return;
