@@ -1,22 +1,21 @@
-import DOMPurify from "isomorphic-dompurify";
+// lib/publish/sanitize-client.ts
+"use client";
+
+import DOMPurify from "dompurify";
 import type { Config as DOMPurifyConfig } from "dompurify";
 
 /**
- * URI-bearing attributes that DOMPurify lets through on tags currently in
- * `AUTHOR_NOTE_SANITIZE_OPTS.ALLOWED_TAGS`. The `uponSanitizeAttribute` hook
- * re-checks these against `ALLOWED_URI_REGEXP` because DOMPurify's built-in
- * DATA_URI_TAGS allowlist (img/audio/video/source/image/track) would
- * otherwise let `data:` URIs through regardless of the regex.
+ * Client-side HTML sanitizer. Uses plain `dompurify` against the browser's
+ * native `window` -- no DOM emulation needed, since this only runs in the
+ * browser. The server-side equivalent lives in `lib/publish/sanitize-server.ts`
+ * and is what the EPUB build path uses.
  *
- * IMPORTANT: this set is scoped to URI-bearing attributes that the CURRENT
- * allowlists (`AUTHOR_NOTE_SANITIZE_OPTS.ALLOWED_TAGS`) can produce. It is
- * NOT an exhaustive list of every URI-bearing HTML attribute. When widening
- * `ALLOWED_TAGS` (e.g. to include `<source>`, `<video>`, `<form>`,
- * `<object>`, `<embed>`, `<iframe>`, ...), audit this set against the new
- * tags' URI-bearing attributes (`srcset`, `poster`, `formaction`, `action`,
- * `data`, `archive`, ...) and add anything missing.
+ * Splitting client and server like this lets us drop `isomorphic-dompurify`
+ * (and the jsdom dep chain it pulls in on Node) entirely from the
+ * production runtime -- see docs/superpowers/plans/2026-04-28-replace-isomorphic-dompurify.md.
  */
-export const URI_ATTRS = new Set([
+
+const URI_ATTRS = new Set([
   "src",
   "href",
   "xlink:href",
@@ -68,20 +67,9 @@ function extraUriChecks(value: string): boolean {
     const payload = value.slice("data:image/png;base64,".length);
     return payload.length > 0 && /^[A-Za-z0-9+/=]+$/.test(payload);
   }
-  // Unknown schemes are governed by the caller's regex only.
   return true;
 }
 
-/**
- * Run DOMPurify with an optional URI allowlist regex that is also enforced
- * on URI-bearing attributes (see `URI_ATTRS`). The hook is added/removed
- * around a single `sanitize` call so this helper is safe to call from
- * concurrent code paths — we never leave a global hook installed.
- *
- * Centralized so that both the EPUB build path (`buildAuthorNoteHtml`) and
- * the reader's `SafeHtml` component apply the same belt-and-suspenders
- * treatment to `data:` URIs without duplicating the hook implementation.
- */
 export function sanitizeWith(
   html: string,
   config: DOMPurifyConfig,
@@ -108,7 +96,6 @@ export function sanitizeWith(
       }
       data.attrValue = normalized;
     } catch {
-      // Fail closed on any unexpected parser/regex error.
       data.keepAttr = false;
     }
   };

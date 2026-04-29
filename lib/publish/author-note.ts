@@ -1,7 +1,7 @@
 import QRCode from "qrcode";
 import type { Story } from "@/lib/types";
 import type { PenNameProfile } from "@/lib/config";
-import { sanitizeWith } from "@/lib/publish/sanitize-html";
+import { sanitizeWith } from "@/lib/publish/sanitize-server";
 import {
   AUTHOR_NOTE_SANITIZE_OPTS,
   AUTHOR_NOTE_MESSAGE_SANITIZE_OPTS,
