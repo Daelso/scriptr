@@ -75,9 +75,9 @@ If you'd rather build the image locally than pull from GHCR, edit
 the `build: .` line below it:
 
 ```diff
--    image: ghcr.io/daelso/scriptr:latest
--    # build: .            # uncomment (and comment image:) to build from source
-+    # image: ghcr.io/daelso/scriptr:latest
+-    image: ghcr.io/daelso/scriptr:edge
+-    # build: .
++    # image: ghcr.io/daelso/scriptr:edge
 +    build: .
 ```
 
