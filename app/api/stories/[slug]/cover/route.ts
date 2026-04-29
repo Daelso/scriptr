@@ -1,7 +1,9 @@
 import type { NextRequest } from "next/server";
+import { readFile } from "node:fs/promises";
 import { ok, fail } from "@/lib/api";
 import { getStory } from "@/lib/storage/stories";
 import { effectiveDataDir } from "@/lib/config";
+import { coverPath } from "@/lib/storage/paths";
 import { writeCoverJpeg } from "@/lib/publish/epub-storage";
 import sharp from "sharp";
 
@@ -9,6 +11,29 @@ type Ctx = { params: Promise<{ slug: string }> };
 
 const MAX_BYTES = 20 * 1024 * 1024;
 const ACCEPTED = new Set(["image/jpeg", "image/png"]);
+
+export async function GET(_req: NextRequest, ctx: Ctx) {
+  const { slug } = await ctx.params;
+  const dataDir = effectiveDataDir();
+
+  const story = await getStory(dataDir, slug);
+  if (!story) return fail("story not found", 404);
+
+  let bytes: Buffer;
+  try {
+    bytes = await readFile(coverPath(dataDir, slug));
+  } catch {
+    return fail("cover not found", 404);
+  }
+
+  return new Response(new Uint8Array(bytes), {
+    status: 200,
+    headers: {
+      "content-type": "image/jpeg",
+      "cache-control": "no-store",
+    },
+  });
+}
 
 export async function PUT(req: NextRequest, ctx: Ctx) {
   const { slug } = await ctx.params;
