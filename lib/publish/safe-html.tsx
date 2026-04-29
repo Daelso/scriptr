@@ -1,7 +1,7 @@
 "use client";
 
 import type { Config as DOMPurifyConfig } from "dompurify";
-import { sanitizeWith } from "@/lib/publish/sanitize-html";
+import { sanitizeWith } from "@/lib/publish/sanitize-client";
 
 type Props = {
   html: string;
