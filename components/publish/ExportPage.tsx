@@ -39,8 +39,16 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
   const [isElectron, setIsElectron] = useState(false);
   const [outputDirDraft, setOutputDirDraft] = useState<string>("");
   const savedOutputDirRef = useRef<string>("");
-  const [coverVersion, setCoverVersion] = useState(() => Date.now());
+  const [coverVersion, setCoverVersion] = useState(0);
   const [coverLoaded, setCoverLoaded] = useState(false);
+  const coverImgRef = useRef<HTMLImageElement>(null);
+
+  // If the cover finishes loading before hydration, onLoad never fires —
+  // catch that case by inspecting the live <img> after mount.
+  useEffect(() => {
+    const img = coverImgRef.current;
+    if (img && img.complete) setCoverLoaded(img.naturalWidth > 0);
+  }, [coverVersion]);
 
   useEffect(() => {
     let cancelled = false;
@@ -162,7 +170,7 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
     } else {
       toast.success("Cover uploaded.");
     }
-    setCoverVersion(Date.now());
+    setCoverVersion((n) => n + 1);
   };
 
   const handleBuild = async () => {
@@ -309,11 +317,12 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
+              ref={coverImgRef}
               src={`/api/stories/${story.slug}/cover?t=${coverVersion}`}
               alt=""
               data-testid="cover-preview"
               className={`absolute inset-0 h-full w-full object-cover ${coverLoaded ? "" : "hidden"}`}
-              onLoad={() => setCoverLoaded(true)}
+              onLoad={(e) => setCoverLoaded(e.currentTarget.naturalWidth > 0)}
               onError={() => setCoverLoaded(false)}
             />
             {coverLoaded ? (
