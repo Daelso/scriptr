@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, rm, stat, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { NextRequest } from "next/server";
@@ -82,6 +82,41 @@ describe("/api/stories/[slug]/cover PUT", () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toBe("invalid image data");
+  });
+
+  describe("GET", () => {
+    async function callGet(slug: string) {
+      const { GET } = await import("@/app/api/stories/[slug]/cover/route");
+      const req = new Request(`http://localhost/api/stories/${slug}/cover`) as unknown as NextRequest;
+      const ctx = { params: Promise.resolve({ slug }) };
+      return GET(req, ctx);
+    }
+
+    it("returns 404 for unknown story", async () => {
+      const res = await callGet("nope");
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 404 when story exists but no cover on disk", async () => {
+      const story = await createStory(tmpDir, { title: "S" });
+      const res = await callGet(story.slug);
+      expect(res.status).toBe(404);
+    });
+
+    it("streams the JPEG bytes with image/jpeg content-type", async () => {
+      const story = await createStory(tmpDir, { title: "S" });
+      const jpg = new Blob([new Uint8Array(await makeJpeg(1600, 2560))], { type: "image/jpeg" });
+      await callPut(story.slug, jpg);
+
+      const res = await callGet(story.slug);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("image/jpeg");
+      expect(res.headers.get("cache-control")).toBe("no-store");
+
+      const body = Buffer.from(await res.arrayBuffer());
+      const onDisk = await readFile(coverPath(tmpDir, story.slug));
+      expect(body.equals(onDisk)).toBe(true);
+    });
   });
 
   it("normalizes EXIF orientation for JPEG uploads", async () => {

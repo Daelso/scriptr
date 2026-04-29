@@ -58,6 +58,9 @@
  *   POST /api/stories/[slug]/export/epub  (with author-note configured —
  *     exercises the QR encoder + buildAuthorNoteHtml + epub-gen-memory path
  *     to assert the EPUB pipeline never phones home)
+ *   PUT  /api/stories/[slug]/cover
+ *   GET  /api/stories/[slug]/cover  (×2: cover present after PUT, then 404
+ *     path against the same slug after the cover file has been deleted)
  *   GET  /api/bundles
  *   POST /api/bundles
  *   GET  /api/bundles/[slug]
@@ -506,6 +509,43 @@ describe("no external egress from API routes", () => {
       const ctx = { params: Promise.resolve({ slug }) };
       const res = await POST(req, ctx);
       expect(res.status).toBe(200);
+    }
+
+    // ── PUT + GET /api/stories/[slug]/cover ───────────────────────────────
+    // Exercises the story-cover routes (upload + serve-back + 404 fallback).
+    // Pure local disk I/O — must not phone home.
+    {
+      const sharp = (await import("sharp")).default;
+      const jpegBytes = await sharp({
+        create: { width: 1600, height: 2560, channels: 3, background: { r: 80, g: 80, b: 80 } },
+      })
+        .jpeg({ quality: 85 })
+        .toBuffer();
+
+      const { PUT, GET } = await import("@/app/api/stories/[slug]/cover/route");
+      const ctx = { params: Promise.resolve({ slug }) };
+
+      const fd = new FormData();
+      fd.append("cover", new Blob([new Uint8Array(jpegBytes)], { type: "image/jpeg" }), "cover.jpg");
+      const putReq = new Request(`http://localhost/api/stories/${slug}/cover`, {
+        method: "PUT",
+        body: fd,
+      }) as unknown as NextRequest;
+      const putRes = await PUT(putReq, ctx);
+      expect(putRes.status).toBe(200);
+
+      // Cover present
+      const getReq = makeReq(`http://localhost/api/stories/${slug}/cover`);
+      const getRes = await GET(getReq, ctx);
+      expect(getRes.status).toBe(200);
+      expect(getRes.headers.get("content-type")).toBe("image/jpeg");
+
+      // Cover missing — remove the file and re-fetch
+      const { rm } = await import("node:fs/promises");
+      const { coverPath } = await import("@/lib/storage/paths");
+      await rm(coverPath(tmpDir, slug), { force: true });
+      const get404 = await GET(getReq, ctx);
+      expect(get404.status).toBe(404);
     }
 
     // ── DELETE /api/stories/[slug] ─────────────────────────────────────────
