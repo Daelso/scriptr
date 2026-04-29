@@ -150,8 +150,13 @@
 .tiptap-section-editor.ProseMirror p {
   margin: 0;
 }
+/* Match the read-only <p>'s blank-line gap (whitespace-pre-wrap on "\n\n"
+ * renders an empty line of full line-height). 1lh = the paragraph's computed
+ * line-height, which equals the height of that blank line — without this,
+ * the editor's tighter 1em gap shifts text up and posAtCoords resolves clicks
+ * a few pixels too far down per paragraph break. */
 .tiptap-section-editor.ProseMirror p + p {
-  margin-top: 1em;
+  margin-top: 1lh;
 }
 .tiptap-section-editor.ProseMirror:focus,
 .tiptap-section-editor.ProseMirror:focus-visible {
