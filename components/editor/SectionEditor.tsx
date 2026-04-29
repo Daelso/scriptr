@@ -5,6 +5,8 @@ import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 
 import { useAutoSave } from "@/hooks/useAutoSave";
+import { SearchExtension } from "@/lib/tiptap/search-extension";
+import { FindReplaceBar, type FindBarMode } from "@/components/editor/FindReplaceBar";
 
 interface SectionEditorProps {
   sectionId: string;
@@ -105,6 +107,20 @@ export function SectionEditor({
   // since the parent swaps the component out synchronously on onExit()).
   const exitedRef = useRef(false);
 
+  // Find/replace bar visibility. null = hidden; "find" = find-only;
+  // "replace" = find+replace. Opened via Cmd/Ctrl+F or Cmd/Ctrl+H.
+  //
+  // The ref mirrors the state because `useEditor`'s `editorProps` (including
+  // `handleKeyDown`) are SNAPSHOTTED at editor creation, not reactive — so
+  // a closure over `findBarMode` would always see `null`. We sync the ref in
+  // a useEffect (writing during render is forbidden), then read it from the
+  // keydown handler. Don't "fix" this by inlining `findBarMode`.
+  const [findBarMode, setFindBarMode] = useState<FindBarMode | null>(null);
+  const findBarModeRef = useRef<FindBarMode | null>(null);
+  useEffect(() => {
+    findBarModeRef.current = findBarMode;
+  }, [findBarMode]);
+
   // Stable save callback so useAutoSave keeps identity across renders.
   const save = useCallback(
     async (text: string) => {
@@ -143,6 +159,7 @@ export function SectionEditor({
         codeBlock: false,
         horizontalRule: false,
       }),
+      SearchExtension,
     ],
     content: initialHtml,
     editable: true,
@@ -156,9 +173,30 @@ export function SectionEditor({
           "tiptap-section-editor text-base leading-relaxed text-foreground whitespace-pre-wrap outline-none",
       },
       handleKeyDown: (_view, event) => {
+        // Cmd/Ctrl+F → open find bar. Cmd/Ctrl+H → open replace bar.
+        // Intercepted at the editor level (not document) so the browser's
+        // native page-find still works elsewhere.
+        const mod = event.metaKey || event.ctrlKey;
+        if (mod && !event.shiftKey && !event.altKey) {
+          if (event.key === "f" || event.key === "F") {
+            event.preventDefault();
+            setFindBarMode("find");
+            return true;
+          }
+          if (event.key === "h" || event.key === "H") {
+            event.preventDefault();
+            setFindBarMode("replace");
+            return true;
+          }
+        }
         if (event.key === "Escape") {
           event.preventDefault();
-          handleExit();
+          // Esc closes the find bar first if it's open; otherwise exits edit mode.
+          if (findBarModeRef.current !== null) {
+            setFindBarMode(null);
+          } else {
+            handleExit();
+          }
           return true;
         }
         return false;
@@ -201,5 +239,20 @@ export function SectionEditor({
   }, [editor]);
 
   // `useEditor` handles its own teardown on unmount; no explicit destroy here.
-  return <EditorContent editor={editor} />;
+  return (
+    <div>
+      {findBarMode !== null && editor && (
+        <FindReplaceBar
+          editor={editor}
+          mode={findBarMode}
+          onModeChange={setFindBarMode}
+          onClose={() => {
+            setFindBarMode(null);
+            editor.view.focus();
+          }}
+        />
+      )}
+      <EditorContent editor={editor} />
+    </div>
+  );
 }
