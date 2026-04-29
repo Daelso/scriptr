@@ -66,7 +66,6 @@ function cfg(styleDefaults?: StyleRules): Config {
   return {
     defaultModel: "grok-4-latest",
     bindHost: "127.0.0.1",
-    theme: "system",
     autoRecap: true,
     includeLastChapterFullText: false,
     styleDefaults,

@@ -223,7 +223,6 @@ export async function GET() {
     keyPreview: mask(cfg.apiKey),
     defaultModel: cfg.defaultModel,
     bindHost: cfg.bindHost,
-    theme: cfg.theme,
     autoRecap: cfg.autoRecap,
     includeLastChapterFullText: cfg.includeLastChapterFullText,
     styleDefaults: cfg.styleDefaults,
@@ -264,13 +263,6 @@ export async function PUT(req: NextRequest) {
       return fail("defaultModel must be a non-empty string", 400);
     }
     patch.defaultModel = body.defaultModel.trim();
-  }
-
-  if (hasOwn(body, "theme")) {
-    if (body.theme !== "light" && body.theme !== "dark" && body.theme !== "system") {
-      return fail("theme must be 'light', 'dark', or 'system'", 400);
-    }
-    patch.theme = body.theme;
   }
 
   if (hasOwn(body, "autoRecap")) {

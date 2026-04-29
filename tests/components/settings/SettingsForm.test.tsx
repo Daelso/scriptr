@@ -35,7 +35,6 @@ function stubSettings(overrides: Record<string, unknown> = {}) {
           keyPreview: "xai-***",
           defaultModel: "grok-4-latest",
           bindHost: "127.0.0.1",
-          theme: "system",
           autoRecap: true,
           includeLastChapterFullText: false,
           isElectron: true,

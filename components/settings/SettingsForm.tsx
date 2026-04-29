@@ -30,7 +30,6 @@ interface SettingsData {
   keyPreview?: string;
   defaultModel: string;
   bindHost: string;
-  theme: "light" | "dark" | "system";
   autoRecap: boolean;
   includeLastChapterFullText: boolean;
   styleDefaults?: StyleRules;
@@ -42,7 +41,6 @@ interface FormState {
   apiKey: string;
   modelSelect: string;
   customModel: string;
-  theme: "light" | "dark" | "system";
   autoRecap: boolean;
   includeLastChapter: boolean;
   style: Required<StyleRules>;
@@ -61,7 +59,6 @@ const DEFAULT_FORM: FormState = {
   apiKey: "",
   modelSelect: "grok-4-latest",
   customModel: "",
-  theme: "system",
   autoRecap: true,
   includeLastChapter: false,
   style: { ...DEFAULT_STYLE },
@@ -73,7 +70,6 @@ function formFromData(data: SettingsData): FormState {
     apiKey: "",
     modelSelect: isKnownModel(data.defaultModel) ? data.defaultModel : "custom",
     customModel: isKnownModel(data.defaultModel) ? "" : data.defaultModel,
-    theme: data.theme,
     autoRecap: data.autoRecap,
     includeLastChapter: data.includeLastChapterFullText,
     style: { ...DEFAULT_STYLE, ...(data.styleDefaults ?? {}) },
@@ -192,7 +188,6 @@ export function SettingsForm() {
 
       const body: Record<string, unknown> = {
         defaultModel: effectiveModel,
-        theme: form.theme,
         autoRecap: form.autoRecap,
         includeLastChapterFullText: form.includeLastChapter,
         styleDefaults: diffAgainstDefault(form.style),
@@ -678,32 +673,6 @@ export function SettingsForm() {
           </section>
         </>
       )}
-
-      {/* ── Appearance ──────────────────────────────────────────────── */}
-      <section className="flex flex-col gap-4">
-        <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-          Appearance
-        </h2>
-
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="theme">Theme</Label>
-          <Select
-            value={form.theme}
-            onValueChange={(v) => {
-              if (v === "light" || v === "dark" || v === "system") patch({ theme: v });
-            }}
-          >
-            <SelectTrigger id="theme" className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="light">Light</SelectItem>
-              <SelectItem value="dark">Dark</SelectItem>
-              <SelectItem value="system">System</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </section>
 
       {/* ── Save ────────────────────────────────────────────────────── */}
       <div className="flex justify-end pt-2">

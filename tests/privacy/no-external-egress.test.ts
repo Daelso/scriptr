@@ -282,7 +282,7 @@ describe("no external egress from API routes", () => {
       const { PUT } = await import("@/app/api/settings/route");
       const req = makeReq("http://localhost/api/settings", {
         method: "PUT",
-        body: JSON.stringify({ theme: "dark" }),
+        body: JSON.stringify({ autoRecap: false }),
         headers: { "content-type": "application/json" },
       });
       const res = await PUT(req);

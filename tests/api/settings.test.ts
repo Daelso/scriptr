@@ -31,7 +31,6 @@ describe("/api/settings", () => {
     expect(body.data.keyPreview).toBeUndefined();
     expect(body.data.defaultModel).toBe("grok-4-latest");
     expect(body.data.bindHost).toBe("127.0.0.1");
-    expect(body.data.theme).toBe("system");
     expect(body.data.autoRecap).toBe(true);
     expect(body.data.includeLastChapterFullText).toBe(false);
     // Privacy: raw apiKey must never appear in the response

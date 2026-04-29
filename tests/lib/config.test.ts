@@ -63,11 +63,11 @@ describe("config", () => {
   it("saveConfig does not persist env apiKey when saving unrelated fields", async () => {
     await withTemp(async (dir) => {
       process.env.XAI_API_KEY = "xai-from-env";
-      await saveConfig(dir, { theme: "dark" });
+      await saveConfig(dir, { autoRecap: false });
 
       const { readFile } = await import("node:fs/promises");
       const raw = JSON.parse(await readFile(join(dir, "config.json"), "utf8"));
-      expect(raw.theme).toBe("dark");
+      expect(raw.autoRecap).toBe(false);
       expect(raw.apiKey).toBeUndefined();
     });
   });
@@ -180,13 +180,13 @@ describe("config — updates settings", () => {
     const dir = await mkdtemp(join(tmpdir(), "scriptr-config-race-"));
     try {
       for (let i = 0; i < 20; i += 1) {
-        await saveConfig(dir, { theme: "system", defaultModel: "grok-4-latest" });
+        await saveConfig(dir, { autoRecap: true, defaultModel: "grok-4-latest" });
         await Promise.all([
-          saveConfig(dir, { theme: "dark" }),
+          saveConfig(dir, { autoRecap: false }),
           saveConfig(dir, { defaultModel: `grok-4-fast-${i}` }),
         ]);
         const loaded = await loadConfig(dir);
-        expect(loaded.theme).toBe("dark");
+        expect(loaded.autoRecap).toBe(false);
         expect(loaded.defaultModel).toBe(`grok-4-fast-${i}`);
       }
     } finally {

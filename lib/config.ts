@@ -18,7 +18,6 @@ export type Config = {
   apiKey?: string;
   defaultModel: string;
   bindHost: "127.0.0.1" | "0.0.0.0";
-  theme: "light" | "dark" | "system";
   autoRecap: boolean;
   includeLastChapterFullText: boolean;
   styleDefaults?: StyleRules;
@@ -30,7 +29,6 @@ export type Config = {
 export const DEFAULT_CONFIG: Config = {
   defaultModel: process.env.SCRIPTR_DEFAULT_MODEL ?? "grok-4-latest",
   bindHost: "127.0.0.1",
-  theme: "system",
   autoRecap: true,
   includeLastChapterFullText: false,
   updates: { checkOnLaunch: true },
@@ -171,9 +169,6 @@ function normalizeConfigFromFile(value: unknown): Partial<Config> {
   if (value.bindHost === "127.0.0.1" || value.bindHost === "0.0.0.0") {
     out.bindHost = value.bindHost;
   }
-  if (value.theme === "light" || value.theme === "dark" || value.theme === "system") {
-    out.theme = value.theme;
-  }
   if (typeof value.autoRecap === "boolean") out.autoRecap = value.autoRecap;
   if (typeof value.includeLastChapterFullText === "boolean") {
     out.includeLastChapterFullText = value.includeLastChapterFullText;
@@ -233,9 +228,6 @@ function mergeConfig(current: Config, partial: Partial<Config>): Config {
   }
   if (hasOwn(partial, "bindHost") && partial.bindHost !== undefined) {
     next.bindHost = partial.bindHost;
-  }
-  if (hasOwn(partial, "theme") && partial.theme !== undefined) {
-    next.theme = partial.theme;
   }
   if (hasOwn(partial, "autoRecap") && partial.autoRecap !== undefined) {
     next.autoRecap = partial.autoRecap;
