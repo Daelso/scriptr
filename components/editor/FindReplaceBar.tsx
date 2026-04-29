@@ -202,7 +202,7 @@ export function FindReplaceBar({ editor, mode, onModeChange, onClose }: FindRepl
           onClose();
         }
       }}
-      className="mb-2 flex flex-col gap-1.5 rounded-md border bg-muted/40 p-2 text-sm shadow-sm"
+      className="sticky top-0 z-20 mb-2 flex flex-col gap-1.5 rounded-md border bg-background/95 p-2 text-sm shadow-sm backdrop-blur-sm"
     >
       <div className="flex items-center gap-2">
         <Input
