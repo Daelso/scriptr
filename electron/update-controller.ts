@@ -9,11 +9,25 @@ export type AutoUpdaterLike = {
   autoDownload: boolean;
   autoInstallOnAppQuit: boolean;
   on(
-    event: "update-available" | "update-not-available" | "update-downloaded" | "error",
+    event:
+      | "update-available"
+      | "update-not-available"
+      | "update-downloaded"
+      | "download-progress"
+      | "error",
     listener: (info?: unknown) => void,
   ): unknown;
   checkForUpdates(): Promise<unknown>;
   quitAndInstall(): void;
+};
+
+// Subset of electron-updater's Logger interface we actually call.
+// Production wires this to the file-backed logger in update-log.ts;
+// tests can pass a stub or omit it entirely.
+export type ControllerLogger = {
+  info(message?: unknown): void;
+  warn(message?: unknown): void;
+  error(message?: unknown): void;
 };
 
 export type UpdateControllerDeps = {
@@ -21,6 +35,7 @@ export type UpdateControllerDeps = {
   autoUpdater: AutoUpdaterLike;
   getCurrentVersion: () => string;
   broadcast: (state: UpdateState) => void;
+  logger?: ControllerLogger;
 };
 
 export type UpdateController = {
@@ -35,6 +50,7 @@ export type UpdateController = {
 
 export function createUpdateController(deps: UpdateControllerDeps): UpdateController {
   const { dataDir, autoUpdater, getCurrentVersion, broadcast } = deps;
+  const log: ControllerLogger = deps.logger ?? noopLogger;
 
   autoUpdater.autoDownload = true;
   // Install on next quit if the user just closes the app normally.
@@ -80,12 +96,17 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
   }
 
   autoUpdater.on("update-available", (info) => {
-    if (state.kind !== "checking") return;
+    log.info(`event: update-available ${describeInfo(info)}`);
+    if (state.kind !== "checking") {
+      log.warn(`ignored update-available — state is ${state.kind}`);
+      return;
+    }
     const version = readVersion(info);
     setState({ kind: "downloading", version });
   });
 
-  autoUpdater.on("update-not-available", () => {
+  autoUpdater.on("update-not-available", (info) => {
+    log.info(`event: update-not-available ${describeInfo(info)}`);
     if (state.kind !== "checking") return;
     // Await persistence before settling so the in-flight checkNow() promise
     // resolves only once `config.json` reflects the new lastCheckedAt. A
@@ -105,7 +126,32 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
     })();
   });
 
+  // electron-updater fires download-progress every ~250ms during a
+  // download. We only log the first event (so the log shows "download
+  // started, target=X bytes") and then every 25% milestone, to keep the
+  // log readable without losing the signal that a download was making
+  // progress before it failed.
+  let lastProgressBucket = -1;
+  autoUpdater.on("download-progress", (raw) => {
+    const p = raw as { percent?: number; total?: number; transferred?: number } | undefined;
+    if (!p) return;
+    const pct = typeof p.percent === "number" ? Math.floor(p.percent) : 0;
+    const bucket = Math.floor(pct / 25);
+    if (lastProgressBucket === -1 && typeof p.total === "number") {
+      log.info(`event: download-progress started (target=${p.total} bytes)`);
+    }
+    if (bucket > lastProgressBucket) {
+      log.info(
+        `event: download-progress ${pct}% ` +
+          `(${p.transferred ?? "?"}/${p.total ?? "?"} bytes)`,
+      );
+      lastProgressBucket = bucket;
+    }
+  });
+
   autoUpdater.on("update-downloaded", (info) => {
+    log.info(`event: update-downloaded ${describeInfo(info)}`);
+    lastProgressBucket = -1;
     // Two valid entry points: from "downloading" (normal flow) or from
     // "checking" (a previously-downloaded update is already on disk and
     // electron-updater fires the event without going through "available").
@@ -122,11 +168,11 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
   });
 
   autoUpdater.on("error", (err) => {
-    // Only react if a check was in-flight or a download was running. After
-    // we've already settled to error/downloaded/idle, late errors are noise.
+    // Always log — even errors that arrive after we've already settled
+    // are useful diagnostic context. Only the state transition is gated.
+    log.error(err);
     if (state.kind !== "checking" && state.kind !== "downloading") return;
-    const message = err instanceof Error ? err.message : "update failed";
-    console.error("[updater] check failed:", message);
+    const message = formatErrorMessage(err, state.kind);
     settle({ kind: "error", message });
   });
 
@@ -138,9 +184,12 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
     // NOT wait for the in-flight check (when there is one) to settle. The
     // caller observes the in-flight outcome via the broadcast channel.
     if (state.kind === "checking" || state.kind === "downloading" || state.kind === "downloaded") {
+      log.info(`checkNow ignored — state is ${state.kind}`);
       return state;
     }
+    log.info(`checkNow starting (currentVersion=${getCurrentVersion()})`);
     setState({ kind: "checking" });
+    lastProgressBucket = -1;
     const promise = new Promise<UpdateState>((resolve) => {
       resolveInFlight = resolve;
     });
@@ -153,8 +202,9 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
       // guard above is stale here — event handlers may have mutated `state`
       // while we awaited checkForUpdates, and the freshly-typed return of
       // getState() reflects that the value can still be "checking".
+      log.error(err);
       if (getState().kind === "checking") {
-        const message = err instanceof Error ? err.message : "update check failed";
+        const message = formatErrorMessage(err, "checking");
         settle({ kind: "error", message });
       }
     }
@@ -163,9 +213,10 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
 
   async function installNow(): Promise<UpdateState> {
     if (state.kind !== "downloaded") {
-      console.warn("[updater] installNow ignored — state is", state.kind);
+      log.warn(`installNow ignored — state is ${state.kind}`);
       return state;
     }
+    log.info(`installNow — relaunching to install ${state.version}`);
     autoUpdater.quitAndInstall();
     return state;
   }
@@ -184,3 +235,31 @@ function readVersion(info: unknown): string {
   }
   return "unknown";
 }
+
+// Compose the user-facing error string. Includes the error code (e.g.
+// `ERR_UPDATER_NO_PUBLISHED_VERSIONS`, `ENOTFOUND`) when present so the
+// user has a self-diagnosable handle, plus a phase prefix so they can
+// tell "couldn't reach GitHub" from "download stalled mid-stream". The
+// renderer further sanitizes home-directory paths before display.
+function formatErrorMessage(err: unknown, phase: "checking" | "downloading"): string {
+  const phaseLabel = phase === "downloading" ? "while downloading" : "while checking for updates";
+  if (err instanceof Error) {
+    const code = (err as { code?: unknown }).code;
+    const codeSuffix = typeof code === "string" && code.length > 0 ? ` [${code}]` : "";
+    return `${err.message}${codeSuffix} (${phaseLabel})`;
+  }
+  if (typeof err === "string") return `${err} (${phaseLabel})`;
+  return `Unknown error ${phaseLabel}`;
+}
+
+function describeInfo(info: unknown): string {
+  if (!info || typeof info !== "object") return "";
+  const v = (info as { version?: unknown }).version;
+  return typeof v === "string" ? `(version=${v})` : "";
+}
+
+const noopLogger: ControllerLogger = {
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+};
