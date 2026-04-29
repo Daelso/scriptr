@@ -152,6 +152,18 @@
   border-radius: 2px;
 }
 
+/* prosemirror-search match highlights. The plugin tags every match with
+ * `ProseMirror-search-match` and the currently-focused one (matching the
+ * editor's selection) with `ProseMirror-active-search-match`. */
+.ProseMirror-search-match {
+  background-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  border-radius: 2px;
+}
+.ProseMirror-active-search-match {
+  background-color: color-mix(in srgb, var(--primary) 50%, transparent);
+  border-radius: 2px;
+}
+
 /* Author note (web reader).
  *
  * The note HTML is built by `buildAuthorNoteHtml` and rendered into the
