@@ -27,16 +27,22 @@ describe("preload — scriptrUpdates bridge", () => {
     invoke.mockClear();
   });
 
-  it("exposes a global named 'scriptrUpdates' with exactly three methods", async () => {
+  it("exposes a global named 'scriptrUpdates' with exactly four methods", async () => {
     await import("@/electron/preload");
     const api = findExposed("scriptrUpdates");
     expect(api).toBeDefined();
     expect(typeof api!.checkNow).toBe("function");
     expect(typeof api!.installNow).toBe("function");
     expect(typeof api!.getState).toBe("function");
+    expect(typeof api!.getLogPath).toBe("function");
     // No accidental ipcRenderer leak
     expect((api as Record<string, unknown>).ipcRenderer).toBeUndefined();
-    expect(Object.keys(api!).sort()).toEqual(["checkNow", "getState", "installNow"]);
+    expect(Object.keys(api!).sort()).toEqual([
+      "checkNow",
+      "getLogPath",
+      "getState",
+      "installNow",
+    ]);
   });
 
   it("checkNow invokes the 'updates:check' IPC channel", async () => {
@@ -62,5 +68,14 @@ describe("preload — scriptrUpdates bridge", () => {
     invoke.mockResolvedValueOnce({ kind: "idle", lastCheckedAt: null, currentVersion: "0.3.0" });
     await api.getState();
     expect(invoke).toHaveBeenCalledWith("updates:get-state");
+  });
+
+  it("getLogPath invokes 'updates:get-log-path' and returns the path string", async () => {
+    await import("@/electron/preload");
+    const api = findExposed("scriptrUpdates")!;
+    invoke.mockResolvedValueOnce("/home/u/data/logs/updates.log");
+    const r = await api.getLogPath();
+    expect(invoke).toHaveBeenCalledWith("updates:get-log-path");
+    expect(r).toBe("/home/u/data/logs/updates.log");
   });
 });

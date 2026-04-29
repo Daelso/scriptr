@@ -93,12 +93,14 @@ function click(el: HTMLElement) {
 
 function setBridge(
   state: UpdateState,
-  opts: { checkNow?: Mock; installNow?: Mock } = {},
+  opts: { checkNow?: Mock; installNow?: Mock; getLogPath?: Mock } = {},
 ) {
   window.scriptrUpdates = {
     getState: vi.fn().mockResolvedValue(state),
     checkNow: opts.checkNow ?? vi.fn().mockResolvedValue(state),
     installNow: opts.installNow ?? vi.fn().mockResolvedValue(undefined),
+    getLogPath:
+      opts.getLogPath ?? vi.fn().mockResolvedValue("/tmp/data/logs/updates.log"),
   } as typeof window.scriptrUpdates;
 }
 
@@ -240,5 +242,36 @@ describe("SettingsForm — Updates section", () => {
     mounted = mount();
     await waitForLoaded(mounted.container);
     expect(findButton(mounted.container, /check for updates/i)).toBeNull();
+  });
+
+  it('renders a "View update log" button that opens the log via the shell bridge', async () => {
+    const getLogPath = vi
+      .fn()
+      .mockResolvedValue("/home/u/.../data/logs/updates.log");
+    const openFile = vi.fn().mockResolvedValue(undefined);
+
+    setBridge(
+      { kind: "error", message: "test failure (while downloading)" },
+      { getLogPath },
+    );
+    // Stub the (separate) shell bridge that openUpdateLog defers to so
+    // we don't need a real Electron host.
+    (window as unknown as { scriptr?: unknown }).scriptr = {
+      pickFolder: vi.fn(),
+      revealInFolder: vi.fn(),
+      openFile,
+    };
+
+    mounted = mount();
+    await waitForLoaded(mounted.container);
+    const btn = findButton(mounted.container, /view update log/i);
+    expect(btn).not.toBeNull();
+    click(btn!);
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(getLogPath).toHaveBeenCalledTimes(1);
+    expect(openFile).toHaveBeenCalledWith("/home/u/.../data/logs/updates.log");
+
+    delete (window as unknown as { scriptr?: unknown }).scriptr;
   });
 });

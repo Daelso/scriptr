@@ -32,15 +32,20 @@ describe("network-filter — shouldAllow", () => {
     expect(shouldAllow(new URL("http://api.x.ai/v1/chat"), base)).toBe(false);
   });
 
-  it("allows update hosts (api.github.com, github.com, objects.githubusercontent.com) over https", () => {
+  it("allows update hosts over https", () => {
     expect(shouldAllow(new URL("https://api.github.com/repos/x/y/releases/latest"), base)).toBe(true);
     expect(shouldAllow(new URL("https://github.com/Daelso/scriptr/releases/download/v1/latest.yml"), base)).toBe(true);
     expect(shouldAllow(new URL("https://objects.githubusercontent.com/abc/def"), base)).toBe(true);
+    // Current GitHub asset CDN — the installer download 302-redirects here.
+    // Missing this host was a candidate cause of "downloading then can't
+    // connect" when electron-updater is wired through the default session.
+    expect(shouldAllow(new URL("https://release-assets.githubusercontent.com/github-production-release-asset/abc?sig=xyz"), base)).toBe(true);
   });
 
   it("blocks update hosts over http (https-only)", () => {
     expect(shouldAllow(new URL("http://api.github.com/repos/x/y/releases/latest"), base)).toBe(false);
     expect(shouldAllow(new URL("http://objects.githubusercontent.com/abc"), base)).toBe(false);
+    expect(shouldAllow(new URL("http://release-assets.githubusercontent.com/abc"), base)).toBe(false);
   });
 
   it("blocks arbitrary hosts", () => {

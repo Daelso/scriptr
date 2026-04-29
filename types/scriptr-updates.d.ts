@@ -6,6 +6,7 @@ declare global {
       checkNow(): Promise<UpdateState>;
       installNow(): Promise<void>;
       getState(): Promise<UpdateState>;
+      getLogPath(): Promise<string>;
     };
   }
 }

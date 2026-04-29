@@ -46,6 +46,9 @@ export function crashesLog(dataDir: string) {
 export function apiErrorsLog(dataDir: string) {
   return join(logsDir(dataDir), "api-errors.log");
 }
+export function updatesLog(dataDir: string) {
+  return join(logsDir(dataDir), "updates.log");
+}
 export function bundlesDir(dataDir: string) {
   return join(dataDir, "bundles");
 }

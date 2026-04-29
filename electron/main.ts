@@ -16,8 +16,9 @@ import { createUpdateController, type UpdateController } from "./update-controll
 import { buildAppMenu } from "./menu";
 import { GITHUB_REPO_PATH } from "./repo";
 import { loadConfig } from "../lib/config";
-import { blockedRequestsLog, crashesLog } from "../lib/storage/paths";
+import { blockedRequestsLog, crashesLog, updatesLog } from "../lib/storage/paths";
 import { logCrash } from "./crash-log";
+import { createUpdateLogger } from "./update-log";
 
 const isDev = !app.isPackaged;
 let serverHandle: ServerHandle | null = null;
@@ -346,10 +347,19 @@ async function createMainWindow(
   //    window is closed and a new one is created via dock-icon activate, the
   //    controller broadcasts to the live window — not the destroyed one.
   if (!updateController) {
+    // One logger instance, shared between electron-updater (so its own
+    // INFO/WARN/ERROR lines land in the file) and the controller (so
+    // every state transition lands in the same chronological log).
+    // electron-updater's Logger interface has an optional debug() that
+    // we deliberately omit on the controller path — wiring it both
+    // places would double-log the controller's own messages.
+    const updateLog = createUpdateLogger(dataDir);
+    autoUpdater.logger = updateLog;
     updateController = createUpdateController({
       dataDir,
       autoUpdater,
       getCurrentVersion: () => app.getVersion(),
+      logger: updateLog,
       broadcast: (state) => {
         const target = mainWindow;
         if (!target || target.isDestroyed()) return;
@@ -450,6 +460,12 @@ async function main(): Promise<void> {
   ipcMain.handle("updates:check", () => updateController?.checkNow() ?? null);
   ipcMain.handle("updates:install", () => updateController?.installNow() ?? null);
   ipcMain.handle("updates:get-state", () => updateController?.getState() ?? null);
+  // Path lookup for the "View update log" affordance in Settings. The
+  // renderer routes the resulting path through the existing
+  // shell:openFile handler, which restricts opens to data-dir-rooted
+  // paths via pathIsUnderAllowedRoot — so this exposes only a string
+  // the user could already discover by browsing their data folder.
+  ipcMain.handle("updates:get-log-path", () => updatesLog(dataDir));
 
   // 6. Create the window — application menu set once for all platforms.
   await createMainWindow(dataDir, needsOnboarding, updatesEnabled);
