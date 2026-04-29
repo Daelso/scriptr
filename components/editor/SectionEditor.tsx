@@ -109,8 +109,12 @@ export function SectionEditor({
 
   // Find/replace bar visibility. null = hidden; "find" = find-only;
   // "replace" = find+replace. Opened via Cmd/Ctrl+F or Cmd/Ctrl+H.
-  // The ref mirrors the state so the editor's handleKeyDown closure (set
-  // once at editor creation) can read the current value without re-binding.
+  //
+  // The ref mirrors the state because `useEditor`'s `editorProps` (including
+  // `handleKeyDown`) are SNAPSHOTTED at editor creation, not reactive — so
+  // a closure over `findBarMode` would always see `null`. We sync the ref in
+  // a useEffect (writing during render is forbidden), then read it from the
+  // keydown handler. Don't "fix" this by inlining `findBarMode`.
   const [findBarMode, setFindBarMode] = useState<FindBarMode | null>(null);
   const findBarModeRef = useRef<FindBarMode | null>(null);
   useEffect(() => {

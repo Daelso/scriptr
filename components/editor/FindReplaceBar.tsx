@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Editor } from "@tiptap/react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { type Editor, useEditorState } from "@tiptap/react";
 import {
   SearchQuery,
   findNext,
@@ -27,62 +27,48 @@ interface FindReplaceBarProps {
  * Find / find-and-replace bar bound to a single Tiptap (ProseMirror) editor.
  * Driven by `prosemirror-search` — see lib/tiptap/search-extension.ts.
  *
- * Keybinds (when the find/replace inputs have focus):
- *  - Enter           — next match
- *  - Shift+Enter     — previous match
- *  - Esc             — close (clears highlights)
- *  - Tab             — moves to the next control (browser default)
+ * Keybinds (when find/replace inputs have focus):
+ *  - Enter        — next match
+ *  - Shift+Enter  — previous match
+ *  - Esc          — close (clears highlights, returns focus to editor)
+ *
+ * Esc also closes the bar from any focused control (handled at the wrapper),
+ * so a user who clicked Replace All and then hits Esc gets the same dismissal.
  */
 export function FindReplaceBar({ editor, mode, onModeChange, onClose }: FindReplaceBarProps) {
   const [query, setQuery] = useState("");
   const [replacement, setReplacement] = useState("");
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [wholeWord, setWholeWord] = useState(false);
+  const [announcement, setAnnouncement] = useState("");
   const findInputRef = useRef<HTMLInputElement>(null);
   const replaceInputRef = useRef<HTMLInputElement>(null);
 
-  // Trigger a re-render on any editor transaction so the match counter and
-  // active-match index stay in sync with the editor state.
-  const [, forceUpdate] = useState({});
+  // Push the active SearchQuery into the prosemirror-search plugin whenever
+  // the user changes the inputs. Meta-only transaction (no doc change), so
+  // this does NOT fire the editor's onUpdate / dirty the autosave buffer.
   useEffect(() => {
-    const handler = () => forceUpdate({});
-    editor.on("transaction", handler);
-    return () => {
-      editor.off("transaction", handler);
-    };
-  }, [editor]);
-
-  // Build the active SearchQuery from current bar state.
-  const buildQuery = useCallback(
-    (search: string, replace: string): SearchQuery =>
-      new SearchQuery({
-        search,
-        replace,
-        caseSensitive,
-        wholeWord,
-      }),
-    [caseSensitive, wholeWord],
-  );
-
-  // Push the query into the prosemirror-search plugin whenever it changes.
-  useEffect(() => {
-    const tr = setSearchState(editor.state.tr, buildQuery(query, replacement));
+    const tr = setSearchState(
+      editor.state.tr,
+      new SearchQuery({ search: query, replace: replacement, caseSensitive, wholeWord }),
+    );
     editor.view.dispatch(tr);
-  }, [editor, query, replacement, buildQuery]);
+  }, [editor, query, replacement, caseSensitive, wholeWord]);
 
-  // Focus the appropriate input on mount + when mode changes.
+  // On mode change, focus the input that just appeared (or stayed) so the
+  // user can type immediately without an extra Tab. Also runs on initial
+  // mount, replacing the previous "focus on mount" effect.
   useEffect(() => {
-    const target = mode === "replace" && replaceInputRef.current?.value
-      ? replaceInputRef.current
-      : findInputRef.current;
+    const target = mode === "replace" ? replaceInputRef.current : findInputRef.current;
     target?.focus();
     target?.select();
   }, [mode]);
 
-  // Cleanup: clear highlights + active query when the bar unmounts.
+  // Cleanup: clear highlights + active query when the bar unmounts. The view
+  // may already be torn down (parent unmount → useEditor disposes the view),
+  // hence the try/catch — narrowly scoped to the dispatch only.
   useEffect(() => {
     return () => {
-      // The editor view may already be destroyed (e.g., parent unmounting).
       try {
         const tr = setSearchState(editor.state.tr, new SearchQuery({ search: "" }));
         editor.view.dispatch(tr);
@@ -92,64 +78,95 @@ export function FindReplaceBar({ editor, mode, onModeChange, onClose }: FindRepl
     };
   }, [editor]);
 
-  // Match counter + current-active index, derived from the plugin's
-  // decoration set. `getMatchHighlights().find()` returns decorations in
-  // document order, so the active index is just whichever decoration overlaps
-  // the current selection.
-  const { total, current } = useMemo(() => {
-    if (query === "") return { total: 0, current: 0 };
-    const decos = getMatchHighlights(editor.state).find();
-    const sel = editor.state.selection;
-    let activeIdx = 0;
-    for (let i = 0; i < decos.length; i++) {
-      const d = decos[i];
-      if (d.from === sel.from && d.to === sel.to) {
-        activeIdx = i + 1;
-        break;
+  // Match counter + active-match index, derived from the plugin's decoration
+  // set. `useEditorState` re-evaluates on every transaction with reference
+  // equality on the returned object — exactly what we need for the counter
+  // and the disabled-state of replace buttons.
+  const { total, current } = useEditorState({
+    editor,
+    selector: ({ editor: e }) => {
+      if (query === "") return { total: 0, current: 0 };
+      const decos = getMatchHighlights(e.state).find();
+      const sel = e.state.selection;
+      let activeIdx = 0;
+      for (let i = 0; i < decos.length; i++) {
+        const d = decos[i];
+        if (d.from === sel.from && d.to === sel.to) {
+          activeIdx = i + 1;
+          break;
+        }
       }
-    }
-    return { total: decos.length, current: activeIdx };
-    // Re-run on every transaction (forceUpdate ticks the dependency)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editor, query, caseSensitive, wholeWord, editor.state]);
+      return { total: decos.length, current: activeIdx };
+    },
+    equalityFn: (a, b) => a.total === b?.total && a.current === b?.current,
+  }) ?? { total: 0, current: 0 };
+
+  const announce = useCallback((msg: string) => setAnnouncement(msg), []);
+
+  const announceForCount = useCallback(
+    (active: number, totalNow: number) => {
+      if (totalNow === 0) {
+        announce("No matches");
+      } else {
+        announce(`Match ${active || 1} of ${totalNow}`);
+      }
+    },
+    [announce],
+  );
 
   const next = useCallback(() => {
     if (query === "") return;
     findNext(editor.state, editor.view.dispatch);
     editor.view.focus();
-  }, [editor, query]);
+    // Counter updates via useEditorState on the next paint; for the SR
+    // announcement we read the post-transaction selection synchronously.
+    const decos = getMatchHighlights(editor.state).find();
+    const sel = editor.state.selection;
+    const idx = decos.findIndex((d) => d.from === sel.from && d.to === sel.to);
+    announceForCount(idx >= 0 ? idx + 1 : 0, decos.length);
+  }, [editor, query, announceForCount]);
 
   const prev = useCallback(() => {
     if (query === "") return;
     findPrev(editor.state, editor.view.dispatch);
     editor.view.focus();
-  }, [editor, query]);
+    const decos = getMatchHighlights(editor.state).find();
+    const sel = editor.state.selection;
+    const idx = decos.findIndex((d) => d.from === sel.from && d.to === sel.to);
+    announceForCount(idx >= 0 ? idx + 1 : 0, decos.length);
+  }, [editor, query, announceForCount]);
 
   const doReplace = useCallback(() => {
-    if (query === "") return;
-    // replaceCurrent replaces the active selection if it matches; if nothing
-    // is selected yet, jump to the first match instead so the user's first
-    // click on Replace doesn't silently no-op.
+    if (query === "" || total === 0) return;
+    // replaceCurrent only acts when the selection IS the active match;
+    // if the user's caret is elsewhere, jump to the next match first so
+    // their first Replace click never silently no-ops.
     const sel = editor.state.selection;
     const decos = getMatchHighlights(editor.state).find();
     const onMatch = decos.some((d) => d.from === sel.from && d.to === sel.to);
     if (!onMatch) {
       findNext(editor.state, editor.view.dispatch);
+      announce(`Match 1 of ${decos.length}`);
       return;
     }
     replaceCurrent(editor.state, editor.view.dispatch);
     findNext(editor.state, editor.view.dispatch);
-  }, [editor, query]);
+    const after = getMatchHighlights(editor.state).find();
+    announce(after.length === 0 ? "Replaced; no more matches" : `Replaced; ${after.length} remaining`);
+  }, [editor, query, total, announce]);
 
   const doReplaceAll = useCallback(() => {
-    if (query === "") return;
+    if (query === "" || total === 0) return;
+    const before = total;
     replaceAll(editor.state, editor.view.dispatch);
-  }, [editor, query]);
+    announce(`Replaced ${before} match${before === 1 ? "" : "es"}`);
+  }, [editor, query, total, announce]);
 
   const onInputKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
       if (e.key === "Escape") {
         e.preventDefault();
+        e.stopPropagation();
         onClose();
       } else if (e.key === "Enter") {
         e.preventDefault();
@@ -160,21 +177,25 @@ export function FindReplaceBar({ editor, mode, onModeChange, onClose }: FindRepl
     [next, prev, onClose],
   );
 
-  const counter =
+  const counterText =
     query === ""
       ? ""
       : total === 0
-        ? "0/0"
-        : `${current === 0 ? "·" : current}/${total}`;
+        ? "No matches"
+        : current === 0
+          ? `${total} match${total === 1 ? "" : "es"}`
+          : `${current} of ${total}`;
+
+  const replaceDisabled = query === "" || total === 0;
 
   return (
     <div
-      role="dialog"
-      aria-label={mode === "replace" ? "Find and replace" : "Find"}
+      role="search"
+      aria-label={mode === "replace" ? "Find and replace in section" : "Find in section"}
       onKeyDown={(e) => {
-        // Catch Escape anywhere in the bar (e.g., after clicking a button,
-        // when focus is no longer on an input). The input-level handler
-        // covers the typing-then-Esc path; this covers the clicking path.
+        // Catches Escape after a button click (when focus isn't on an input).
+        // Input-level handlers stopPropagation, so this only fires for
+        // non-input descendants.
         if (e.key === "Escape") {
           e.preventDefault();
           e.stopPropagation();
@@ -193,11 +214,8 @@ export function FindReplaceBar({ editor, mode, onModeChange, onClose }: FindRepl
           aria-label="Find"
           className="h-8 flex-1"
         />
-        <span
-          aria-live="polite"
-          className="min-w-[3.5rem] text-center text-xs tabular-nums text-muted-foreground"
-        >
-          {counter}
+        <span className="min-w-[5.5rem] text-center text-xs tabular-nums text-muted-foreground">
+          {counterText}
         </span>
         <Button
           type="button"
@@ -248,8 +266,8 @@ export function FindReplaceBar({ editor, mode, onModeChange, onClose }: FindRepl
           variant="ghost"
           size="sm"
           aria-pressed={mode === "replace"}
-          aria-label={mode === "replace" ? "Hide replace" : "Show replace"}
-          title={mode === "replace" ? "Hide replace" : "Replace…"}
+          aria-label="Toggle replace mode"
+          title="Toggle replace mode"
           className={mode === "replace" ? "bg-accent" : ""}
           onClick={() => onModeChange(mode === "replace" ? "find" : "replace")}
         >
@@ -277,14 +295,31 @@ export function FindReplaceBar({ editor, mode, onModeChange, onClose }: FindRepl
             aria-label="Replace"
             className="h-8 flex-1"
           />
-          <Button type="button" variant="outline" size="sm" onClick={doReplace}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={replaceDisabled}
+            onClick={doReplace}
+          >
             Replace
           </Button>
-          <Button type="button" variant="outline" size="sm" onClick={doReplaceAll}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={replaceDisabled}
+            onClick={doReplaceAll}
+          >
             Replace all
           </Button>
         </div>
       )}
+      {/* Hidden live region — only updated on explicit nav/replace actions
+          so screen readers don't get a torrent on every keystroke. */}
+      <div role="status" aria-live="polite" className="sr-only">
+        {announcement}
+      </div>
     </div>
   );
 }
