@@ -40,4 +40,11 @@ COPY --from=builder --chown=node:node /app/public ./public
 
 USER node
 EXPOSE 3000
+
+# Image-level healthcheck so the image is self-contained for non-compose
+# users (Portainer, Watchtower, k8s probes that read it). Compose can still
+# override with its own HEALTHCHECK; both forms hit /api/health the same way.
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=30s \
+  CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
 CMD ["node", "server.js"]
