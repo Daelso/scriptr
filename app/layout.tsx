@@ -3,6 +3,7 @@ import "./globals.css";
 import { TopBar } from "@/components/layout/TopBar";
 import { Toaster } from "@/components/ui/sonner";
 import { UpdateReadyToast } from "@/components/desktop/UpdateReadyToast";
+import { ThemeProvider } from "@/components/theme-provider";
 
 export const metadata: Metadata = {
   title: "scriptr",
@@ -15,12 +16,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body className="font-sans antialiased">
-        <TopBar />
-        <main>{children}</main>
-        <Toaster />
-        <UpdateReadyToast />
+        <ThemeProvider>
+          <TopBar />
+          <main>{children}</main>
+          <Toaster />
+          <UpdateReadyToast />
+        </ThemeProvider>
       </body>
     </html>
   );
