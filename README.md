@@ -6,6 +6,123 @@ Privacy is a design pillar, not an afterthought. The app runs entirely on your m
 
 ---
 
+## Docker (browser hosting)
+
+Run scriptr's browser variant in a container — same Next.js app and
+privacy posture as the desktop build, just headless. Suited for
+home-server / NAS / VPS use; **not** a multi-user SaaS deployment.
+
+### Quick start
+
+```bash
+curl -O https://raw.githubusercontent.com/Daelso/scriptr/main/docker-compose.yml
+curl -o .env https://raw.githubusercontent.com/Daelso/scriptr/main/.env.example
+# edit .env and set XAI_API_KEY
+docker compose up -d
+```
+
+Then open <http://127.0.0.1:3000>.
+
+If you see permission errors writing to `./data/`, either:
+
+```bash
+sudo chown -R 1000:1000 ./data
+```
+
+…or add `user: "${UID}:${GID}"` to the `scriptr:` service in
+`docker-compose.yml` so the container writes as your host user.
+
+### ⚠️ There is no authentication
+
+Scriptr binds to `127.0.0.1` by default — only the host machine can
+reach it. **If you change the port mapping to expose it to your LAN
+or the internet, anyone who can reach port 3000 can read every story
+in `data/`, generate new content, and burn through your xAI credits.**
+Always put scriptr behind a reverse proxy with auth before exposing it.
+
+### LAN access
+
+Edit the `ports:` line in `docker-compose.yml`:
+
+```yaml
+ports:
+  - "0.0.0.0:3000:3000"
+```
+
+Reminder: "LAN" includes every device on your wifi, including guests.
+
+### Internet exposure with Caddy
+
+Minimal `Caddyfile` that fronts scriptr with HTTPS (Let's Encrypt) and
+HTTP basic auth:
+
+```caddyfile
+scriptr.example.com {
+  basic_auth {
+    you JDJhJDEwJEVCNmd...   # use `caddy hash-password` to generate
+  }
+  reverse_proxy 127.0.0.1:3000
+}
+```
+
+This is a starting point, not the only option — Traefik, nginx, and
+authelia/authentik all work the same way.
+
+### Building from source
+
+If you'd rather build the image locally than pull from GHCR, edit
+`docker-compose.yml` in place — comment the `image:` line and uncomment
+the `build: .` line below it:
+
+```diff
+-    image: ghcr.io/daelso/scriptr:edge
+-    # build: .
++    # image: ghcr.io/daelso/scriptr:edge
++    build: .
+```
+
+Then `docker compose up -d --build`.
+
+### Updating
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+`:edge` follows main HEAD (the compose default while we're pre-1.0).
+For a stable pin, change `docker-compose.yml` to use
+`ghcr.io/daelso/scriptr:latest` (most recent tagged release) or a
+specific version like `ghcr.io/daelso/scriptr:0.7.0`.
+
+(Note: `ghcr.io/daelso/...` is lowercase even though the GitHub org is
+`Daelso` — GHCR namespaces are forced lowercase.)
+
+### Backups
+
+Stop the container (or take a filesystem snapshot) and `tar` the
+`data/` directory. That's the entire backup.
+
+### Troubleshooting
+
+- **Permission denied writing to `data/`** — see the chown / user note
+  in Quick start. The container runs as UID 1000.
+- **Port 3000 already in use** — change the host side of the port
+  mapping (e.g., `"127.0.0.1:3001:3000"`).
+- **Container restarts in a loop** — check `docker logs scriptr`. The
+  most common cause is bind-mount permission errors writing to `/data`
+  (see the `chown` / `user:` note above). Less commonly: port conflict
+  on the host side of the mapping, or an OOM kill.
+- **Generation returns 500** — check `XAI_API_KEY` in `.env` is set
+  and valid. The container itself stays healthy in this case (the
+  healthcheck doesn't depend on the key); only generation routes fail.
+  Edit `.env` and `docker compose restart` to pick up the change.
+- **Absolute URLs (EPUB exports, author-note QR codes) point at the
+  wrong host behind a reverse proxy** — make sure your proxy is
+  forwarding `X-Forwarded-Host` and `X-Forwarded-Proto` correctly. If
+  it persists, file an issue.
+
+---
+
 ## Privacy — what this app sends externally, and to whom
 
 **Principle:** Only prose ever leaves the machine, and only to Grok. Everything else stays local.
