@@ -11,6 +11,16 @@ services:
     # build: .            # uncomment (and comment image:) to build from source
     container_name: scriptr
     restart: unless-stopped
+    init: true                  # PID-1 reaper: forwards signals, reaps zombies
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true             # /data and /tmp are the only writable paths
+    tmpfs:
+      - /tmp                    # EPUB pipeline writes QR PNGs here
+    mem_limit: 2g
+    pids_limit: 512
     ports:
       - "127.0.0.1:3000:3000"
     env_file:
@@ -26,4 +36,4 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 20s
+      start_period: 30s
