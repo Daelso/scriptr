@@ -81,6 +81,11 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  /* Find/replace match highlights. Amber is unmistakable against the neutral
+   * shadcn palette, and the lightness here keeps black foreground text well
+   * above 4.5:1 contrast. */
+  --search-match: oklch(0.88 0.16 90);
+  --search-match-active: oklch(0.78 0.19 65);
 }
 
 .dark {
@@ -115,6 +120,9 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+  /* Darker amber for dark mode — keeps near-white foreground text legible. */
+  --search-match: oklch(0.42 0.13 80);
+  --search-match-active: oklch(0.6 0.18 60);
 }
 
 @layer base {
@@ -149,6 +157,20 @@
 .tiptap-section-editor.ProseMirror:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 4px;
+  border-radius: 2px;
+}
+
+/* prosemirror-search match highlights. The plugin tags every match with
+ * `ProseMirror-search-match` and the currently-focused one (matching the
+ * editor's selection) with `ProseMirror-active-search-match`. Solid colors
+ * (not alpha-blended over `--accent`/`--primary`) so contrast is predictable
+ * against any underlying background. */
+.ProseMirror-search-match {
+  background-color: var(--search-match);
+  border-radius: 2px;
+}
+.ProseMirror-active-search-match {
+  background-color: var(--search-match-active);
   border-radius: 2px;
 }
 
