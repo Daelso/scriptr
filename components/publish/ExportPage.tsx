@@ -39,6 +39,8 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
   const [isElectron, setIsElectron] = useState(false);
   const [outputDirDraft, setOutputDirDraft] = useState<string>("");
   const savedOutputDirRef = useRef<string>("");
+  const [coverVersion, setCoverVersion] = useState(() => Date.now());
+  const [coverLoaded, setCoverLoaded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -160,6 +162,7 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
     } else {
       toast.success("Cover uploaded.");
     }
+    setCoverVersion(Date.now());
   };
 
   const handleBuild = async () => {
@@ -301,12 +304,29 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
         <div>
           <h2 className="text-sm font-semibold mb-2">Cover image</h2>
           <div
-            className="border border-dashed border-border rounded aspect-[2/3] max-w-[240px] flex items-center justify-center bg-muted text-xs text-muted-foreground text-center p-4 cursor-pointer"
+            className="relative border border-dashed border-border rounded aspect-[2/3] max-w-[240px] flex items-center justify-center bg-muted text-xs text-muted-foreground text-center p-4 cursor-pointer overflow-hidden group"
             onClick={() => fileRef.current?.click()}
           >
-            Drop JPEG/PNG here or click to choose.
-            <br />
-            1600×2560 recommended.
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={`/api/stories/${story.slug}/cover?t=${coverVersion}`}
+              alt=""
+              data-testid="cover-preview"
+              className={`absolute inset-0 h-full w-full object-cover ${coverLoaded ? "" : "hidden"}`}
+              onLoad={() => setCoverLoaded(true)}
+              onError={() => setCoverLoaded(false)}
+            />
+            {coverLoaded ? (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/55 text-white opacity-0 group-hover:opacity-100 transition-opacity">
+                Click to replace
+              </div>
+            ) : (
+              <span>
+                Drop JPEG/PNG here or click to choose.
+                <br />
+                1600×2560 recommended.
+              </span>
+            )}
           </div>
           <input
             ref={fileRef}
