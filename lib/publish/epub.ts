@@ -18,6 +18,7 @@ import { pathToFileURL } from "node:url";
 import type { Chapter, Story } from "@/lib/types";
 import type { EpubVersion } from "@/lib/storage/paths";
 import { buildAuthorNoteHtml, type ResolvedAuthorNote } from "@/lib/publish/author-note";
+import { logger } from "@/lib/logger";
 
 export {
   EPUB_STYLESHEET,
@@ -246,6 +247,16 @@ export async function buildEpubBytes(input: EpubInput): Promise<Uint8Array> {
 // We surface every non-info / non-usage message as a warning string.
 // Validation is non-blocking — any throw is caught and reported as a single
 // warning instead of propagating.
+//
+// Liveness probe: epubcheck-ts's CJS bundle does a top-level
+// `require('libxml2-wasm')`, but libxml2-wasm is ESM-only with top-level
+// await. Under Electron's packaged Next.js bundle, webpack's interop
+// returns a partial namespace where `XmlDocument` is undefined, and every
+// per-XHTML parse throws "Cannot read properties of undefined (reading
+// 'fromString')" — which the validator dutifully reports as one HTM-004
+// per file. Detect that broken state up front and skip validation rather
+// than emit a flood of false errors. Revisit when libxml2-wasm or
+// epubcheck-ts ships a CJS-loadable path.
 type EpubcheckMessage = {
   id?: string;
   severity?: string;
@@ -268,7 +279,21 @@ type EpubcheckModule = {
 
 export type ValidationResult = { warnings: string[] };
 
+function libxmlParserAvailable(): boolean {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const xml = require("libxml2-wasm") as { XmlDocument?: { fromString?: unknown } };
+    return typeof xml?.XmlDocument?.fromString === "function";
+  } catch {
+    return false;
+  }
+}
+
 export async function validateEpub(bytes: Uint8Array): Promise<ValidationResult> {
+  if (!libxmlParserAvailable()) {
+    logger.info("epub-validate: skipped (libxml2-wasm XmlDocument unavailable in this runtime)");
+    return { warnings: [] };
+  }
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const mod = require("@likecoin/epubcheck-ts") as EpubcheckModule;
