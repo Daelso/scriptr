@@ -55,6 +55,8 @@
  *   POST /api/import/novelai/commit  (new-story mode)
  *   POST /api/import/novelai/parse
  *   POST /api/import/novelai/commit  (existing-story, reuses seeded slug)
+ *   POST /api/import/epub/parse
+ *   POST /api/import/epub/commit
  *   POST /api/stories/[slug]/export/epub  (with author-note configured —
  *     exercises the QR encoder + buildAuthorNoteHtml + epub-gen-memory path
  *     to assert the EPUB pipeline never phones home)
@@ -607,6 +609,49 @@ describe("no external egress from API routes", () => {
       }) as unknown as NextRequest;
       const res = await POST(req);
       expect(res.status).toBe(200);
+    }
+
+    // ── /api/import/epub/parse + commit ────────────────────────────────────
+    {
+      const { POST: epubParsePost } = await import("@/app/api/import/epub/parse/route");
+      const { POST: epubCommitPost } = await import("@/app/api/import/epub/commit/route");
+      const { readFile } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+
+      recorded.length = 0;
+      const epubBuf = await readFile(
+        join(__dirname, "..", "..", "lib", "epub", "__fixtures__", "sample-kdp.epub")
+      );
+      const form = new FormData();
+      form.set("file", new File([new Uint8Array(epubBuf)], "book.epub", { type: "application/epub+zip" }));
+      const parseRes = await epubParsePost(
+        new Request("http://localhost/api/import/epub/parse", { method: "POST", body: form }) as never
+      );
+      expect(parseRes.status).toBe(200);
+      expect(recorded).toEqual([]);
+
+      const parseBody = await parseRes.json() as {
+        data: { sessionId: string; proposed: { story: { title: string; description: string; keywords: string[]; authorPenName: string }; chapters: Array<{ navTitle: string; body: string; skippedByDefault: boolean }> } };
+      };
+      const include = parseBody.data.proposed.chapters
+        .filter((c) => !c.skippedByDefault)
+        .map((c) => ({ title: c.navTitle, body: c.body }));
+
+      recorded.length = 0;
+      const commitRes = await epubCommitPost(
+        new Request("http://localhost/api/import/epub/commit", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            sessionId: parseBody.data.sessionId,
+            story: parseBody.data.proposed.story,
+            importCover: true,
+            chapters: include,
+          }),
+        }) as never
+      );
+      expect(commitRes.status).toBe(200);
+      expect(recorded).toEqual([]);
     }
 
     // ── GET /api/bundles ───────────────────────────────────────────────────
