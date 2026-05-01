@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { NewStoryDialog } from "@/components/library/NewStoryDialog";
 import { NewStoryFromNovelAIDialog } from "@/components/import/NewStoryFromNovelAIDialog";
+import { NewStoryFromEpubDialog } from "@/components/import/NewStoryFromEpubDialog";
 import type { Story } from "@/lib/types";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -148,6 +149,7 @@ export function LibraryList() {
 
   const [newStoryOpen, setNewStoryOpen] = useState(false);
   const [novelaiOpen, setNovelaiOpen] = useState(false);
+  const [epubOpen, setEpubOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Story | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -187,6 +189,9 @@ export function LibraryList() {
           <Button variant="outline" onClick={() => setNovelaiOpen(true)}>
             Import from NovelAI
           </Button>
+          <Button variant="outline" onClick={() => setEpubOpen(true)}>
+            Import from EPUB
+          </Button>
         </div>
       ) : (
         /* ── Populated state ───────────────────────────────────────────── */
@@ -201,6 +206,9 @@ export function LibraryList() {
               </Button>
               <Button size="sm" variant="outline" onClick={() => setNovelaiOpen(true)}>
                 Import from NovelAI
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setEpubOpen(true)}>
+                Import from EPUB
               </Button>
             </div>
           </div>
@@ -224,6 +232,9 @@ export function LibraryList() {
 
       {/* ── Import from NovelAI dialog ────────────────────────────────── */}
       <NewStoryFromNovelAIDialog open={novelaiOpen} onOpenChange={setNovelaiOpen} />
+
+      {/* ── Import from EPUB dialog ───────────────────────────────────── */}
+      <NewStoryFromEpubDialog open={epubOpen} onOpenChange={setEpubOpen} />
 
       {/* ── Delete confirm dialog ─────────────────────────────────────── */}
       <DeleteConfirmDialog
