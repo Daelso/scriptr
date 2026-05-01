@@ -113,11 +113,37 @@ export async function POST(req: NextRequest) {
 
     return ok({ slug: story.slug, chapterIds });
   } catch (err) {
+    let rollbackError: string | null = null;
     if (createdSlug) {
-      await deleteStory(dataDir, createdSlug).catch(() => undefined);
+      try {
+        await deleteStory(dataDir, createdSlug);
+      } catch (delErr) {
+        rollbackError = delErr instanceof Error ? delErr.message : String(delErr);
+        logger.error(
+          `[epub/commit] deleteStory rollback failed for "${createdSlug}", trying direct rm`,
+          rollbackError
+        );
+        // Fallback: direct filesystem cleanup so a faulty storage helper
+        // doesn't leave orphan dirs.
+        try {
+          const { rm } = await import("node:fs/promises");
+          const { storyDir } = await import("@/lib/storage/paths");
+          await rm(storyDir(dataDir, createdSlug), { recursive: true, force: true });
+          rollbackError = null; // direct cleanup succeeded
+        } catch (rmErr) {
+          const rmMsg = rmErr instanceof Error ? rmErr.message : String(rmErr);
+          logger.error(`[epub/commit] direct rm also failed for "${createdSlug}"`, rmMsg);
+        }
+      }
     }
     const msg = err instanceof Error ? err.message : String(err);
     logger.error("[epub/commit] failed", msg);
+    if (rollbackError) {
+      return fail(
+        `Failed to write story files: ${msg}. Cleanup also failed (${rollbackError}); orphan story dir remains at "${createdSlug}" — please delete it manually before retrying.`,
+        500
+      );
+    }
     return fail(`Failed to write story files: ${msg}`, 500);
   } finally {
     if (cacheKey) deleteCover(cacheKey);

@@ -18,6 +18,7 @@ const FONT_OBFUSCATION_ALGS = new Set([
 const xmlParser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "@_",
+  removeNSPrefix: true,
   isArray: (name) => ["EncryptedData"].includes(name),
 });
 
