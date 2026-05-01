@@ -29,9 +29,9 @@ export type ParsedOpf = {
 const xmlParser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "@_",
+  removeNSPrefix: true,
   isArray: (name) =>
     [
-      "dc:subject",
       "subject",
       "item",
       "itemref",
@@ -95,13 +95,13 @@ export function parseOpf(xml: string, opfPath: string): ParsedOpf {
   const opfDir = dirname(opfPath);
 
   const metaBlock = (pkg["metadata"] ?? {}) as Record<string, unknown>;
-  const title = flatString(asArray(metaBlock["dc:title"])[0] ?? metaBlock["dc:title"]);
+  const title = flatString(asArray(metaBlock["title"])[0] ?? metaBlock["title"]);
   if (!title) throw new EpubParseError("This EPUB has no title in its metadata.");
 
-  const creator = flatString(asArray(metaBlock["dc:creator"])[0] ?? metaBlock["dc:creator"]);
-  const description = flatString(metaBlock["dc:description"]);
-  const language = flatString(metaBlock["dc:language"]);
-  const subjects = asArray(metaBlock["dc:subject"])
+  const creator = flatString(asArray(metaBlock["creator"])[0] ?? metaBlock["creator"]);
+  const description = flatString(metaBlock["description"]);
+  const language = flatString(metaBlock["language"]);
+  const subjects = asArray(metaBlock["subject"])
     .map((s) => flatString(s))
     .filter((s) => s.length > 0);
 

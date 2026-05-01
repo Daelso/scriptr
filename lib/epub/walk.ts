@@ -116,10 +116,21 @@ async function walkFromNav(
     for (let i = 0; i < group.entries.length; i++) {
       const cur = group.entries[i];
       const next = group.entries[i + 1];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const startNode: DomNode | null = cur.anchor
-        ? (($(`#${cur.anchor}`).first()[0] as DomNode | undefined) ?? null)
-        : null;
+      let startNode: DomNode | null;
+      if (cur.anchor) {
+        const found = $(`#${cur.anchor}`).first()[0];
+        if (!found) {
+          // Anchor specified but not present in the document — emit empty
+          // chapter (will be skippedByDefault) rather than silently consuming
+          // content meant for another chapter.
+          logger.warn(`[epub/walk] nav anchor #${cur.anchor} not found in ${group.file}`);
+          out.push(makeDraft({ title: cur.title, body: "", href: group.file, source: "nav" }));
+          continue;
+        }
+        startNode = found as unknown as DomNode;
+      } else {
+        startNode = null; // legitimate anchorless first entry
+      }
       const endId = next?.anchor ?? null;
       const slice = sliceFromNode($, startNode, endId);
       out.push(
