@@ -20,7 +20,9 @@
     "typecheck": "tsc --noEmit",
     "build:electron": "tsc -p electron/tsconfig.json && tsc-alias -p electron/tsconfig.json",
     "package:electron": "npm run build && npm run build:electron && electron-builder",
-    "dev:electron": "npm run build:electron && electron ."
+    "dev:electron": "npm run build:electron && electron .",
+    "build:fixtures": "tsx scripts/build-epub-fixtures.mts",
+    "pretest": "npm run build:fixtures"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.0",
