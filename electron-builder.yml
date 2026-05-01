@@ -17,9 +17,21 @@ files:
 
 # Next.js standalone output — copied into resources/app, where main.ts
 # expects it under process.resourcesPath/app.
+#
+# IMPORTANT: electron-builder's extraResources auto-excludes any
+# `node_modules/` subdirectory from the source — that's a hardcoded
+# filter applied to filesystem subtrees, not a config knob. So
+# `.next/standalone` copies everything EXCEPT its bundled
+# `node_modules/`, and the resulting server.js crashes at startup with
+# `Cannot find module 'next'`. Add a separate entry for the bundled
+# node_modules so it copies through. Affected v0.10.0 (smoke-launch
+# failed on linux+windows; macOS happened to work because of a prior
+# install state). Fixed for v0.11.x.
 extraResources:
   - from: ".next/standalone"
     to: "app"
+  - from: ".next/standalone/node_modules"
+    to: "app/node_modules"
   - from: ".next/static"
     to: "app/.next/static"
   - from: "public"
