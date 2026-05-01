@@ -112,11 +112,11 @@ describe("NewStoryFromEpubDialog", () => {
     await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
     await flush();
 
-    // Chapter navTitles are rendered as <Input value={...}>, so check input values.
-    const doc = m.container.ownerDocument;
-    expect(doc.querySelector('input[value="Copyright"]')).toBeTruthy();
-    expect(doc.querySelector('input[value="Chapter 1"]')).toBeTruthy();
-    expect(doc.querySelector('input[value="Chapter 2"]')).toBeTruthy();
+    // Chapter navTitles are rendered as plain <span> text when collapsed.
+    const docText = m.container.ownerDocument.body.textContent ?? "";
+    expect(docText).toContain("Copyright");
+    expect(docText).toContain("Chapter 1");
+    expect(docText).toContain("Chapter 2");
 
     fetchMock.mockRestore();
     m.unmount();

@@ -215,7 +215,7 @@ export function NewStoryFromEpubDialog({ open, onOpenChange }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-4xl">
+      <DialogContent className="max-w-4xl overflow-y-auto max-h-[calc(100dvh-4rem)]">
         <DialogHeader>
           <DialogTitle>Import from EPUB</DialogTitle>
           <DialogDescription>
@@ -391,7 +391,7 @@ function PreviewBlock({
           {form.chapters.length} chapters detected. {skippedCount} excluded by default
           (copyright pages, etc.) — check to include. {includeCount} will be imported.
         </p>
-        <div className="flex flex-col divide-y rounded border">
+        <div className="flex flex-col divide-y rounded border max-h-72 overflow-y-auto">
           {form.chapters.map((ch, i) => (
             <EpubChapterRow
               key={`${ch.navTitle}-${i}`}
@@ -421,11 +421,15 @@ function EpubChapterRow({
           onChange={(e) => onChange({ include: e.target.checked })}
           className="size-4"
         />
-        <Input
-          value={row.navTitle}
-          onChange={(e) => onChange({ navTitle: e.target.value })}
-          className="flex-1"
-        />
+        {row.expanded ? (
+          <Input
+            value={row.navTitle}
+            onChange={(e) => onChange({ navTitle: e.target.value })}
+            className="flex-1"
+          />
+        ) : (
+          <span className="flex-1 truncate text-sm">{row.navTitle}</span>
+        )}
         <span className="text-xs text-muted-foreground">{row.wordCount} words</span>
         <span
           className={`rounded border px-1.5 py-0.5 text-[10px] uppercase ${
