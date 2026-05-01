@@ -18,6 +18,19 @@ describe("toSlug", () => {
     expect(toSlug("")).toBe("untitled");
     expect(toSlug("!!!")).toBe("untitled");
   });
+  it("caps long inputs at 80 chars by default", () => {
+    const long = "a".repeat(200);
+    expect(toSlug(long)).toBe("a".repeat(80));
+  });
+  it("strips trailing dash when the cap lands on a separator", () => {
+    // 79 a's + ' b' dasherizes to ('a'*79)+'-b' (len 81); cap at 80 yields
+    // 'a'*79+'-' which would be invalid, so the trailing dash is stripped.
+    const input = "a".repeat(79) + " b";
+    expect(toSlug(input)).toBe("a".repeat(79));
+  });
+  it("respects an explicit cap override", () => {
+    expect(toSlug("hello-world", 5)).toBe("hello");
+  });
 });
 
 describe("uniqueSlug", () => {
