@@ -222,6 +222,11 @@ export async function buildEpubBytes(input: EpubInput): Promise<Uint8Array> {
         cover: coverPath ? pathToFileURL(coverPath).href : undefined,
         ignoreFailedDownloads: true,
         css: EPUB_STYLESHEET,
+        // epub-gen-memory's chapter template auto-prepends `<h1>{title}</h1>`
+        // to every chapter's content. Our renderers (chapter, title-page,
+        // author-note) already include their own heading, so the default
+        // duplicates the title in the rendered EPUB. Opt out.
+        prependChapterTitles: false,
       },
       content,
       version,
