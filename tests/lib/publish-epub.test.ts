@@ -365,6 +365,64 @@ async function unzipXhtmls(bytes: Uint8Array | Buffer): Promise<Record<string, s
   return out;
 }
 
+// Regression guard: epub-gen-memory's chapter template defaults to
+// `prependChapterTitles: true`, which auto-injects an extra <h1>{title}</h1>
+// at the top of every chapter. Our renderChapterPreviewHtml already emits
+// its own heading + subtitle, so the default produced two title rows in the
+// rendered EPUB (and a doubled story title on the title page). This test
+// builds an EPUB and asserts each chapter file has at most one <h1>.
+describe("buildEpubBytes does not duplicate chapter titles", () => {
+  function story(): Story {
+    return {
+      slug: "no-dup-titles",
+      title: "Solo Title",
+      authorPenName: "S. Author",
+      description: "Test that titles aren't doubled.",
+      copyrightYear: 2026,
+      language: "en",
+      bisacCategory: "FIC027000",
+      keywords: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      chapterOrder: ["c1"],
+    };
+  }
+  function chapters(): Chapter[] {
+    return [
+      {
+        id: "c1",
+        title: "The Greeting",
+        summary: "",
+        beats: [],
+        prompt: "",
+        recap: "",
+        sections: [{ id: "s1", content: "Hello." }],
+        wordCount: 1,
+      },
+    ];
+  }
+
+  it("emits at most one <h1> per chapter xhtml (no auto-prepend)", async () => {
+    const bytes = await buildEpubBytes({ story: story(), chapters: chapters() });
+    const xhtmls = await unzipXhtmls(bytes);
+    const chapterFiles = Object.entries(xhtmls).filter(
+      ([path]) =>
+        // epub-gen-memory uses names like `<n>_<slug>.xhtml` for chapters;
+        // exclude the library's nav.xhtml / titlepage / TOC.
+        /\/\d+_/.test(path) || /chapter/i.test(path),
+    );
+    expect(chapterFiles.length).toBeGreaterThan(0);
+    for (const [path, html] of chapterFiles) {
+      const h1Count = (html.match(/<h1\b/gi) ?? []).length;
+      expect(h1Count, `expected ≤1 <h1> in ${path}`).toBeLessThanOrEqual(1);
+      // And the duplication symptom: the chapter title text should not
+      // appear in two separate top-level headings.
+      const headingTitleMatches = html.match(/<h1[^>]*>[^<]*The Greeting[^<]*<\/h1>/g) ?? [];
+      expect(headingTitleMatches.length).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
 describe("buildEpubBytes author-note integration", () => {
   function story(): Story {
     return {

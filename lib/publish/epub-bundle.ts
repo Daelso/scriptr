@@ -69,6 +69,10 @@ export async function buildBundleEpubBytes(input: BundleEpubInput): Promise<Uint
         cover: coverPath ? pathToFileURL(coverPath).href : undefined,
         ignoreFailedDownloads: true,
         css: EPUB_STYLESHEET,
+        // See lib/publish/epub.ts for the rationale: our chapter renderers
+        // emit their own headings, so we don't want epub-gen-memory's
+        // auto-prepended <h1>{title}</h1> on top.
+        prependChapterTitles: false,
       },
       content,
       version,
