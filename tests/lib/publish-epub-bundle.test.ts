@@ -239,4 +239,46 @@ describe("buildBundleEpubBytes", () => {
     const text = await readAllText(bytes);
     expect(text).not.toContain("A note from the author");
   });
+
+  // Regression: bundle TOC was listing each single-chapter story twice
+  // (once for the auto-injected title page, once for the chapter itself).
+  // The title page should still render in the spine as a section divider,
+  // but should be omitted from the TOC when it would duplicate the next
+  // entry's text.
+  it("does not duplicate single-chapter stories in the bundle TOC", async () => {
+    const stories = new Map([
+      ["fb", { story: story("fb", "The Family Bitch"), chapters: [chapter("c1", "The Family Bitch")] }],
+      ["khd", { story: story("khd", "Knotty Housewife Destruction"), chapters: [chapter("c2", "Knotty Housewife Destruction")] }],
+      ["mc", { story: story("mc", "Multi Chapter"), chapters: [chapter("c3", "First Real Chapter"), chapter("c4", "Second Chapter")] }],
+    ]);
+    const bytes = await buildBundleEpubBytes({
+      bundle: bundle([
+        { storySlug: "fb" },
+        // Title-override that ends in a parenthetical like "(The Collector, #1)" —
+        // chapter title is the bare form. After stripping the parenthetical
+        // the two strings match and the title page should be hidden from TOC.
+        { storySlug: "khd", titleOverride: "Knotty Housewife Destruction (The Collector, #1)" },
+        { storySlug: "mc" },
+      ]),
+      stories,
+    });
+    const zip = await JSZip.loadAsync(bytes);
+    const tocXhtml = await zip.file("OEBPS/toc.xhtml")!.async("string");
+    const tocNcx = await zip.file("OEBPS/toc.ncx")!.async("string");
+
+    // Each redundant title string must appear at most once in each TOC.
+    const countOccurrences = (haystack: string, needle: string) =>
+      haystack.split(needle).length - 1;
+    expect(countOccurrences(tocXhtml, "The Family Bitch")).toBe(1);
+    expect(countOccurrences(tocXhtml, "Knotty Housewife Destruction")).toBe(1);
+    expect(countOccurrences(tocNcx, "The Family Bitch")).toBe(1);
+    expect(countOccurrences(tocNcx, "Knotty Housewife Destruction")).toBe(1);
+
+    // Multi-chapter story keeps its title-page TOC entry as a divider, so
+    // "Multi Chapter" still appears once (title page) and its chapter
+    // titles each appear once.
+    expect(countOccurrences(tocXhtml, "Multi Chapter")).toBe(1);
+    expect(countOccurrences(tocXhtml, "First Real Chapter")).toBe(1);
+    expect(countOccurrences(tocXhtml, "Second Chapter")).toBe(1);
+  });
 });

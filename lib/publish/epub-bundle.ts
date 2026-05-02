@@ -21,10 +21,29 @@ export type BundleEpubInput = {
   authorNote?: ResolvedAuthorNote;
 };
 
+// Bundle title-page chapters act as "story dividers" in the TOC. When the
+// first chapter of a story shares its title with the displayed story title
+// (common for single-chapter imports, or after a title-override like
+// "Foo (The Collector, #1)" wrapping a chapter "Foo"), the title-page TOC
+// entry is just noise — readers see the same row twice in a row. Strip
+// trailing parentheticals before comparing so overrides still match their
+// underlying chapter.
+function titlesAreRedundant(displayTitle: string, chapterTitle: string): boolean {
+  const strip = (s: string) => s.replace(/\s*\([^)]*\)\s*$/, "").trim();
+  const norm = (s: string) => strip(s).toLowerCase().replace(/\s+/g, " ").trim();
+  const a = norm(displayTitle);
+  const b = norm(chapterTitle);
+  return a.length > 0 && a === b;
+}
+
 export async function buildBundleEpubBytes(input: BundleEpubInput): Promise<Uint8Array> {
   const { bundle, stories, coverPath, version = 3, authorNote } = input;
 
-  const content: Array<{ title: string; content: string }> = [];
+  const content: Array<{
+    title: string;
+    content: string;
+    excludeFromToc?: boolean;
+  }> = [];
   for (const ref of bundle.stories) {
     const resolved = stories.get(ref.storySlug);
     if (!resolved) continue;
@@ -33,9 +52,16 @@ export async function buildBundleEpubBytes(input: BundleEpubInput): Promise<Uint
     const displayTitle = ref.titleOverride ?? resolved.story.title;
     const displayDescription = ref.descriptionOverride ?? resolved.story.description;
 
+    const firstChapterTitle = resolved.chapters[0].title || "";
+    const titlePageDuplicates = titlesAreRedundant(displayTitle, firstChapterTitle);
+
     content.push({
       title: displayTitle,
       content: renderStoryTitlePageHtml(displayTitle, displayDescription),
+      // Keep the title page in the spine (visible while reading, acts as a
+      // visual story divider), but drop it from the TOC when its label would
+      // duplicate the very next entry.
+      ...(titlePageDuplicates ? { excludeFromToc: true } : {}),
     });
 
     resolved.chapters.forEach((chapter, idx) => {
@@ -69,6 +95,10 @@ export async function buildBundleEpubBytes(input: BundleEpubInput): Promise<Uint
         cover: coverPath ? pathToFileURL(coverPath).href : undefined,
         ignoreFailedDownloads: true,
         css: EPUB_STYLESHEET,
+        // See lib/publish/epub.ts for the rationale: our chapter renderers
+        // emit their own headings, so we don't want epub-gen-memory's
+        // auto-prepended <h1>{title}</h1> on top.
+        prependChapterTitles: false,
       },
       content,
       version,

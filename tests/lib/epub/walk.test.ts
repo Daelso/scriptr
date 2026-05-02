@@ -38,7 +38,10 @@ describe("walkChapters — Pattern X (KDP fixture, 1 file per chapter)", () => {
     const ch1 = chapters[2];
     expect(ch1.body).toContain("Mira stepped through the gate");
     expect(ch1.body).toContain("\n\n");
-    expect(ch1.body).toContain("Chapter 1: Arrival");
+    // The leading <h1> chapter heading is stripped — its text lives in
+    // navTitle, and including it in body would render the title twice on
+    // export (once as the chapter heading, once as the first paragraph).
+    expect(ch1.body).not.toContain("Chapter 1: Arrival");
   });
 
   it("populates wordCount", async () => {
@@ -103,6 +106,45 @@ describe("walkChapters — cross-file boundary", () => {
     expect(chapters).toHaveLength(2);
     expect(chapters[0].body).toContain("second chapter introduces");
     expect(chapters[0].body).toContain("third chapter resolves");
+  });
+});
+
+describe("walkChapters — leading-heading stripping", () => {
+  it("removes the first <h1> from a single-file nav chapter", async () => {
+    // Inline fixture: single chapter whose body opens with <h1>{title}</h1>.
+    const xml = `<?xml version="1.0"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<body>
+  <h1>The Greeting</h1>
+  <p>Hello, world.</p>
+  <h2>Subsection</h2>
+  <p>Mid-chapter heading should survive.</p>
+</body>
+</html>`;
+    const archive = {
+      has: (p: string) => p === "OEBPS/c.xhtml",
+      readText: async () => xml,
+      readBytes: async () => new Uint8Array(),
+      paths: () => ["OEBPS/c.xhtml"],
+    };
+    const opf = {
+      epubVersion: 3 as const,
+      metadata: { title: "X", creator: "", description: "", subjects: [], language: "" },
+      manifest: new Map(),
+      spine: [],
+      coverManifestId: null,
+      opfDir: "OEBPS",
+    };
+    const nav = [{ title: "The Greeting", file: "OEBPS/c.xhtml" }];
+    const chapters = await walkChapters(archive, opf, nav);
+    expect(chapters).toHaveLength(1);
+    expect(chapters[0].navTitle).toBe("The Greeting");
+    // First heading text gone …
+    expect(chapters[0].body).not.toMatch(/^The Greeting/);
+    // … but the prose and a mid-body subheading survive.
+    expect(chapters[0].body).toContain("Hello, world.");
+    expect(chapters[0].body).toContain("Subsection");
+    expect(chapters[0].body).toContain("Mid-chapter heading should survive");
   });
 });
 

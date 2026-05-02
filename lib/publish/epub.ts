@@ -51,8 +51,17 @@ export type EpubGenFn = (
     cover?: string;
     ignoreFailedDownloads?: boolean;
     css?: string;
+    /** When false, skip the library's `<h1>{title}</h1>` auto-prepend. */
+    prependChapterTitles?: boolean;
   },
-  content: Array<{ title: string; content: string }>,
+  content: Array<{
+    title: string;
+    content: string;
+    /** When true, omit this chapter from the NAV/NCX TOC (still appears in
+     * the spine, so it's visible while reading). Used to suppress
+     * bundle title-page entries that would duplicate the next chapter. */
+    excludeFromToc?: boolean;
+  }>,
   version?: 2 | 3,
   verbose?: boolean,
 ) => Promise<Buffer>;
@@ -222,6 +231,11 @@ export async function buildEpubBytes(input: EpubInput): Promise<Uint8Array> {
         cover: coverPath ? pathToFileURL(coverPath).href : undefined,
         ignoreFailedDownloads: true,
         css: EPUB_STYLESHEET,
+        // epub-gen-memory's chapter template auto-prepends `<h1>{title}</h1>`
+        // to every chapter's content. Our renderers (chapter, title-page,
+        // author-note) already include their own heading, so the default
+        // duplicates the title in the rendered EPUB. Opt out.
+        prependChapterTitles: false,
       },
       content,
       version,
