@@ -46,6 +46,14 @@ jobs:
       - name: Next.js build
         run: npm run build
 
+      # The privacy egress test loads tests/privacy/ fixtures including a
+      # synthetic EPUB built by scripts/build-epub-fixtures.mts. `npm test`
+      # builds these via its `pretest` hook, but the privacy step below runs
+      # vitest directly and would miss the fixture if we relied on the hook
+      # ordering. Build them explicitly here.
+      - name: Build EPUB fixtures
+        run: npm run build:fixtures
+
       # Privacy gate, surfaced as its own labeled check so reviewers see it in
       # the PR status list. Without this split, a regression in the egress
       # test would still fail "Tests" but the privacy intent gets lost in the
