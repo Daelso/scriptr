@@ -51,6 +51,8 @@ export type EpubGenFn = (
     cover?: string;
     ignoreFailedDownloads?: boolean;
     css?: string;
+    /** When false, skip the library's `<h1>{title}</h1>` auto-prepend. */
+    prependChapterTitles?: boolean;
   },
   content: Array<{ title: string; content: string }>,
   version?: 2 | 3,
