@@ -67,6 +67,21 @@ function bodyHtml($: cheerio.CheerioAPI): string {
   return body.html() ?? "";
 }
 
+// EPUB chapters conventionally lead with <h1>/<h2> containing the chapter
+// title. We capture that title separately (from NAV or the heading itself),
+// so leaving it in the body causes the title to render twice on round-trip
+// export (once as the export's chapter heading, once as the first body
+// paragraph). Strip the first leading heading from each chapter's HTML
+// before markdown conversion. Mid-body headings are preserved.
+function stripLeadingHeading(html: string): string {
+  if (!html) return html;
+  // Wrap in a sentinel element so cheerio's html-mode auto-insertion of
+  // <html>/<body> doesn't disturb our serialisation round-trip.
+  const $ = cheerio.load(`<root>${html}</root>`, { xml: false });
+  $("root h1, root h2").first().remove();
+  return $("root").html() ?? html;
+}
+
 function sliceFromNode(
   $: cheerio.CheerioAPI,
   startNode: DomNode | null,
@@ -105,7 +120,7 @@ async function walkFromNav(
       out.push(
         makeDraft({
           title: group.entries[0].title,
-          body: htmlToMarkdown(bodyHtml($)),
+          body: htmlToMarkdown(stripLeadingHeading(bodyHtml($))),
           href: group.file,
           source: "nav",
         })
@@ -136,7 +151,7 @@ async function walkFromNav(
       out.push(
         makeDraft({
           title: cur.title,
-          body: htmlToMarkdown(slice),
+          body: htmlToMarkdown(stripLeadingHeading(slice)),
           href: group.file,
           source: "nav",
         })
@@ -167,7 +182,7 @@ async function walkFromSpine(
     out.push(
       makeDraft({
         title,
-        body: htmlToMarkdown(bodyHtml($)),
+        body: htmlToMarkdown(stripLeadingHeading(bodyHtml($))),
         href: entry.href,
         source: "spine",
       })
