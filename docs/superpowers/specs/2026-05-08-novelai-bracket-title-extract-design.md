@@ -81,7 +81,7 @@ const titled = applyBracketTitles(chapters);
 return finalize(titled, "...");
 ```
 
-Consequence: if a chapter's body is *only* a bracket line and nothing else, the body becomes empty after extraction but the chapter is **kept** (it has a non-empty `title`). The existing rule-split filter at [lib/novelai/split.ts:131](../../lib/novelai/split.ts#L131) drops chapters with empty body, but only runs *before* extraction, so a bracket-only chunk between two `***` rules would already have been dropped before extraction had a chance — meaning a bracket-only chunk in rule-split mode is silently lost today and continues to be lost. This is acceptable: a chunk with no prose isn't a real chapter. The unit and integration tests below cover this case explicitly so future readers don't get surprised.
+Consequence: if a chapter's body is *only* a bracket line and nothing else, the body becomes empty after extraction but the chapter is **kept** (it has a non-empty `title`). The existing rule-split filter at [lib/novelai/split.ts:131](../../lib/novelai/split.ts#L131) drops chunks whose joined-and-trimmed body is empty, but a bracket-only chunk like `[Lone Title]` is non-empty at filter time (length 12), so it survives the filter and reaches extraction — where it becomes `{ title: "Lone Title", body: "" }`, matching the single-chapter fallback's behavior for the same input. This is desirable and consistent.
 
 `applyBracketTitles` runs in all three split paths (`splitByChapterHeading`, `splitByHorizontalRules`, single-chapter fallback) so a bracket-titled chapter is detected regardless of which split source the file matched.
 
