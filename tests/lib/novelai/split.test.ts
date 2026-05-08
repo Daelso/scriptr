@@ -161,3 +161,115 @@ describe("splitProseIntoStories — priority ordering", () => {
     expect(r[0].chapters[0].body).toContain("***");
   });
 });
+
+describe("splitProseIntoStories — bracket-title extraction", () => {
+  it("extracts a [bracket] title in the single-chapter fallback path", () => {
+    const r = splitProseIntoStories("[Chosen by the Goddess]\n\nThe morning light spilled across the temple.");
+    expect(r).toHaveLength(1);
+    expect(r[0].splitSource).toBe("none");
+    expect(r[0].chapters).toHaveLength(1);
+    expect(r[0].chapters[0].title).toBe("Chosen by the Goddess");
+    expect(r[0].chapters[0].body).toBe("The morning light spilled across the temple.");
+    expect(r[0].chapters[0].body).not.toContain("[Chosen by the Goddess]");
+  });
+
+  it("extracts a [bracket] title in each chapter when split by horizontal rules", () => {
+    const prose = [
+      "[First Title]",
+      "",
+      "first chapter prose",
+      "",
+      "***",
+      "",
+      "[Second Title]",
+      "",
+      "second chapter prose",
+    ].join("\n");
+    const r = splitProseIntoStories(prose);
+    expect(r).toHaveLength(1);
+    expect(r[0].splitSource).toBe("scenebreak-fallback");
+    expect(r[0].chapters).toHaveLength(2);
+    expect(r[0].chapters[0].title).toBe("First Title");
+    expect(r[0].chapters[0].body).toBe("first chapter prose");
+    expect(r[0].chapters[1].title).toBe("Second Title");
+    expect(r[0].chapters[1].body).toBe("second chapter prose");
+  });
+
+  it("bracket REPLACES heading-derived title when both are present", () => {
+    const prose = [
+      "Chapter 3: Moonrise",
+      "",
+      "[Chosen by the Goddess]",
+      "",
+      "The morning light spilled across the temple.",
+    ].join("\n");
+    const r = splitProseIntoStories(prose);
+    expect(r).toHaveLength(1);
+    expect(r[0].splitSource).toBe("heading");
+    expect(r[0].chapters).toHaveLength(1);
+    // Bracket fully replaces "Moonrise" — assert the exact value, not a
+    // concatenation.
+    expect(r[0].chapters[0].title).toBe("Chosen by the Goddess");
+    expect(r[0].chapters[0].body).toBe("The morning light spilled across the temple.");
+    expect(r[0].chapters[0].body).not.toContain("Chapter 3");
+    expect(r[0].chapters[0].body).not.toContain("[Chosen by the Goddess]");
+  });
+
+  it("uses the bracket as the title when only Chapter N (no heading title) is present", () => {
+    const prose = [
+      "Chapter 5",
+      "",
+      "[Title From Bracket]",
+      "",
+      "body prose",
+    ].join("\n");
+    const r = splitProseIntoStories(prose);
+    expect(r[0].chapters).toHaveLength(1);
+    expect(r[0].splitSource).toBe("heading");
+    expect(r[0].chapters[0].title).toBe("Title From Bracket");
+    expect(r[0].chapters[0].body).toBe("body prose");
+  });
+
+  it("each story in a multi-story //// file gets its own bracket title extracted", () => {
+    const prose = [
+      "[Story One Title]",
+      "",
+      "first body",
+      "",
+      "////",
+      "",
+      "[Story Two Title]",
+      "",
+      "second body",
+    ].join("\n");
+    const r = splitProseIntoStories(prose);
+    expect(r).toHaveLength(2);
+    expect(r[0].splitSource).toBe("none");
+    expect(r[1].splitSource).toBe("none");
+    expect(r[0].chapters[0].title).toBe("Story One Title");
+    expect(r[0].chapters[0].body).toBe("first body");
+    expect(r[1].chapters[0].title).toBe("Story Two Title");
+    expect(r[1].chapters[0].body).toBe("second body");
+  });
+
+  it("leaves the chapter unchanged when no bracket title is present", () => {
+    // Regression guard for strict matching: this test passes both before
+    // and after wiring (the strict regex never matches mid-sentence
+    // brackets), so it is not part of the TDD red bar — it pins the
+    // invariant that inline brackets are NOT treated as titles.
+    const prose = "The morning light spilled across [a temple].\n\nMore prose.";
+    const r = splitProseIntoStories(prose);
+    expect(r[0].chapters[0].title).toBe("");
+    expect(r[0].chapters[0].body).toBe(prose);
+  });
+
+  it("keeps a bracket-only chunk in the single-chapter fallback (title set, body empty)", () => {
+    // No headings, no rules, no /// markers. Bracket-only body.
+    const r = splitProseIntoStories("[Title Only]");
+    expect(r).toHaveLength(1);
+    expect(r[0].splitSource).toBe("none");
+    expect(r[0].chapters).toHaveLength(1);
+    expect(r[0].chapters[0].title).toBe("Title Only");
+    expect(r[0].chapters[0].body).toBe("");
+  });
+});
