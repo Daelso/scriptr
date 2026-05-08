@@ -91,6 +91,20 @@ describe("extractBracketTitle", () => {
     expect(r.body).toBe(original);
   });
 
+  it("does not match a line with two adjacent bracket groups", () => {
+    const original = "[Setting] [Author's note]\n\nbody";
+    const r = extractBracketTitle(original);
+    expect(r.title).toBeNull();
+    expect(r.body).toBe(original);
+  });
+
+  it("does not match a line with bracket then text then bracket", () => {
+    const original = "[Title] continued [more]\n\nbody";
+    const r = extractBracketTitle(original);
+    expect(r.title).toBeNull();
+    expect(r.body).toBe(original);
+  });
+
   it("returns body='' for bracket-only input with no following prose", () => {
     const r = extractBracketTitle("[Title]");
     expect(r.title).toBe("Title");

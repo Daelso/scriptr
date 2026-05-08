@@ -1,6 +1,6 @@
 export type TitleExtractResult = { title: string | null; body: string };
 
-const BRACKET_LINE = /^\s*\[(.+?)\]\s*$/;
+const BRACKET_LINE = /^\s*\[([^\]]+)\]\s*$/;
 
 /**
  * If the first non-blank line of `body` is a bare bracket-wrapped title
