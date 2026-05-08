@@ -3,6 +3,7 @@ import type {
   StorySplit,
   SplitSource,
 } from "@/lib/novelai/types";
+import { extractBracketTitle } from "@/lib/novelai/title-extract";
 
 /**
  * Line containing a `////` story-split marker.
@@ -66,7 +67,7 @@ function splitChunkIntoChapters(lines: string[]): StorySplit {
   const ruleSplit = splitByHorizontalRules(lines);
   if (ruleSplit) return ruleSplit;
 
-  return finalize([{ title: "", body: chunkProse }], "none");
+  return finalize(applyBracketTitles([{ title: "", body: chunkProse }]), "none");
 }
 
 // Matches lines like:
@@ -104,7 +105,9 @@ function splitByChapterHeading(lines: string[]): StorySplit | null {
   }
 
   return finalize(
-    chapters.filter((c) => c.body.length > 0 || c.title.length > 0),
+    applyBracketTitles(
+      chapters.filter((c) => c.body.length > 0 || c.title.length > 0)
+    ),
     "heading"
   );
 }
@@ -130,7 +133,15 @@ function splitByHorizontalRules(lines: string[]): StorySplit | null {
     .map((c) => c.join("\n").trim())
     .filter((b) => b.length > 0)
     .map((body) => ({ title: "", body }));
-  return finalize(chapters, "scenebreak-fallback");
+  return finalize(applyBracketTitles(chapters), "scenebreak-fallback");
+}
+
+function applyBracketTitles(chapters: ProposedChapter[]): ProposedChapter[] {
+  return chapters.map((c) => {
+    const { title: bracket, body } = extractBracketTitle(c.body);
+    if (!bracket) return c;
+    return { title: bracket, body };
+  });
 }
 
 function finalize(
