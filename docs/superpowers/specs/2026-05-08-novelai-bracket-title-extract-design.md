@@ -64,7 +64,24 @@ function applyBracketTitles(chapters: ProposedChapter[]): ProposedChapter[] {
 
 When the bracket title is found, it **fully replaces** any existing title from the splitter (e.g. one captured from `Chapter 3: Moonrise`). Rationale: a bracket title is a deliberate authorial choice; a `Chapter N: Title` heading is a structural artifact. The user explicitly asked for bracket-wins.
 
-The chapter-number prefix the user described (`Chapter 3: Chosen by the Goddess`) is already rendered automatically everywhere chapters are shown (see [lib/publish/epub.ts:198](../../lib/publish/epub.ts#L198), [lib/publish/epub-bundle.ts:69](../../lib/publish/epub-bundle.ts#L69), [lib/publish/epub-preview.ts:146](../../lib/publish/epub-preview.ts#L146)) from chapter order, so storing the bracket text alone is correct — at order index 2 it will display as "Chapter 3 — Chosen by the Goddess" without any extra bookkeeping. This also keeps slugged filenames and EPUB nav clean (no embedded chapter numbers).
+The chapter-number prefix is already rendered automatically by every chapter-displaying surface from chapter order:
+
+- EPUB body: [lib/publish/epub-preview.ts:146](../../lib/publish/epub-preview.ts#L146) emits `<h1>Chapter N</h1>` plus a separate `<p class="chapter-subtitle">{title}</p>` per chapter.
+- EPUB TOC and per-chapter title metadata: [lib/publish/epub.ts:198](../../lib/publish/epub.ts#L198) and [lib/publish/epub-bundle.ts:69](../../lib/publish/epub-bundle.ts#L69) use `chapter.title || \`Chapter ${idx + 1}\``.
+
+So storing the bracket text alone in `chapter.title` is correct: at order index 2 the EPUB will render `<h1>Chapter 3</h1>` with `Chosen by the Goddess` as the subtitle, and the TOC entry will read `Chosen by the Goddess`. No embedded chapter numbers in `title`, which keeps slugged filenames and EPUB nav clean.
+
+### Ordering of post-processing steps
+
+`applyBracketTitles` runs **after** the existing empty-chunk filters in each split path. Concretely, the new helper is the last transformation before `finalize(...)`:
+
+```ts
+// after the existing .filter((c) => c.body.length > 0 || c.title.length > 0)
+const titled = applyBracketTitles(chapters);
+return finalize(titled, "...");
+```
+
+Consequence: if a chapter's body is *only* a bracket line and nothing else, the body becomes empty after extraction but the chapter is **kept** (it has a non-empty `title`). The existing rule-split filter at [lib/novelai/split.ts:131](../../lib/novelai/split.ts#L131) drops chapters with empty body, but only runs *before* extraction, so a bracket-only chunk between two `***` rules would already have been dropped before extraction had a chance — meaning a bracket-only chunk in rule-split mode is silently lost today and continues to be lost. This is acceptable: a chunk with no prose isn't a real chapter. The unit and integration tests below cover this case explicitly so future readers don't get surprised.
 
 `applyBracketTitles` runs in all three split paths (`splitByChapterHeading`, `splitByHorizontalRules`, single-chapter fallback) so a bracket-titled chapter is detected regardless of which split source the file matched.
 
@@ -95,12 +112,14 @@ This is pure, local string parsing inside `lib/novelai/`. No new API routes, no 
 - Handles `\r\n` line endings.
 - Does not match a multi-line bracket span (regex is per-line).
 - Does not match if the bracket has trailing prose on the same line: `[Title] and the morning light...` is left alone.
+- Bracket-only body (input is just `[Title]\n` with no prose after) returns `{ title: "Title", body: "" }`.
 
 ### Integration: `tests/lib/novelai/split.test.ts` (additions)
 
 (File may not exist yet; add it if not, otherwise extend.)
 
-- Heading-split + bracket-title combined: input has `Chapter 3: Moonrise\n\n[Chosen by the Goddess]\n\n...`. Resulting `ProposedChapter` has `title === "Chosen by the Goddess"` and `body` has no heading line and no bracket line.
+- Heading-split + bracket-title combined: input has `Chapter 3: Moonrise\n\n[Chosen by the Goddess]\n\n...`. Resulting `ProposedChapter` has `title === "Chosen by the Goddess"` (bracket fully **replaced** the heading-derived "Moonrise" — assert this exact value, not a concatenation) and `body` has no heading line and no bracket line.
+- Bracket-only chunk in single-chapter fallback: input is just `[Title]` with no other content. Result is one chapter with `title === "Title"`, `body === ""`.
 - Rule-split + bracket-title: chapter delimited by `***` opens with `[Title]\n\n...`. Resulting title is extracted, body cleaned.
 - Single-chapter fallback + bracket-title: no headings, no rules, just `[Title]\n\n<prose>`. Title extracted, body cleaned, `splitSource: "none"`.
 - Multi-story file (`////` markers) where each story has its own `[Title]` first line: each story's chapter ends up with the right extracted title.
