@@ -272,4 +272,22 @@ describe("splitProseIntoStories — bracket-title extraction", () => {
     expect(r[0].chapters[0].title).toBe("Title Only");
     expect(r[0].chapters[0].body).toBe("");
   });
+
+  it("preserves a bracket-only chunk in rule-split mode (title set, empty body)", () => {
+    const prose = [
+      "[Lone Title]",
+      "",
+      "***",
+      "",
+      "second body prose",
+    ].join("\n");
+    const r = splitProseIntoStories(prose);
+    expect(r).toHaveLength(1);
+    expect(r[0].splitSource).toBe("scenebreak-fallback");
+    expect(r[0].chapters).toHaveLength(2);
+    expect(r[0].chapters[0].title).toBe("Lone Title");
+    expect(r[0].chapters[0].body).toBe("");
+    expect(r[0].chapters[1].title).toBe("");
+    expect(r[0].chapters[1].body).toBe("second body prose");
+  });
 });
