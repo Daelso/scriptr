@@ -5,8 +5,10 @@
 // own package — see Task 1.7's note.
 import { app, BrowserWindow, Menu, dialog, shell, session, ipcMain } from "electron";
 import type { RenderProcessGoneDetails } from "electron";
-import { join } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, extname, join } from "node:path";
 import { isAbsolute, resolve as resolvePath, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 import { resolveDataDir, StartupCancelledError } from "./migrate";
 import { startNextServer, type ServerHandle, type ServerExitInfo } from "./server";
 import { autoUpdater } from "electron-updater";
@@ -146,6 +148,65 @@ ipcMain.handle("shell:openFile", async (_e, target: unknown) => {
   const errMsg = await shell.openPath(target);
   // shell.openPath returns "" on success and an error message string on failure.
   if (errMsg !== "") throw new Error(errMsg);
+});
+
+function paperbackPdfPathFor(htmlPath: string): string {
+  return htmlPath.replace(/\.html?$/i, ".pdf");
+}
+
+ipcMain.handle("paperback:printPdf", async (_e, target: unknown) => {
+  if (typeof target !== "string") throw new Error("path must be a string");
+  if (!isAbsolute(target)) throw new Error("path must be absolute");
+  const htmlPath = resolvePath(target);
+  const ext = extname(htmlPath).toLowerCase();
+  if (ext !== ".html" && ext !== ".htm") {
+    throw new Error("paperback source must be an HTML file");
+  }
+  if (!(await pathIsUnderAllowedRoot(htmlPath))) {
+    throw new Error("path is outside allowed roots");
+  }
+
+  const pdfPath = paperbackPdfPathFor(htmlPath);
+  if (!(await pathIsUnderAllowedRoot(pdfPath))) {
+    throw new Error("PDF path is outside allowed roots");
+  }
+
+  const pdfWindow = new BrowserWindow({
+    width: 900,
+    height: 1200,
+    show: false,
+    backgroundColor: "#ffffff",
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+      devTools: false,
+      javascript: false,
+      spellcheck: false,
+    },
+  });
+
+  pdfWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  const allowedFileUrl = pathToFileURL(htmlPath).href;
+  pdfWindow.webContents.on("will-navigate", (event, url) => {
+    if (url !== allowedFileUrl) event.preventDefault();
+  });
+
+  try {
+    await pdfWindow.loadFile(htmlPath);
+    const bytes = await pdfWindow.webContents.printToPDF({
+      displayHeaderFooter: false,
+      printBackground: true,
+      preferCSSPageSize: true,
+      margins: { marginType: "none" },
+    });
+    await mkdir(dirname(pdfPath), { recursive: true });
+    await writeFile(pdfPath, bytes);
+    return pdfPath;
+  } finally {
+    if (!pdfWindow.isDestroyed()) pdfWindow.destroy();
+  }
 });
 
 // ─── Crash handlers ─────────────────────────────────────────────────────────

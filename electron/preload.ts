@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld("scriptr", {
     ipcRenderer.invoke("shell:revealInFolder", path),
   openFile: (path: string): Promise<void> =>
     ipcRenderer.invoke("shell:openFile", path),
+  printPaperbackPdf: (htmlPath: string): Promise<string> =>
+    ipcRenderer.invoke("paperback:printPdf", htmlPath),
 });
 
 contextBridge.exposeInMainWorld("scriptrUpdates", {
