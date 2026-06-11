@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { NextRequest } from "next/server";
 import { createStory } from "@/lib/storage/stories";
 import { createImportedChapter } from "@/lib/storage/chapters";
-import { paperbackInteriorPath } from "@/lib/storage/paths";
+import { paperbackCoverPath, paperbackInteriorPath } from "@/lib/storage/paths";
 import { saveConfig } from "@/lib/config";
 
 describe("/api/stories/[slug]/export/paperback POST", () => {
@@ -57,12 +57,16 @@ describe("/api/stories/[slug]/export/paperback POST", () => {
     const body = await res.json();
     expect(body.ok).toBe(true);
     expect(body.data.path).toBe(paperbackInteriorPath(tmpDir, story.slug));
+    expect(body.data.coverPath).toBe(paperbackCoverPath(tmpDir, story.slug));
     expect(body.data.coverSpecPath.endsWith("-paperback-cover-spec.json")).toBe(true);
     expect(body.data.coverSpec.paperType).toBe("cream");
     expect(body.data.coverSpec.pageCount).toBe(100);
     expect((await stat(body.data.path)).isFile()).toBe(true);
     const html = await readFile(body.data.path, "utf-8");
     expect(html).toContain("Hello, paperback.");
+    const coverHtml = await readFile(body.data.coverPath, "utf-8");
+    expect(coverHtml).toContain("Book paperback cover");
+    expect(coverHtml).toContain("Paperback cover");
   });
 
   it("falls back to config.defaultExportDir when body.outputDir is absent", async () => {
@@ -78,6 +82,7 @@ describe("/api/stories/[slug]/export/paperback POST", () => {
       const body = await res.json();
       expect(body.ok).toBe(true);
       expect(body.data.path).toBe(join(out, `${story.slug}-paperback-interior.html`));
+      expect(body.data.coverPath).toBe(join(out, `${story.slug}-paperback-cover.html`));
     } finally {
       await rm(out, { recursive: true, force: true });
     }

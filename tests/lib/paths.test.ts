@@ -3,6 +3,7 @@ import {
   coverPath,
   exportsDir,
   epubPath,
+  paperbackCoverPath,
   paperbackCoverSpecPath,
   paperbackInteriorPath,
   bundlesDir,
@@ -43,6 +44,9 @@ describe("publishing paths", () => {
     );
     expect(paperbackCoverSpecPath(dataDir, slug)).toBe(
       "/data/stories/my-story/exports/my-story-paperback-cover-spec.json",
+    );
+    expect(paperbackCoverPath(dataDir, slug)).toBe(
+      "/data/stories/my-story/exports/my-story-paperback-cover.html",
     );
   });
 });

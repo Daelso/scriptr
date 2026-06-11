@@ -34,11 +34,17 @@ export function paperbackInteriorPath(dataDir: string, storySlug: string) {
 export function paperbackCoverSpecPath(dataDir: string, storySlug: string) {
   return join(exportsDir(dataDir, storySlug), `${storySlug}-paperback-cover-spec.json`);
 }
+export function paperbackCoverPath(dataDir: string, storySlug: string) {
+  return join(exportsDir(dataDir, storySlug), `${storySlug}-paperback-cover.html`);
+}
 export function customPaperbackInteriorPath(outputDir: string, storySlug: string) {
   return join(outputDir, `${storySlug}-paperback-interior.html`);
 }
 export function customPaperbackCoverSpecPath(outputDir: string, storySlug: string) {
   return join(outputDir, `${storySlug}-paperback-cover-spec.json`);
+}
+export function customPaperbackCoverPath(outputDir: string, storySlug: string) {
+  return join(outputDir, `${storySlug}-paperback-cover.html`);
 }
 export function coverPath(dataDir: string, storySlug: string) {
   return join(storyDir(dataDir, storySlug), "cover.jpg");
