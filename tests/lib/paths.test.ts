@@ -1,5 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { coverPath, exportsDir, epubPath, bundlesDir, bundleDir, bundleFile, bundleCoverPath, bundleExportsDir, bundleEpubPath } from "@/lib/storage/paths";
+import {
+  coverPath,
+  exportsDir,
+  epubPath,
+  paperbackCoverSpecPath,
+  paperbackInteriorPath,
+  bundlesDir,
+  bundleDir,
+  bundleFile,
+  bundleCoverPath,
+  bundleExportsDir,
+  bundleEpubPath,
+} from "@/lib/storage/paths";
 
 describe("publishing paths", () => {
   const dataDir = "/data";
@@ -23,6 +35,15 @@ describe("publishing paths", () => {
 
   it("epubPath version 2 and version 3 produce distinct paths", () => {
     expect(epubPath(dataDir, slug, 2)).not.toBe(epubPath(dataDir, slug, 3));
+  });
+
+  it("paperback paths land in exports with stable names", () => {
+    expect(paperbackInteriorPath(dataDir, slug)).toBe(
+      "/data/stories/my-story/exports/my-story-paperback-interior.html",
+    );
+    expect(paperbackCoverSpecPath(dataDir, slug)).toBe(
+      "/data/stories/my-story/exports/my-story-paperback-cover-spec.json",
+    );
   });
 });
 

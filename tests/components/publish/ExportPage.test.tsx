@@ -633,3 +633,132 @@ describe("ExportPage — success card actions", () => {
     }
   });
 });
+
+describe("ExportPage — paperback kit", () => {
+  beforeEach(() => {
+    mockFetch.mockClear();
+    (toast.error as ReturnType<typeof vi.fn>).mockClear();
+    (toast.success as ReturnType<typeof vi.fn>).mockClear();
+    delete (window as unknown as { scriptr?: unknown }).scriptr;
+  });
+
+  it("builds paperback kit with selected options and shows the result", async () => {
+    mockFetch
+      .mockResolvedValueOnce(settingsGetMock)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({
+          ok: true,
+          data: {
+            path: "/Users/chase/Books/test-paperback-interior.html",
+            coverSpecPath: "/Users/chase/Books/test-paperback-cover-spec.json",
+            bytes: 2048,
+            warnings: [],
+            coverSpec: {
+              trimSize: { id: "6x9", label: '6" x 9"', widthIn: 6, heightIn: 9 },
+              pageCount: 100,
+              paperType: "cream",
+              bleedIn: 0.125,
+              spineWidthIn: 0.25,
+              coverWidthIn: 12.5,
+              coverHeightIn: 9.25,
+              safeTextFromOutsideEdgeIn: 0.25,
+              spineTextAllowed: true,
+              spineTextSafeMarginIn: 0.0625,
+            },
+          },
+        }),
+      } as unknown as Response);
+
+    const { container, unmount } = mount(
+      <ExportPage story={baseStory} chapterCount={1} wordCount={500} />,
+    );
+    try {
+      const paperSelect = container.querySelector<HTMLSelectElement>(
+        '[data-testid="paperback-paper"]',
+      );
+      await act(async () => {
+        paperSelect!.value = "cream";
+        paperSelect!.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+
+      const buildBtn = container.querySelector<HTMLButtonElement>(
+        '[data-testid="paperback-build"]',
+      );
+      await act(async () => {
+        buildBtn!.click();
+      });
+
+      const routeCall = mockFetch.mock.calls.find((c) =>
+        String(c[0]).includes("/api/stories/test-story/export/paperback"),
+      );
+      expect(routeCall).toBeTruthy();
+      const payload = JSON.parse(String((routeCall![1] as RequestInit).body));
+      expect(payload.options.paperType).toBe("cream");
+      expect(container.querySelector('[data-testid="paperback-lastbuild"]')).not.toBeNull();
+      expect(container.textContent).toContain("test-paperback-interior.html");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("prints a PDF through the desktop bridge when available", async () => {
+    const printPaperbackPdf = vi.fn().mockResolvedValue("/Users/chase/Books/test-paperback-interior.pdf");
+    (window as unknown as { scriptr: unknown }).scriptr = {
+      pickFolder: vi.fn(),
+      revealInFolder: vi.fn(),
+      openFile: vi.fn(),
+      printPaperbackPdf,
+    };
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          ok: true,
+          data: { isElectron: true, defaultExportDir: undefined },
+        }),
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({
+          ok: true,
+          data: {
+            path: "/Users/chase/Books/test-paperback-interior.html",
+            coverSpecPath: "/Users/chase/Books/test-paperback-cover-spec.json",
+            bytes: 2048,
+            warnings: [],
+            coverSpec: {
+              trimSize: { id: "6x9", label: '6" x 9"', widthIn: 6, heightIn: 9 },
+              pageCount: 100,
+              paperType: "white",
+              bleedIn: 0.125,
+              spineWidthIn: 0.2252,
+              coverWidthIn: 12.4752,
+              coverHeightIn: 9.25,
+              safeTextFromOutsideEdgeIn: 0.25,
+              spineTextAllowed: true,
+              spineTextSafeMarginIn: 0.0625,
+            },
+          },
+        }),
+      } as unknown as Response);
+
+    const { container, unmount } = mount(
+      <ExportPage story={baseStory} chapterCount={1} wordCount={500} />,
+    );
+    try {
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="paperback-build"]')!.click();
+      });
+      expect(printPaperbackPdf).toHaveBeenCalledWith("/Users/chase/Books/test-paperback-interior.html");
+      expect(container.textContent).toContain("test-paperback-interior.pdf");
+      expect((toast.success as ReturnType<typeof vi.fn>).mock.calls.some(
+        (c) => String(c[0]).includes("Paperback PDF saved"),
+      )).toBe(true);
+    } finally {
+      unmount();
+    }
+  });
+});
