@@ -34,9 +34,11 @@ describe("electron/preload bridge", () => {
     expect(typeof api.pickFolder).toBe("function");
     expect(typeof api.revealInFolder).toBe("function");
     expect(typeof api.openFile).toBe("function");
+    expect(typeof api.printPaperbackPdf).toBe("function");
     expect(Object.keys(api).sort()).toEqual([
       "openFile",
       "pickFolder",
+      "printPaperbackPdf",
       "revealInFolder",
     ]);
   });
@@ -51,6 +53,7 @@ describe("electron/preload bridge", () => {
       pickFolder: () => Promise<unknown>;
       revealInFolder: (p: string) => Promise<unknown>;
       openFile: (p: string) => Promise<unknown>;
+      printPaperbackPdf: (p: string) => Promise<unknown>;
     };
 
     await api.pickFolder();
@@ -63,5 +66,9 @@ describe("electron/preload bridge", () => {
     invoke.mockClear();
     await api.openFile("/abs/path/file.epub");
     expect(invoke).toHaveBeenCalledWith("shell:openFile", "/abs/path/file.epub");
+
+    invoke.mockClear();
+    await api.printPaperbackPdf("/abs/path/file.html");
+    expect(invoke).toHaveBeenCalledWith("paperback:printPdf", "/abs/path/file.html");
   });
 });

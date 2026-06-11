@@ -7,6 +7,17 @@ import { BisacCombobox } from "@/components/publish/BisacCombobox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  calculatePaperbackCoverSpec,
+  DEFAULT_PAPERBACK_OPTIONS,
+  estimatePaperbackPageCount,
+  inches,
+  normalizePaperbackOptions,
+  PAPERBACK_TRIM_SIZES,
+  type PaperbackOptions,
+  type PaperbackPaperType,
+  type PaperbackTrimSizeId,
+} from "@/lib/publish/paperback-shared";
 import type { Story } from "@/lib/types";
 
 declare global {
@@ -15,6 +26,7 @@ declare global {
       pickFolder: () => Promise<string | null>;
       revealInFolder: (path: string) => Promise<void>;
       openFile: (path: string) => Promise<void>;
+      printPaperbackPdf?: (htmlPath: string) => Promise<string>;
     };
   }
 }
@@ -26,13 +38,26 @@ type Props = {
 };
 
 type LastBuild = { path: string; bytes: number; warnings: string[]; version: 2 | 3 };
+type LastPaperbackBuild = {
+  path: string;
+  pdfPath?: string;
+  coverSpecPath: string;
+  bytes: number;
+  warnings: string[];
+  coverSpec: ReturnType<typeof calculatePaperbackCoverSpec>;
+};
 
 export function ExportPage({ story, chapterCount, wordCount }: Props) {
   const [draft, setDraft] = useState<Story>(story);
   const [saving, setSaving] = useState(false);
   const [building, setBuilding] = useState(false);
+  const [buildingPaperback, setBuildingPaperback] = useState(false);
   const [lastBuildByVersion, setLastBuildByVersion] = useState<Partial<Record<2 | 3, LastBuild>>>({});
+  const [lastPaperbackBuild, setLastPaperbackBuild] = useState<LastPaperbackBuild | null>(null);
   const [selectedVersion, setSelectedVersion] = useState<2 | 3>(3);
+  const [paperbackOptions, setPaperbackOptions] = useState<PaperbackOptions>(
+    DEFAULT_PAPERBACK_OPTIONS,
+  );
   const fileRef = useRef<HTMLInputElement>(null);
   const v3Ref = useRef<HTMLButtonElement>(null);
   const v2Ref = useRef<HTMLButtonElement>(null);
@@ -209,12 +234,62 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
     }
   };
 
+  const handlePaperbackBuild = async () => {
+    setBuildingPaperback(true);
+    try {
+      const res = await fetch(`/api/stories/${story.slug}/export/paperback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ options: paperbackOptions }),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        let detail = text.slice(0, 280);
+        try {
+          const parsed = JSON.parse(text);
+          if (parsed && typeof parsed.error === "string") detail = parsed.error;
+        } catch { /* not JSON */ }
+        toast.error(`Paperback build failed (${res.status}): ${detail}`);
+        return;
+      }
+      const body = await res.json();
+      if (!body.ok) {
+        toast.error(body.error ?? "Paperback build failed");
+        return;
+      }
+      const built: LastPaperbackBuild = body.data;
+      if (typeof window !== "undefined" && window.scriptr?.printPaperbackPdf) {
+        try {
+          built.pdfPath = await window.scriptr.printPaperbackPdf(built.path);
+        } catch (err) {
+          toast.warning(`Paperback HTML saved, but PDF generation failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      setLastPaperbackBuild(built);
+      toast.success(
+        built.pdfPath
+          ? `Paperback PDF saved to ${built.pdfPath}`
+          : `Paperback kit saved to ${built.path}`,
+      );
+    } catch (err) {
+      toast.error(`Paperback build failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBuildingPaperback(false);
+    }
+  };
+
   const canBuild =
     draft.title.trim() !== "" &&
     draft.authorPenName.trim() !== "" &&
     draft.description.trim() !== "" &&
     chapterCount > 0 &&
     !building;
+  const canBuildPaperback = canBuild && !buildingPaperback;
+  const estimatedPaperbackPages = estimatePaperbackPageCount(wordCount);
+  const paperbackCoverSpec = calculatePaperbackCoverSpec(
+    normalizePaperbackOptions(paperbackOptions),
+    estimatedPaperbackPages,
+  );
 
   return (
     <div className="max-w-5xl mx-auto p-6 grid grid-cols-[1fr_340px] gap-8">
@@ -390,7 +465,7 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
         </div>
 
         <div className="border-t border-border pt-4">
-          <h2 className="text-sm font-semibold mb-1">Build</h2>
+          <h2 className="text-sm font-semibold mb-1">Build EPUB</h2>
           <div className="text-xs text-muted-foreground mb-2">
             {chapterCount} chapter{chapterCount === 1 ? "" : "s"} ·{" "}
             {wordCount.toLocaleString()} words
@@ -440,6 +515,94 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
             data-testid="export-build"
           >
             {building ? "Building…" : `Build EPUB ${selectedVersion}`}
+          </Button>
+        </div>
+
+        <div className="border-t border-border pt-4">
+          <h2 className="text-sm font-semibold mb-2">Paperback kit</h2>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="Trim size">
+              <select
+                data-testid="paperback-trim-size"
+                value={paperbackOptions.trimSizeId}
+                onChange={(e) =>
+                  setPaperbackOptions((prev) => ({
+                    ...prev,
+                    trimSizeId: e.target.value as PaperbackTrimSizeId,
+                  }))
+                }
+                className="h-8 w-full rounded-lg border border-input bg-transparent px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+              >
+                {PAPERBACK_TRIM_SIZES.map((size) => (
+                  <option key={size.id} value={size.id}>{size.label}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Paper">
+              <select
+                data-testid="paperback-paper"
+                value={paperbackOptions.paperType}
+                onChange={(e) =>
+                  setPaperbackOptions((prev) => ({
+                    ...prev,
+                    paperType: e.target.value as PaperbackPaperType,
+                  }))
+                }
+                className="h-8 w-full rounded-lg border border-input bg-transparent px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+              >
+                <option value="white">Black &amp; white, white</option>
+                <option value="cream">Black &amp; white, cream</option>
+                <option value="color">Color, white</option>
+              </select>
+            </Field>
+            <Field label="Bleed">
+              <select
+                data-testid="paperback-bleed"
+                value={paperbackOptions.bleed ? "yes" : "no"}
+                onChange={(e) =>
+                  setPaperbackOptions((prev) => ({
+                    ...prev,
+                    bleed: e.target.value === "yes",
+                  }))
+                }
+                className="h-8 w-full rounded-lg border border-input bg-transparent px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+              >
+                <option value="no">No bleed</option>
+                <option value="yes">Bleed</option>
+              </select>
+            </Field>
+            <Field label="Cover page count">
+              <Input
+                data-testid="paperback-page-count"
+                type="number"
+                min={24}
+                value={paperbackOptions.pageCountOverride ?? estimatedPaperbackPages}
+                onChange={(e) =>
+                  setPaperbackOptions((prev) => ({
+                    ...prev,
+                    pageCountOverride: Number(e.target.value) || undefined,
+                  }))
+                }
+              />
+            </Field>
+          </div>
+          <div className="mt-2 rounded border border-border p-2 text-xs text-muted-foreground">
+            <div>
+              Cover: {inches(paperbackCoverSpec.coverWidthIn)} x{" "}
+              {inches(paperbackCoverSpec.coverHeightIn)}
+            </div>
+            <div>
+              Spine: {inches(paperbackCoverSpec.spineWidthIn)} ·{" "}
+              {paperbackCoverSpec.spineTextAllowed ? "spine text allowed" : "no spine text"}
+            </div>
+          </div>
+          <Button
+            onClick={handlePaperbackBuild}
+            disabled={!canBuildPaperback}
+            className="w-full mt-3"
+            data-testid="paperback-build"
+          >
+            {buildingPaperback ? "Building…" : "Build paperback kit"}
           </Button>
         </div>
 
@@ -511,6 +674,79 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
             </div>
           );
         })}
+
+        {lastPaperbackBuild ? (
+          <div
+            data-testid="paperback-lastbuild"
+            className="rounded border border-green-700 bg-green-950/40 p-3 text-xs text-green-200"
+          >
+            <div>✓ Paperback kit · {(lastPaperbackBuild.bytes / 1024).toFixed(0)} KB</div>
+            <div className="font-mono text-green-300 break-all mt-1">
+              {lastPaperbackBuild.pdfPath ?? lastPaperbackBuild.path}
+            </div>
+            {lastPaperbackBuild.pdfPath ? (
+              <div className="font-mono text-green-300/80 break-all mt-1">
+                HTML: {lastPaperbackBuild.path}
+              </div>
+            ) : null}
+            <div className="mt-1">
+              Cover spec: {inches(lastPaperbackBuild.coverSpec.coverWidthIn)} x{" "}
+              {inches(lastPaperbackBuild.coverSpec.coverHeightIn)}
+            </div>
+            <div className="flex flex-wrap gap-2 mt-2">
+              {isElectron && typeof window !== "undefined" && window.scriptr?.revealInFolder && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  data-testid="paperback-reveal"
+                  onClick={() => {
+                    void window.scriptr!.revealInFolder(lastPaperbackBuild.pdfPath ?? lastPaperbackBuild.path).catch((err) => {
+                      toast.error(`Reveal failed: ${err instanceof Error ? err.message : String(err)}`);
+                    });
+                  }}
+                >
+                  Reveal
+                </Button>
+              )}
+              {isElectron && typeof window !== "undefined" && window.scriptr?.openFile && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  data-testid="paperback-open"
+                  onClick={() => {
+                    void window.scriptr!.openFile(lastPaperbackBuild.pdfPath ?? lastPaperbackBuild.path).catch((err) => {
+                      toast.error(`Open failed: ${err instanceof Error ? err.message : String(err)}`);
+                    });
+                  }}
+                >
+                  Open
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                data-testid="paperback-copy-path"
+                onClick={() => {
+                  void navigator.clipboard.writeText(lastPaperbackBuild.pdfPath ?? lastPaperbackBuild.path).then(() => {
+                    toast.success("Copied path");
+                  });
+                }}
+              >
+                Copy path
+              </Button>
+            </div>
+            {lastPaperbackBuild.warnings.length > 0 && (
+              <details className="mt-2">
+                <summary>{lastPaperbackBuild.warnings.length} warning(s)</summary>
+                <ul className="mt-1 text-green-300">
+                  {lastPaperbackBuild.warnings.map((w, i) => (
+                    <li key={i}>· {w}</li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </div>
+        ) : null}
       </div>
     </div>
   );

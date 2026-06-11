@@ -28,6 +28,18 @@ export function epubPath(dataDir: string, storySlug: string, version: EpubVersio
 export function customEpubPath(outputDir: string, storySlug: string, version: EpubVersion) {
   return join(outputDir, `${storySlug}-epub${version}.epub`);
 }
+export function paperbackInteriorPath(dataDir: string, storySlug: string) {
+  return join(exportsDir(dataDir, storySlug), `${storySlug}-paperback-interior.html`);
+}
+export function paperbackCoverSpecPath(dataDir: string, storySlug: string) {
+  return join(exportsDir(dataDir, storySlug), `${storySlug}-paperback-cover-spec.json`);
+}
+export function customPaperbackInteriorPath(outputDir: string, storySlug: string) {
+  return join(outputDir, `${storySlug}-paperback-interior.html`);
+}
+export function customPaperbackCoverSpecPath(outputDir: string, storySlug: string) {
+  return join(outputDir, `${storySlug}-paperback-cover-spec.json`);
+}
 export function coverPath(dataDir: string, storySlug: string) {
   return join(storyDir(dataDir, storySlug), "cover.jpg");
 }
