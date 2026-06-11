@@ -23,12 +23,15 @@ describe("paperback-storage", () => {
 
     const written = await writePaperbackExport(dir, story.slug, {
       html: "<!doctype html><html><body>Book</body></html>",
+      coverHtml: "<!doctype html><html><body>Cover</body></html>",
       spec: { options, cover, notes: ["n"] },
     });
 
     expect(written.interiorPath.endsWith(`/exports/${story.slug}-paperback-interior.html`)).toBe(true);
+    expect(written.coverPath.endsWith(`/exports/${story.slug}-paperback-cover.html`)).toBe(true);
     expect(written.coverSpecPath.endsWith(`/exports/${story.slug}-paperback-cover-spec.json`)).toBe(true);
     expect((await stat(written.interiorPath)).isFile()).toBe(true);
+    expect((await stat(written.coverPath)).isFile()).toBe(true);
     const spec = JSON.parse(await readFile(written.coverSpecPath, "utf-8"));
     expect(spec.cover.pageCount).toBe(100);
   });
@@ -42,10 +45,11 @@ describe("paperback-storage", () => {
       const written = await writePaperbackExport(
         dir,
         story.slug,
-        { html: "x", spec: { options, cover, notes: [] } },
+        { html: "x", coverHtml: "cover", spec: { options, cover, notes: [] } },
         { outputDir: out },
       );
       expect(written.interiorPath).toBe(join(out, `${story.slug}-paperback-interior.html`));
+      expect(written.coverPath).toBe(join(out, `${story.slug}-paperback-cover.html`));
       expect(written.coverSpecPath).toBe(join(out, `${story.slug}-paperback-cover-spec.json`));
     } finally {
       await rm(out, { recursive: true, force: true });

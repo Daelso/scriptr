@@ -1,8 +1,10 @@
 import type { NextRequest } from "next/server";
+import { readFile } from "node:fs/promises";
 import { ok, fail } from "@/lib/api";
 import { effectiveDataDir } from "@/lib/config";
 import { logger } from "@/lib/logger";
 import { apiErrorsLogPath, logApiError } from "@/lib/api-error-log";
+import { coverPath } from "@/lib/storage/paths";
 import { normalizePaperbackOptions, type PaperbackOptions } from "@/lib/publish/paperback-shared";
 
 type Ctx = { params: Promise<{ slug: string }> };
@@ -87,22 +89,32 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 
     const profile = cfg.penNameProfiles?.[story.authorPenName];
     const authorNote = resolveAuthorNote(story, profile) ?? undefined;
+    let coverImageDataUrl: string | undefined;
+    try {
+      const coverBytes = await readFile(coverPath(dataDir, slug));
+      coverImageDataUrl = `data:image/jpeg;base64,${coverBytes.toString("base64")}`;
+    } catch {
+      // Cover upload is optional. The cover export falls back to a text front.
+    }
     const built = await buildPaperbackHtml({
       story,
       chapters,
       options,
       authorNote,
+      coverImageDataUrl,
     });
     const written = await writePaperbackExport(
       dataDir,
       slug,
       {
         html: built.html,
+        coverHtml: built.coverHtml,
         spec: {
           options: built.options,
           cover: built.coverSpec,
           notes: [
             "Open the interior HTML and print/save to PDF with browser headers and footers disabled.",
+            "Open the cover HTML and print/save to PDF with browser headers and footers disabled.",
             "Use the final PDF page count from KDP Previewer to regenerate the cover spec if it differs from this estimate.",
           ],
         },
@@ -114,11 +126,13 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       slug,
       bytes: written.bytes,
       interiorPath: written.interiorPath,
+      coverPath: written.coverPath,
       coverSpecPath: written.coverSpecPath,
     });
 
     return ok({
       path: written.interiorPath,
+      coverPath: written.coverPath,
       coverSpecPath: written.coverSpecPath,
       bytes: written.bytes,
       coverSpec: built.coverSpec,

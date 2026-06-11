@@ -40,7 +40,9 @@ type Props = {
 type LastBuild = { path: string; bytes: number; warnings: string[]; version: 2 | 3 };
 type LastPaperbackBuild = {
   path: string;
+  coverPath?: string;
   pdfPath?: string;
+  coverPdfPath?: string;
   coverSpecPath: string;
   bytes: number;
   warnings: string[];
@@ -56,7 +58,7 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
   const [lastPaperbackBuild, setLastPaperbackBuild] = useState<LastPaperbackBuild | null>(null);
   const [selectedVersion, setSelectedVersion] = useState<2 | 3>(3);
   const [paperbackOptions, setPaperbackOptions] = useState<PaperbackOptions>(
-    DEFAULT_PAPERBACK_OPTIONS,
+    { ...DEFAULT_PAPERBACK_OPTIONS, backCoverText: story.description },
   );
   const fileRef = useRef<HTMLInputElement>(null);
   const v3Ref = useRef<HTMLButtonElement>(null);
@@ -261,6 +263,9 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
       if (typeof window !== "undefined" && window.scriptr?.printPaperbackPdf) {
         try {
           built.pdfPath = await window.scriptr.printPaperbackPdf(built.path);
+          if (built.coverPath) {
+            built.coverPdfPath = await window.scriptr.printPaperbackPdf(built.coverPath);
+          }
         } catch (err) {
           toast.warning(`Paperback HTML saved, but PDF generation failed: ${err instanceof Error ? err.message : String(err)}`);
         }
@@ -268,7 +273,7 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
       setLastPaperbackBuild(built);
       toast.success(
         built.pdfPath
-          ? `Paperback PDF saved to ${built.pdfPath}`
+          ? `Paperback PDFs saved to ${built.coverPdfPath ?? built.pdfPath}`
           : `Paperback kit saved to ${built.path}`,
       );
     } catch (err) {
@@ -596,6 +601,19 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
               {paperbackCoverSpec.spineTextAllowed ? "spine text allowed" : "no spine text"}
             </div>
           </div>
+          <Field label="Back cover copy">
+            <Textarea
+              data-testid="paperback-back-cover-text"
+              rows={5}
+              value={paperbackOptions.backCoverText ?? ""}
+              onChange={(e) =>
+                setPaperbackOptions((prev) => ({
+                  ...prev,
+                  backCoverText: e.target.value,
+                }))
+              }
+            />
+          </Field>
           <Button
             onClick={handlePaperbackBuild}
             disabled={!canBuildPaperback}
@@ -684,6 +702,11 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
             <div className="font-mono text-green-300 break-all mt-1">
               {lastPaperbackBuild.pdfPath ?? lastPaperbackBuild.path}
             </div>
+            {lastPaperbackBuild.coverPdfPath || lastPaperbackBuild.coverPath ? (
+              <div className="font-mono text-green-300/80 break-all mt-1">
+                Cover: {lastPaperbackBuild.coverPdfPath ?? lastPaperbackBuild.coverPath}
+              </div>
+            ) : null}
             {lastPaperbackBuild.pdfPath ? (
               <div className="font-mono text-green-300/80 break-all mt-1">
                 HTML: {lastPaperbackBuild.path}
@@ -700,7 +723,7 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
                   size="sm"
                   data-testid="paperback-reveal"
                   onClick={() => {
-                    void window.scriptr!.revealInFolder(lastPaperbackBuild.pdfPath ?? lastPaperbackBuild.path).catch((err) => {
+                    void window.scriptr!.revealInFolder(lastPaperbackBuild.coverPdfPath ?? lastPaperbackBuild.pdfPath ?? lastPaperbackBuild.path).catch((err) => {
                       toast.error(`Reveal failed: ${err instanceof Error ? err.message : String(err)}`);
                     });
                   }}
@@ -714,7 +737,7 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
                   size="sm"
                   data-testid="paperback-open"
                   onClick={() => {
-                    void window.scriptr!.openFile(lastPaperbackBuild.pdfPath ?? lastPaperbackBuild.path).catch((err) => {
+                    void window.scriptr!.openFile(lastPaperbackBuild.coverPdfPath ?? lastPaperbackBuild.pdfPath ?? lastPaperbackBuild.path).catch((err) => {
                       toast.error(`Open failed: ${err instanceof Error ? err.message : String(err)}`);
                     });
                   }}
@@ -727,7 +750,7 @@ export function ExportPage({ story, chapterCount, wordCount }: Props) {
                 size="sm"
                 data-testid="paperback-copy-path"
                 onClick={() => {
-                  void navigator.clipboard.writeText(lastPaperbackBuild.pdfPath ?? lastPaperbackBuild.path).then(() => {
+                  void navigator.clipboard.writeText(lastPaperbackBuild.coverPdfPath ?? lastPaperbackBuild.pdfPath ?? lastPaperbackBuild.path).then(() => {
                     toast.success("Copied path");
                   });
                 }}
