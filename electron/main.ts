@@ -13,6 +13,7 @@ import { resolveDataDir, StartupCancelledError } from "./migrate";
 import { startNextServer, type ServerHandle, type ServerExitInfo } from "./server";
 import { autoUpdater } from "electron-updater";
 import { installNetworkFilter } from "./network-filter";
+import { shouldAllowPaperbackPrintRequest } from "./paperback-print-filter";
 import { isCheckEnabled } from "./update";
 import { createUpdateController, type UpdateController } from "./update-controller";
 import { buildAppMenu } from "./menu";
@@ -171,6 +172,17 @@ ipcMain.handle("paperback:printPdf", async (_e, target: unknown) => {
     throw new Error("PDF path is outside allowed roots");
   }
 
+  const allowedFileUrl = pathToFileURL(htmlPath).href;
+  const printSession = session.fromPartition(
+    `paperback-print-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
+  printSession.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
+    callback({
+      cancel: !shouldAllowPaperbackPrintRequest(details.url, allowedFileUrl),
+    });
+  });
+  printSession.setPermissionRequestHandler((_wc, _perm, callback) => callback(false));
+
   const pdfWindow = new BrowserWindow({
     width: 900,
     height: 1200,
@@ -180,6 +192,7 @@ ipcMain.handle("paperback:printPdf", async (_e, target: unknown) => {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
+      session: printSession,
       webSecurity: true,
       devTools: false,
       javascript: false,
@@ -188,7 +201,6 @@ ipcMain.handle("paperback:printPdf", async (_e, target: unknown) => {
   });
 
   pdfWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  const allowedFileUrl = pathToFileURL(htmlPath).href;
   pdfWindow.webContents.on("will-navigate", (event, url) => {
     if (url !== allowedFileUrl) event.preventDefault();
   });
