@@ -79,6 +79,9 @@ describe("buildPaperbackHtml", () => {
     expect(out.html).toContain("This is print-ready prose.");
     expect(out.html).toContain("@page");
     expect(out.html).toContain("Full cover:");
+    expect(out.coverHtml).toContain("Paperback Test paperback cover");
+    expect(out.coverHtml).toContain("Testing print export.");
+    expect(out.coverHtml).toContain("KDP barcode area");
     expect(out.coverSpec.pageCount).toBe(24);
   });
 });
