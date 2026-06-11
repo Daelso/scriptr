@@ -652,6 +652,7 @@ describe("ExportPage — paperback kit", () => {
           ok: true,
           data: {
             path: "/Users/chase/Books/test-paperback-interior.html",
+            coverPath: "/Users/chase/Books/test-paperback-cover.html",
             coverSpecPath: "/Users/chase/Books/test-paperback-cover-spec.json",
             bytes: 2048,
             warnings: [],
@@ -682,6 +683,18 @@ describe("ExportPage — paperback kit", () => {
         paperSelect!.value = "cream";
         paperSelect!.dispatchEvent(new Event("change", { bubbles: true }));
       });
+      const backCoverText = container.querySelector<HTMLTextAreaElement>(
+        '[data-testid="paperback-back-cover-text"]',
+      );
+      const textareaSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        "value",
+      )!.set!;
+      await act(async () => {
+        textareaSetter.call(backCoverText!, "Custom back cover copy.");
+        backCoverText!.dispatchEvent(new Event("input", { bubbles: true }));
+        backCoverText!.dispatchEvent(new Event("change", { bubbles: true }));
+      });
 
       const buildBtn = container.querySelector<HTMLButtonElement>(
         '[data-testid="paperback-build"]',
@@ -696,15 +709,17 @@ describe("ExportPage — paperback kit", () => {
       expect(routeCall).toBeTruthy();
       const payload = JSON.parse(String((routeCall![1] as RequestInit).body));
       expect(payload.options.paperType).toBe("cream");
+      expect(payload.options.backCoverText).toBe("Custom back cover copy.");
       expect(container.querySelector('[data-testid="paperback-lastbuild"]')).not.toBeNull();
       expect(container.textContent).toContain("test-paperback-interior.html");
+      expect(container.textContent).toContain("test-paperback-cover.html");
     } finally {
       unmount();
     }
   });
 
   it("prints a PDF through the desktop bridge when available", async () => {
-    const printPaperbackPdf = vi.fn().mockResolvedValue("/Users/chase/Books/test-paperback-interior.pdf");
+    const printPaperbackPdf = vi.fn((path: string) => Promise.resolve(path.replace(/\.html$/i, ".pdf")));
     (window as unknown as { scriptr: unknown }).scriptr = {
       pickFolder: vi.fn(),
       revealInFolder: vi.fn(),
@@ -726,6 +741,7 @@ describe("ExportPage — paperback kit", () => {
           ok: true,
           data: {
             path: "/Users/chase/Books/test-paperback-interior.html",
+            coverPath: "/Users/chase/Books/test-paperback-cover.html",
             coverSpecPath: "/Users/chase/Books/test-paperback-cover-spec.json",
             bytes: 2048,
             warnings: [],
@@ -753,9 +769,10 @@ describe("ExportPage — paperback kit", () => {
         container.querySelector<HTMLButtonElement>('[data-testid="paperback-build"]')!.click();
       });
       expect(printPaperbackPdf).toHaveBeenCalledWith("/Users/chase/Books/test-paperback-interior.html");
-      expect(container.textContent).toContain("test-paperback-interior.pdf");
+      expect(printPaperbackPdf).toHaveBeenCalledWith("/Users/chase/Books/test-paperback-cover.html");
+      expect(container.textContent).toContain("test-paperback-cover.pdf");
       expect((toast.success as ReturnType<typeof vi.fn>).mock.calls.some(
-        (c) => String(c[0]).includes("Paperback PDF saved"),
+        (c) => String(c[0]).includes("Paperback PDFs saved"),
       )).toBe(true);
     } finally {
       unmount();

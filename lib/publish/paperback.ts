@@ -18,10 +18,12 @@ export type PaperbackBuildInput = {
   chapters: Chapter[];
   options?: Partial<PaperbackOptions>;
   authorNote?: ResolvedAuthorNote;
+  coverImageDataUrl?: string;
 };
 
 export type PaperbackBuildResult = {
   html: string;
+  coverHtml: string;
   coverSpec: PaperbackCoverSpec;
   options: PaperbackOptions;
   warnings: string[];
@@ -44,6 +46,15 @@ function renderChapter(chapter: Chapter, index: number): string {
     ? `<p class="chapter-subtitle">${escapeHtml(chapter.title)}</p>`
     : "";
   return `<section class="chapter"><h1>Chapter ${index + 1}</h1>${subtitle}${sectionHtml}</section>`;
+}
+
+function renderPlainTextParagraphs(text: string): string {
+  return text
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean)
+    .map((paragraph) => `<p>${escapeHtml(paragraph).replace(/\n/g, "<br>")}</p>`)
+    .join("");
 }
 
 function cssFor(options: PaperbackOptions, coverSpec: PaperbackCoverSpec): string {
@@ -214,6 +225,7 @@ export async function buildPaperbackHtml(input: PaperbackBuildInput): Promise<Pa
     })
     .join("");
   const authorNote = input.authorNote ? await buildAuthorNoteHtml(input.authorNote) : "";
+  const backCoverText = options.backCoverText ?? input.story.description.trim();
 
   const body = `
 <div class="print-note">
@@ -241,6 +253,172 @@ export async function buildPaperbackHtml(input: PaperbackBuildInput): Promise<Pa
 </main>
 `.trim();
 
+  const coverTitle = escapeHtml(input.story.title);
+  const coverSubtitle = input.story.subtitle?.trim()
+    ? `<div class="cover-subtitle">${escapeHtml(input.story.subtitle.trim())}</div>`
+    : "";
+  const coverImage = input.coverImageDataUrl
+    ? `<img class="front-image" src="${input.coverImageDataUrl}" alt="">`
+    : "";
+  const coverHtml = `<!doctype html>
+<html lang="${escapeHtml(input.story.language || "en")}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${coverTitle} paperback cover</title>
+  <style>
+@page {
+  size: ${coverSpec.coverWidthIn}in ${coverSpec.coverHeightIn}in;
+  margin: 0;
+}
+* { box-sizing: border-box; }
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+body {
+  background: #f3f0e8;
+  color: #111;
+  font-family: Georgia, "Times New Roman", serif;
+}
+.cover {
+  height: ${coverSpec.coverHeightIn}in;
+  overflow: hidden;
+  position: relative;
+  width: ${coverSpec.coverWidthIn}in;
+}
+.back,
+.front,
+.spine {
+  bottom: 0;
+  position: absolute;
+  top: 0;
+}
+.back {
+  background: #f3f0e8;
+  border-right: 0.4pt solid rgba(0,0,0,0.2);
+  left: 0;
+  width: ${coverSpec.bleedIn + coverSpec.trimSize.widthIn}in;
+}
+.front {
+  background: #222;
+  left: ${coverSpec.bleedIn + coverSpec.trimSize.widthIn + coverSpec.spineWidthIn}in;
+  width: ${coverSpec.trimSize.widthIn + coverSpec.bleedIn}in;
+}
+.front-image {
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+.front-placeholder {
+  align-items: center;
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25in;
+  height: 100%;
+  justify-content: center;
+  padding: 0.5in;
+  text-align: center;
+}
+.front-placeholder h1 {
+  font-size: 34pt;
+  font-weight: 600;
+  line-height: 1.05;
+  margin: 0;
+}
+.cover-subtitle,
+.front-placeholder .author {
+  font-size: 14pt;
+  line-height: 1.3;
+}
+.spine {
+  align-items: center;
+  background: #161616;
+  color: #fff;
+  display: flex;
+  justify-content: center;
+  left: ${coverSpec.bleedIn + coverSpec.trimSize.widthIn}in;
+  overflow: hidden;
+  width: ${coverSpec.spineWidthIn}in;
+}
+.spine-text {
+  font-family: Arial, sans-serif;
+  font-size: ${Math.max(7, Math.min(12, coverSpec.spineWidthIn * 36))}pt;
+  letter-spacing: 0;
+  line-height: 1;
+  max-width: ${Math.max(0.1, coverSpec.trimSize.heightIn - 0.5)}in;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  transform: rotate(90deg);
+  white-space: nowrap;
+}
+.back-copy {
+  font-size: 11pt;
+  line-height: 1.35;
+  left: ${coverSpec.bleedIn + coverSpec.safeTextFromOutsideEdgeIn}in;
+  position: absolute;
+  right: ${coverSpec.safeTextFromOutsideEdgeIn}in;
+  top: ${coverSpec.bleedIn + coverSpec.safeTextFromOutsideEdgeIn}in;
+}
+.back-copy p {
+  margin: 0 0 0.14in;
+}
+.barcode-reserve {
+  align-items: center;
+  background: #fff;
+  border: 0.5pt solid #ddd;
+  bottom: ${coverSpec.bleedIn + 0.25}in;
+  color: #666;
+  display: flex;
+  font-family: Arial, sans-serif;
+  font-size: 7pt;
+  height: 1.2in;
+  justify-content: center;
+  left: ${coverSpec.bleedIn + coverSpec.trimSize.widthIn - 2.25}in;
+  position: absolute;
+  text-align: center;
+  width: 2in;
+}
+@media screen {
+  body {
+    align-items: flex-start;
+    display: flex;
+    justify-content: center;
+    padding: 24px;
+  }
+  .cover {
+    box-shadow: 0 0 0 1px #aaa, 0 12px 32px rgba(0,0,0,0.22);
+  }
+}
+  </style>
+</head>
+<body>
+  <main class="cover" aria-label="Paperback cover">
+    <section class="back" aria-label="Back cover">
+      <div class="back-copy">${renderPlainTextParagraphs(backCoverText)}</div>
+      <div class="barcode-reserve">KDP barcode area</div>
+    </section>
+    <section class="spine" aria-label="Spine">
+      ${
+        coverSpec.spineTextAllowed
+          ? `<div class="spine-text">${coverTitle} &middot; ${escapeHtml(input.story.authorPenName)}</div>`
+          : ""
+      }
+    </section>
+    <section class="front" aria-label="Front cover">
+      ${
+        coverImage ||
+        `<div class="front-placeholder"><h1>${coverTitle}</h1>${coverSubtitle}<div class="author">${escapeHtml(input.story.authorPenName)}</div></div>`
+      }
+    </section>
+  </main>
+</body>
+</html>
+`;
+
   const html = `<!doctype html>
 <html lang="${escapeHtml(input.story.language || "en")}">
 <head>
@@ -262,5 +440,5 @@ Full cover: ${inches(coverSpec.coverWidthIn)} x ${inches(coverSpec.coverHeightIn
 </html>
 `;
 
-  return { html, coverSpec, options, warnings };
+  return { html, coverHtml, coverSpec, options, warnings };
 }

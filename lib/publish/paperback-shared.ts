@@ -16,6 +16,7 @@ export type PaperbackOptions = {
   fontSizePt: number;
   lineHeight: number;
   pageCountOverride?: number;
+  backCoverText?: string;
 };
 
 export type PaperbackTrimSize = {
@@ -87,6 +88,10 @@ export function normalizePaperbackOptions(input: Partial<PaperbackOptions> = {})
     typeof input.pageCountOverride === "number" && Number.isFinite(input.pageCountOverride)
       ? Math.max(24, Math.ceil(input.pageCountOverride))
       : undefined;
+  const backCoverText =
+    typeof input.backCoverText === "string"
+      ? input.backCoverText.trim().slice(0, 4000)
+      : undefined;
 
   return {
     trimSizeId,
@@ -95,6 +100,7 @@ export function normalizePaperbackOptions(input: Partial<PaperbackOptions> = {})
     fontSizePt,
     lineHeight,
     pageCountOverride,
+    backCoverText,
   };
 }
 
