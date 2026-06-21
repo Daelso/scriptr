@@ -62,7 +62,7 @@
   },
   "devDependencies": {
     "@electron/fuses": "^2.1.1",
-    "@likecoin/epubcheck-ts": "^0.6.0",
+    "@likecoin/epubcheck-ts": "^0.6.2",
     "@playwright/test": "^1.59.1",
     "@tailwindcss/postcss": "^4",
     "@types/dompurify": "^3.0.5",
