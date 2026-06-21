@@ -343,10 +343,35 @@ describe("validateEpub", () => {
     ];
   }
 
-  it("returns a warnings array (possibly empty) for a built EPUB", async () => {
+  it("validates a well-formed EPUB without flagging a language error", async () => {
     const bytes = await buildEpubBytes({ story: story(), chapters: chapters() });
     const result = await validateEpub(bytes);
     expect(Array.isArray(result.warnings)).toBe(true);
+    // The story declares language "en", so the validator must NOT report a
+    // missing-language error. (Pre-0.6.1 this was vacuously true because the
+    // validator never loaded at all — the negative test below is the guard.)
+    expect(result.warnings.join(" ")).not.toMatch(/language/i);
+  });
+
+  // Regression guard: epubcheck-ts <= 0.6.0 failed to load (top-level
+  // `require('libxml2-wasm')` of an ESM/top-level-await module), so
+  // validateEpub silently returned no warnings for *any* input. Corrupt a
+  // built EPUB by removing the mandatory <dc:language> and assert the
+  // validator actually catches it — proving the engine is live, not skipped.
+  it("actually catches a defect — corrupted EPUB (no dc:language) yields warnings", async () => {
+    const goodBytes = await buildEpubBytes({ story: story(), chapters: chapters() });
+    const zip = await JSZip.loadAsync(goodBytes);
+    const opfName = Object.keys(zip.files).find((n) => n.endsWith(".opf"));
+    expect(opfName).toBeTruthy();
+    const opf = await zip.file(opfName!)!.async("string");
+    zip.file(opfName!, opf.replace(/<dc:language[^>]*>[^<]*<\/dc:language>/g, ""));
+    // Keep mimetype stored-first so the missing language is the salient defect.
+    zip.file("mimetype", "application/epub+zip", { compression: "STORE" });
+    const brokenBytes = await zip.generateAsync({ type: "uint8array" });
+
+    const { warnings } = await validateEpub(brokenBytes);
+    expect(warnings.length).toBeGreaterThan(0);
+    expect(warnings.join(" ")).toMatch(/language/i);
   });
 });
 
