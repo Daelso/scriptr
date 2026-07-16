@@ -15,6 +15,7 @@ import { writeFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import JSZip from "jszip";
 import type { Chapter, Story } from "@/lib/types";
 import type { EpubVersion } from "@/lib/storage/paths";
 import { buildAuthorNoteHtml, type ResolvedAuthorNote } from "@/lib/publish/author-note";
@@ -189,6 +190,33 @@ export async function appendAuthorNoteContent(
   });
 }
 
+// epub-gen-memory's OPF templates emit `<dc:description>` unconditionally, and
+// its own `optionsDefaults` coerce a missing description to `""` — so there is
+// no option value that omits the element. A story with no blurb (the default
+// from `createStory`) therefore gets `<dc:description></dc:description>`, which
+// EPUB3 rejects as RSC-005 and KDP refuses. `dc:description` is optional in the
+// spec, so strip the empty element instead of inventing a blurb the author
+// never wrote. Revisit if epub-gen-memory ever guards the template.
+async function stripEmptyDescription(buffer: Uint8Array): Promise<Uint8Array> {
+  const zip = await JSZip.loadAsync(buffer);
+  const opfName = Object.keys(zip.files).find((n) => n.endsWith(".opf"));
+  if (!opfName) return buffer;
+
+  const opf = await zip.file(opfName)!.async("string");
+  const stripped = opf.replace(
+    /[ \t]*<dc:description>\s*<\/dc:description>[ \t]*\r?\n?|[ \t]*<dc:description\s*\/>[ \t]*\r?\n?/g,
+    "",
+  );
+  if (stripped === opf) return buffer;
+
+  zip.file(opfName, stripped);
+  // OCF requires `mimetype` to be the first entry and stored uncompressed.
+  // Re-assert it because we are regenerating the archive; JSZip preserves the
+  // loaded key order, so this rewrites in place rather than appending.
+  zip.file("mimetype", "application/epub+zip", { compression: "STORE" });
+  return zip.generateAsync({ type: "uint8array" });
+}
+
 export async function buildEpubBytes(input: EpubInput): Promise<Uint8Array> {
   const { story, chapters, coverPath, version = 3 } = input;
 
@@ -240,7 +268,8 @@ export async function buildEpubBytes(input: EpubInput): Promise<Uint8Array> {
       version,
     );
 
-    return new Uint8Array(buffer);
+    const bytes = new Uint8Array(buffer);
+    return story.description ? bytes : stripEmptyDescription(bytes);
   } finally {
     // Best-effort cleanup of temp QR files. Swallow ENOENT etc. — leaving a
     // stray temp PNG is preferable to masking a real generator error.

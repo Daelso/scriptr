@@ -353,6 +353,19 @@ describe("validateEpub", () => {
     expect(result.warnings.join(" ")).not.toMatch(/language/i);
   });
 
+  // `createStory` defaults `description` to "" (lib/storage/stories.ts), so this
+  // is the state of every story until the author writes a blurb — the default
+  // export path, not an edge case. An empty <dc:description> is invalid EPUB3
+  // (RSC-005), which KDP rejects; omit the element entirely instead.
+  it("emits no validation errors for a story with an empty description", async () => {
+    const bytes = await buildEpubBytes({
+      story: { ...story(), description: "" },
+      chapters: chapters(),
+    });
+    const { warnings } = await validateEpub(bytes);
+    expect(warnings).toEqual([]);
+  });
+
   // Regression guard: epubcheck-ts <= 0.6.0 failed to load (top-level
   // `require('libxml2-wasm')` of an ESM/top-level-await module), so
   // validateEpub silently returned no warnings for *any* input. Corrupt a
