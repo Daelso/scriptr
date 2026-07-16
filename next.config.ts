@@ -44,6 +44,11 @@ const cspDirectives = [
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   output: "standalone",
+  // EPUB validation (lib/publish/epub.ts) loads `@likecoin/epubcheck-ts` ->
+  // `libxml2-wasm`, an ESM/top-level-await module with a sibling `.wasm`.
+  // Bundling it through webpack corrupts the module; keep both external so they
+  // resolve from node_modules at runtime (dev server and Electron standalone).
+  serverExternalPackages: ["@likecoin/epubcheck-ts", "libxml2-wasm"],
   outputFileTracingRoot: projectRoot,
   // sharp 0.34+ ships libvips DLLs as siblings of the .node file in
   // node_modules/@img/sharp-win32-x64/lib/ with no package.json or require()
